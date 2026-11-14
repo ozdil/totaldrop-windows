@@ -33,7 +33,7 @@ def main() -> int:
         )
         return 1
 
-    has_dash = shutil.which("dash") is not None
+    has_dash = sys.platform != "win32" and shutil.which("dash") is not None
     portable_tested = 0
 
     for recipe_path in recipes:
