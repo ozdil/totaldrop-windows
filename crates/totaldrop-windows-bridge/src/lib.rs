@@ -19,11 +19,17 @@
 //!   35-language **"Send with TotalDrop"** Explorer context-menu verb catalog,
 //!   implements regional floor-rounded transfer percentages (`#483`), and
 //!   enforces RTL bidirectional isolation and `U+202E` filename sanitization.
-//! - [`session`]: Projects [`totaldrop_core`] options, progress events, errors,
+//! - [`ipc_router`]: Coordinates single-window `WindowsActivityState` routing,
+//!   streaming Named Pipe `IpcFrameDecoder` framing with pre-allocation size
+//!   guards, busy-window collision banners, and newline-delimited JSON
+//!   (`ndjson`) `WinUiBridgeMessage` snapshots.
+//! - [`session`]: Projects [`totaldrop_core`] options, async send/receive
+//!   preparation with [`WindowsCancellationToken`], progress events, errors,
 //!   and `Kose` mark motion rules (`UISettings.AnimationsEnabled`) for WinUI 3
 //!   `x:Bind` view models.
 
 pub mod activation;
+pub mod ipc_router;
 pub mod l10n;
 pub mod session;
 pub mod uri;
@@ -33,6 +39,10 @@ pub use activation::{
     WindowsRootKind, WindowsSelectionPath, parse_launch_args, plan_explorer_invocation,
     quote_win32_arg, session_named_pipe_path, split_win32_command_line,
 };
+pub use ipc_router::{
+    IpcFrameDecoder, MAX_IPC_FRAME_BYTES, RouterDecision, WinUiBridgeMessage, WinUiWindowRouter,
+    WindowsActivityState, decode_ndjson_stream, encode_ndjson_batch,
+};
 pub use l10n::{
     ExplorerVerbEntry, RegionalPercent, SUPPORTED_LANGUAGES, SanitizedPeerText, WinUiFlowDirection,
     WindowsLocalizer, WindowsUiBundle, explorer_send_verb, explorer_verb_catalog,
@@ -40,7 +50,9 @@ pub use l10n::{
     whole_percent,
 };
 pub use session::{
-    BridgeNetworkConfig, LocalizedTransferError, TransferViewEvent, should_animate_mark,
+    BridgeNetworkConfig, LocalizedTransferError, MARK_CYCLE_MS, MARK_HEX_DARK, MARK_HEX_LIGHT,
+    MARK_QUARTER_MS, MARK_SVG_PATH, TransferViewEvent, WindowsCancellationToken,
+    connect_windows_receive, prepare_windows_send, prepare_windows_text_send, should_animate_mark,
 };
 pub use uri::{UriValidationError, ValidatedCode};
 

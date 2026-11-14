@@ -1728,6 +1728,7 @@ dependencies = [
  "icu_locale",
  "serde",
  "serde_json",
+ "tokio",
  "totaldrop-core",
  "totaldrop-l10n",
  "totaldrop-proto",

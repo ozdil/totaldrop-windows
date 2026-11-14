@@ -382,6 +382,12 @@ impl From<WindowsSelectionPath> for String {
     }
 }
 
+impl AsRef<std::path::Path> for WindowsSelectionPath {
+    fn as_ref(&self) -> &std::path::Path {
+        std::path::Path::new(&self.extended)
+    }
+}
+
 fn is_disallowed_control(c: char) -> bool {
     let code = u32::from(c);
     code <= 0x1F || (0x7F..=0x9F).contains(&code)

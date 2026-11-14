@@ -1,14 +1,22 @@
 // SPDX-FileCopyrightText: 2026 The TotalDrop Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Bridge over [`totaldrop_core`] options, progress projections, error
-//! mapping, and TotalDrop's platform-invariant brand mark motion (`Kose`,
-//! ADR 0016 & `docs/tasarim.md`).
+//! Bridge over [`totaldrop_core`] options, async send/receive session
+//! preparation, cancellation tokens, progress projections, error mapping, and
+//! TotalDrop's platform-invariant brand mark motion (`Kose`, ADR 0016 &
+//! `docs/tasarim.md`).
+
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use totaldrop_core::{Cause, Error as CoreError, Event, PathOptions, ReceiveOptions, SendOptions};
+use totaldrop_core::{
+    Cause, Error as CoreError, Event, IncomingOffer, PathOptions, PreparedSend, ReceiveOptions,
+    SendOptions, Stop,
+};
+use totaldrop_proto::CodeError;
 
 use crate::l10n::{RegionalPercent, WindowsLocalizer};
+use crate::uri::{UriValidationError, ValidatedCode};
 
 /// TotalDrop brand mark (`Kose`) SVG path on its 112x112 unit canvas
 /// (`docs/tasarim.md`). Never mirrored in right-to-left layouts.
@@ -214,4 +222,181 @@ impl LocalizedTransferError {
 #[must_use]
 pub const fn should_animate_mark(transfer_running: bool, windows_animations_enabled: bool) -> bool {
     transfer_running && windows_animations_enabled
+}
+
+/// Thread-safe cooperative cancellation handle wrapping [`totaldrop_core::Stop`]
+/// for WinUI 3 commands, window-close handlers, and background Tokio tasks.
+///
+/// Cloning shares the same underlying cancellation state; invoking
+/// [`Self::cancel`] wakes all pending tasks and causes both pre-cancelled and
+/// in-flight session helpers to resolve immediately with
+/// [`totaldrop_core::Error::Stopped`].
+#[derive(Clone, Default)]
+pub struct WindowsCancellationToken {
+    inner: Stop,
+}
+
+impl core::fmt::Debug for WindowsCancellationToken {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("WindowsCancellationToken")
+            .field("cancelled", &self.inner.is_stopped())
+            .finish()
+    }
+}
+
+impl WindowsCancellationToken {
+    /// Creates an active, uncancelled token.
+    #[must_use]
+    pub fn new() -> Self {
+        Self { inner: Stop::new() }
+    }
+
+    /// Creates a token that is already cancelled prior to starting any I/O.
+    #[must_use]
+    pub fn cancelled() -> Self {
+        let stop = Stop::new();
+        stop.stop();
+        Self { inner: stop }
+    }
+
+    /// Signals cancellation across all clones of this token. Idempotent and
+    /// safe to call from any thread (including the WinUI 3 UI thread).
+    pub fn cancel(&self) {
+        self.inner.stop();
+    }
+
+    /// Returns `true` once [`Self::cancel`] has been invoked.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.inner.is_stopped()
+    }
+
+    /// Resolves when cancellation is requested, or immediately if already
+    /// cancelled.
+    pub async fn wait_cancelled(&self) {
+        self.inner.stopped().await;
+    }
+
+    /// Borrows the underlying [`totaldrop_core::Stop`] handle for passing into
+    /// [`PreparedSend::run_with`] or [`IncomingOffer::accept_with`].
+    #[must_use]
+    pub const fn as_core_stop(&self) -> &Stop {
+        &self.inner
+    }
+
+    /// Consumes this wrapper and returns the inner [`totaldrop_core::Stop`].
+    #[must_use]
+    pub fn into_core_stop(self) -> Stop {
+        self.inner
+    }
+}
+
+fn map_uri_error_to_core(err: UriValidationError) -> CoreError {
+    let code_err = match err {
+        UriValidationError::WrongWordCount => CodeError::WrongWordCount,
+        UriValidationError::UnknownWord { word } => CodeError::UnknownWord(word),
+        UriValidationError::Empty
+        | UriValidationError::LinkTooLong { .. }
+        | UriValidationError::InvalidActivationLink
+        | UriValidationError::BadNameplate
+        | UriValidationError::NoCodeFoundInText => CodeError::BadNameplate,
+    };
+    CoreError::Code(code_err)
+}
+
+/// Scans `files`, allocates a rendezvous nameplate, and prepares an encrypted
+/// send session via [`totaldrop_core::PreparedSend::new`], racing against
+/// `cancel`.
+///
+/// Accepts [`PathBuf`], [`Path`], `&str`, or validated
+/// [`crate::activation::WindowsSelectionPath`] items. If `cancel` is already
+/// cancelled before invocation, returns `Err(CoreError::Stopped)` immediately
+/// without touching the filesystem or network.
+///
+/// # Errors
+///
+/// Returns [`totaldrop_core::Error::Stopped`] if cancelled before or during
+/// preparation, or the underlying filesystem/rendezvous error from
+/// [`totaldrop_core::PreparedSend::new`].
+pub async fn prepare_windows_send<I, P>(
+    config: &BridgeNetworkConfig,
+    files: I,
+    cancel: &WindowsCancellationToken,
+) -> totaldrop_core::Result<PreparedSend>
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>,
+{
+    if cancel.is_cancelled() {
+        return Err(CoreError::Stopped);
+    }
+    let opts = config.to_send_options();
+    let paths: Vec<PathBuf> = files
+        .into_iter()
+        .map(|item| item.as_ref().to_path_buf())
+        .collect();
+    tokio::select! {
+        biased;
+        () = cancel.wait_cancelled() => Err(CoreError::Stopped),
+        res = PreparedSend::new(&opts, paths) => res,
+    }
+}
+
+/// Prepares a plain-text send session (`#313`) via
+/// [`totaldrop_core::PreparedSend::text`], racing against `cancel`.
+///
+/// If `cancel` is already cancelled before invocation, returns
+/// `Err(CoreError::Stopped)` immediately without contacting the rendezvous
+/// server.
+///
+/// # Errors
+///
+/// Returns [`totaldrop_core::Error::Stopped`] if cancelled, or the underlying
+/// validation/rendezvous error from [`totaldrop_core::PreparedSend::text`].
+pub async fn prepare_windows_text_send(
+    config: &BridgeNetworkConfig,
+    text: &str,
+    fallback_filename: &str,
+    cancel: &WindowsCancellationToken,
+) -> totaldrop_core::Result<PreparedSend> {
+    if cancel.is_cancelled() {
+        return Err(CoreError::Stopped);
+    }
+    let opts = config.to_send_options();
+    tokio::select! {
+        biased;
+        () = cancel.wait_cancelled() => Err(CoreError::Stopped),
+        res = PreparedSend::text(&opts, text, fallback_filename) => res,
+    }
+}
+
+/// Validates `code_or_uri` (accepting `totaldrop://r/…` URIs,
+/// `https://totaldrop.app/r#…` links, Arabic-Indic digits, or human-entered
+/// codes) and connects to the sender's mailbox via
+/// [`totaldrop_core::IncomingOffer::connect_with`], racing against `cancel`.
+///
+/// If `cancel` is already cancelled before invocation, returns
+/// `Err(CoreError::Stopped)` immediately without generating ephemeral device
+/// identities or opening sockets.
+///
+/// # Errors
+///
+/// Returns [`totaldrop_core::Error::Stopped`] if cancelled,
+/// [`totaldrop_core::Error::Code`] if `code_or_uri` is invalid, or the
+/// underlying rendezvous/transport/handshake error.
+pub async fn connect_windows_receive(
+    config: &BridgeNetworkConfig,
+    code_or_uri: &str,
+    cancel: &WindowsCancellationToken,
+) -> totaldrop_core::Result<IncomingOffer> {
+    if cancel.is_cancelled() {
+        return Err(CoreError::Stopped);
+    }
+    let validated = ValidatedCode::from_user_input(code_or_uri).map_err(map_uri_error_to_core)?;
+    let opts = config.to_receive_options();
+    tokio::select! {
+        biased;
+        () = cancel.wait_cancelled() => Err(CoreError::Stopped),
+        res = IncomingOffer::connect_with(&opts, &validated.display_english, cancel.as_core_stop()) => res,
+    }
 }
