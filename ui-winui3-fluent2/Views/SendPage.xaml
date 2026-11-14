@@ -1,0 +1,208 @@
+<!-- SPDX-FileCopyrightText: 2026 The TotalDrop Contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<Page
+    x:Class="TotalDrop.WinUI.Views.SendPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:TotalDrop.WinUI.ViewModels"
+    AutomationProperties.Name="Send files">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="16" MaxWidth="640">
+
+            <TextBlock
+                Text="Send files"
+                Style="{StaticResource TitleTextBlockStyle}"
+                TextWrapping="Wrap"
+                AutomationProperties.HeadingLevel="Level1" />
+
+            <!-- Fluent 2 Drag-and-Drop Card -->
+            <Border
+                x:Name="DropTargetCard"
+                AllowDrop="True"
+                DragOver="OnCardDragOver"
+                Drop="OnCardDrop"
+                Padding="24"
+                CornerRadius="8"
+                Background="{ThemeResource TotalDropCardBackgroundBrush}"
+                BorderBrush="{ThemeResource TotalDropCardStrokeBrush}"
+                BorderThickness="1"
+                AutomationProperties.Name="Drop files here or choose Add files"
+                AutomationProperties.HelpText="Drag files or folders from File Explorer onto this card to prepare an encrypted transfer.">
+                <StackPanel Spacing="12" HorizontalAlignment="Center">
+                    <SymbolIcon Symbol="OpenFile" />
+                    <TextBlock
+                        Text="Drop files here"
+                        Style="{StaticResource SubtitleTextBlockStyle}"
+                        HorizontalAlignment="Center"
+                        TextWrapping="Wrap" />
+                    <TextBlock
+                        Text="{x:Bind ViewModel.StatusCaption, Mode=OneWay}"
+                        Style="{StaticResource BodyTextBlockStyle}"
+                        HorizontalAlignment="Center"
+                        TextAlignment="Center"
+                        TextWrapping="Wrap" />
+                    <Button
+                        x:Name="AddFilesButton"
+                        Content="Add files"
+                        HorizontalAlignment="Center"
+                        Click="OnAddFilesClick"
+                        AutomationProperties.Name="Add files to send" />
+                </StackPanel>
+            </Border>
+
+            <!-- Selected Files Summary & Bidi-Isolated List -->
+            <StackPanel Spacing="8">
+                <TextBlock
+                    Text="{x:Bind ViewModel.SelectionSummary, Mode=OneWay}"
+                    Style="{StaticResource BodyStrongTextBlockStyle}"
+                    TextWrapping="Wrap"
+                    AutomationProperties.LiveSetting="Polite" />
+
+                <ItemsRepeater ItemsSource="{x:Bind ViewModel.SelectedItems, Mode=OneWay}">
+                    <ItemsRepeater.Layout>
+                        <StackLayout Spacing="4" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="vm:TransferItemModel">
+                            <Border
+                                Padding="12,8"
+                                CornerRadius="6"
+                                Background="{ThemeResource TotalDropCardBackgroundBrush}"
+                                BorderBrush="{ThemeResource TotalDropCardStrokeBrush}"
+                                BorderThickness="1">
+                                <TextBlock
+                                    Text="{x:Bind SafeDisplayName}"
+                                    TextWrapping="Wrap"
+                                    AutomationProperties.Name="{x:Bind SafeDisplayName}" />
+                            </Border>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+            </StackPanel>
+
+            <!-- Stronger 3-word Code Option & Primary Action -->
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <ToggleSwitch
+                    Grid.Column="0"
+                    Header="Stronger code"
+                    OffContent="Two words"
+                    OnContent="Three words"
+                    IsOn="{x:Bind ViewModel.UseStrongerThreeWordCode, Mode=TwoWay}"
+                    AutomationProperties.Name="Stronger code"
+                    AutomationProperties.HelpText="Three words instead of two: much harder to guess." />
+
+                <Button
+                    Grid.Column="1"
+                    VerticalAlignment="Bottom"
+                    Style="{StaticResource AccentButtonStyle}"
+                    Content="Create code"
+                    Click="OnCreateCodeClick"
+                    AutomationProperties.Name="Create transfer code" />
+            </Grid>
+
+            <!-- Wormhole Transfer Code Card: always LeftToRight and spoken in English by Narrator (ADR 0008) -->
+            <Border
+                Visibility="{x:Bind ViewModel.CodeCardVisibility, Mode=OneWay}"
+                Padding="20"
+                CornerRadius="8"
+                Background="{ThemeResource TotalDropCardBackgroundBrush}"
+                BorderBrush="{ThemeResource TotalDropCardStrokeBrush}"
+                BorderThickness="1"
+                AutomationProperties.LandmarkType="Region"
+                AutomationProperties.Name="Your transfer code">
+                <StackPanel Spacing="12">
+                    <TextBlock
+                        Text="Your code"
+                        Style="{StaticResource BodyStrongTextBlockStyle}"
+                        TextWrapping="Wrap" />
+
+                    <TextBlock
+                        x:Name="TransferCodeTextBlock"
+                        Text="{x:Bind ViewModel.TransferCode, Mode=OneWay}"
+                        FlowDirection="LeftToRight"
+                        Language="en-US"
+                        IsTextSelectionEnabled="True"
+                        Style="{StaticResource SubtitleTextBlockStyle}"
+                        FontFamily="Cascadia Mono, Consolas"
+                        TextWrapping="Wrap"
+                        AutomationProperties.LiveSetting="Assertive"
+                        AutomationProperties.Name="{x:Bind ViewModel.TransferCode, Mode=OneWay}" />
+
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button
+                            Content="Copy"
+                            Click="OnCopyCodeClick"
+                            AutomationProperties.Name="Copy transfer code to clipboard" />
+                        <Button
+                            Content="Share"
+                            Click="OnShareCodeClick"
+                            AutomationProperties.Name="Share transfer code with another app" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Four Verification Words Card (CPace + Noise XXpsk3 + ML-KEM-768) -->
+            <Border
+                Visibility="{x:Bind ViewModel.VerificationVisibility, Mode=OneWay}"
+                Padding="16"
+                CornerRadius="8"
+                Background="{ThemeResource TotalDropCardBackgroundBrush}"
+                BorderBrush="{ThemeResource TotalDropCardStrokeBrush}"
+                BorderThickness="1"
+                AutomationProperties.Name="Verification words">
+                <StackPanel Spacing="6">
+                    <TextBlock
+                        Text="Verification words"
+                        Style="{StaticResource BodyStrongTextBlockStyle}"
+                        TextWrapping="Wrap" />
+                    <TextBlock
+                        Text="{x:Bind ViewModel.VerificationWords, Mode=OneWay}"
+                        FlowDirection="LeftToRight"
+                        Language="en-US"
+                        FontFamily="Cascadia Mono, Consolas"
+                        TextWrapping="Wrap"
+                        AutomationProperties.LiveSetting="Polite" />
+                    <TextBlock
+                        Text="The other person sees the same four words. If they differ, stop."
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- Regional Progress Bar (#483 floor rounding + Narrator RangeValuePattern sync) -->
+            <StackPanel
+                Spacing="6"
+                Visibility="{x:Bind ViewModel.ProgressVisibility, Mode=OneWay}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock
+                        Grid.Column="0"
+                        Text="Sending"
+                        Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <TextBlock
+                        Grid.Column="1"
+                        Text="{x:Bind ViewModel.RegionalPercentText, Mode=OneWay}"
+                        Style="{StaticResource BodyStrongTextBlockStyle}"
+                        AutomationProperties.LiveSetting="Polite" />
+                </Grid>
+
+                <ProgressBar
+                    Minimum="0"
+                    Maximum="100"
+                    Value="{x:Bind ViewModel.WholePercent, Mode=OneWay}"
+                    AutomationProperties.Name="Send transfer progress"
+                    AutomationProperties.HelpText="{x:Bind ViewModel.RegionalPercentText, Mode=OneWay}" />
+            </StackPanel>
+
+        </StackPanel>
+    </ScrollViewer>
+</Page>

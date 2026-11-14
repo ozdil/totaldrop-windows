@@ -1,0 +1,169 @@
+<!-- SPDX-FileCopyrightText: 2026 The TotalDrop Contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<Page
+    x:Class="TotalDrop.WinUI.Views.ReceivePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    AutomationProperties.Name="Receive files">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="16" MaxWidth="640">
+
+            <TextBlock
+                Text="Receive files"
+                Style="{StaticResource TitleTextBlockStyle}"
+                TextWrapping="Wrap"
+                AutomationProperties.HeadingLevel="Level1" />
+
+            <!-- Wormhole Code Entry Card: spellcheck/prediction disabled, LeftToRight in every language (ADR 0008) -->
+            <Border
+                Padding="20"
+                CornerRadius="8"
+                Background="{ThemeResource TotalDropCardBackgroundBrush}"
+                BorderBrush="{ThemeResource TotalDropCardStrokeBrush}"
+                BorderThickness="1">
+                <StackPanel Spacing="12">
+                    <TextBlock
+                        Text="Code"
+                        Style="{StaticResource BodyStrongTextBlockStyle}"
+                        TextWrapping="Wrap" />
+
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBox
+                            x:Name="CodeInputBox"
+                            Grid.Column="0"
+                            PlaceholderText="7-harbor-rocket"
+                            Text="{x:Bind ViewModel.CodeInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                            FlowDirection="LeftToRight"
+                            Language="en-US"
+                            IsSpellCheckEnabled="False"
+                            IsTextPredictionEnabled="False"
+                            CharacterCasing="Normal"
+                            FontFamily="Cascadia Mono, Consolas"
+                            AutomationProperties.Name="Transfer code"
+                            AutomationProperties.HelpText="Enter the sender's code, such as 7-harbor-rocket, or paste a TotalDrop share message." />
+
+                        <Button
+                            Grid.Column="1"
+                            Content="Paste"
+                            Click="OnPasteClick"
+                            AutomationProperties.Name="Paste transfer code from clipboard" />
+                    </Grid>
+
+                    <TextBlock
+                        Text="{x:Bind ViewModel.ValidationMessage, Mode=OneWay}"
+                        Visibility="{x:Bind ViewModel.ValidationVisibility, Mode=OneWay}"
+                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                        TextWrapping="Wrap"
+                        AutomationProperties.LiveSetting="Assertive" />
+
+                    <Button
+                        Style="{StaticResource AccentButtonStyle}"
+                        Content="Connect"
+                        Click="OnConnectClick"
+                        AutomationProperties.Name="Connect securely to sender" />
+                </StackPanel>
+            </Border>
+
+            <!-- Four Verification Words Card -->
+            <Border
+                Visibility="{x:Bind ViewModel.VerificationVisibility, Mode=OneWay}"
+                Padding="16"
+                CornerRadius="8"
+                Background="{ThemeResource TotalDropCardBackgroundBrush}"
+                BorderBrush="{ThemeResource TotalDropCardStrokeBrush}"
+                BorderThickness="1"
+                AutomationProperties.Name="Verification words">
+                <StackPanel Spacing="6">
+                    <TextBlock
+                        Text="Verification words"
+                        Style="{StaticResource BodyStrongTextBlockStyle}"
+                        TextWrapping="Wrap" />
+                    <TextBlock
+                        Text="{x:Bind ViewModel.VerificationWords, Mode=OneWay}"
+                        FlowDirection="LeftToRight"
+                        Language="en-US"
+                        FontFamily="Cascadia Mono, Consolas"
+                        TextWrapping="Wrap"
+                        AutomationProperties.LiveSetting="Polite" />
+                    <TextBlock
+                        Text="The other person sees the same four words. If they differ, stop."
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- Incoming Offer Consent Card (safety-critical Accept/Decline buttons) -->
+            <Border
+                Visibility="{x:Bind ViewModel.OfferCardVisibility, Mode=OneWay}"
+                Padding="20"
+                CornerRadius="8"
+                Background="{ThemeResource TotalDropCardBackgroundBrush}"
+                BorderBrush="{ThemeResource TotalDropCardStrokeBrush}"
+                BorderThickness="1"
+                AutomationProperties.LandmarkType="Region"
+                AutomationProperties.Name="Incoming files offer">
+                <StackPanel Spacing="12">
+                    <TextBlock
+                        Text="Incoming files"
+                        Style="{StaticResource SubtitleTextBlockStyle}"
+                        TextWrapping="Wrap" />
+                    <TextBlock
+                        Text="{x:Bind ViewModel.OfferSummary, Mode=OneWay}"
+                        TextWrapping="Wrap"
+                        AutomationProperties.LiveSetting="Polite" />
+                    <TextBlock
+                        Text="{x:Bind ViewModel.DestinationFolder, Mode=OneWay}"
+                        Style="{StaticResource CaptionTextBlockStyle}"
+                        TextWrapping="Wrap" />
+
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button
+                            Style="{StaticResource AccentButtonStyle}"
+                            Content="Accept"
+                            Click="OnAcceptClick"
+                            AutomationProperties.Name="Accept incoming files" />
+                        <Button
+                            Content="Decline"
+                            Click="OnDeclineClick"
+                            AutomationProperties.Name="Decline incoming files" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Regional Progress Bar (#483 floor rounding + Windows Narrator sync) -->
+            <StackPanel
+                Spacing="6"
+                Visibility="{x:Bind ViewModel.ProgressVisibility, Mode=OneWay}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock
+                        Grid.Column="0"
+                        Text="Receiving"
+                        Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <TextBlock
+                        Grid.Column="1"
+                        Text="{x:Bind ViewModel.RegionalPercentText, Mode=OneWay}"
+                        Style="{StaticResource BodyStrongTextBlockStyle}"
+                        AutomationProperties.LiveSetting="Polite" />
+                </Grid>
+
+                <ProgressBar
+                    Minimum="0"
+                    Maximum="100"
+                    Value="{x:Bind ViewModel.WholePercent, Mode=OneWay}"
+                    AutomationProperties.Name="Receive transfer progress"
+                    AutomationProperties.HelpText="{x:Bind ViewModel.RegionalPercentText, Mode=OneWay}" />
+            </StackPanel>
+
+        </StackPanel>
+    </ScrollViewer>
+</Page>

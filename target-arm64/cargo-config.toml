@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 The TotalDrop Contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Cargo target configuration for isolated Windows 11 ARM64 builds (`windows-11-arm` CI runner,
+# Qualcomm Snapdragon X Elite / Plus Copilot+ PCs and Microsoft SQ3 / Ampere Windows on ARM).
+# Copy or pass via `--config target-arm64/cargo-config.toml`.
+#
+# Cryptography & ARMv8-A NEON / PMULL notes (`totaldrop-crypto` / `blake3` / `ring`):
+# - `aarch64-pc-windows-msvc` mandates ARMv8.0-A Advanced SIMD (128-bit NEON `+neon`) in the
+#   base ABI, accelerating `blake3` 4-way chunk hashing out of the box without runtime dispatch.
+# - Windows 11 on ARM hardware requirements mandate the ARMv8 Cryptography Extension (`+aes`,
+#   polynomial multiply long `+pmull` via `+aes`, and `+sha2`), providing constant-time hardware
+#   carry-less multiplication and SHA-256/AES acceleration on Snapdragon X Oryon cores.
+
+[build]
+target = "aarch64-pc-windows-msvc"
+
+[target.aarch64-pc-windows-msvc]
+rustflags = [
+    # ARMv8 NEON is baseline on aarch64; explicitly enable ARMv8 Cryptography (`+aes` includes
+    # `PMULL` / `PMULL2` polynomial carry-less multiply, plus `+sha2`) mandated by Windows 11 ARM64.
+    "-C", "target-feature=+neon,+aes,+sha2",
+    # Harden Win32 DLL search order (`LOAD_LIBRARY_SEARCH_SYSTEM32` = 0x800) against DLL planting.
+    "-C", "link-arg=/DEPENDENTLOADFLAG:0x800",
+    # Enable 64-bit high-entropy ASLR and NX on Windows 11 ARM64.
+    "-C", "link-arg=/DYNAMICBASE",
+    "-C", "link-arg=/HIGHENTROPYVA",
+    "-C", "link-arg=/NXCOMPAT",
+]

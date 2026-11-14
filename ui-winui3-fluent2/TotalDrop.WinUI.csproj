@@ -1,0 +1,59 @@
+<!-- SPDX-FileCopyrightText: 2026 The TotalDrop Contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>totaldrop-winui</AssemblyName>
+    <RootNamespace>TotalDrop.WinUI</RootNamespace>
+    <TargetFramework>net9.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <LangVersion>13.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Allowed strictly for source-generated [LibraryImport] P/Invoke to totaldrop_windows_bridge.dll -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- WinUI 3 + Microsoft Store Framework Dependency (ADR 0016) -->
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
+    <WindowsPackageType>MSIX</WindowsPackageType>
+
+    <!-- .NET 9 Native AOT + CsWinRT 2.2 Trim-Safe Configuration (Zero Reflection) -->
+    <PublishAot>true</PublishAot>
+    <CsWinRTAotOptimizerEnabled>true</CsWinRTAotOptimizerEnabled>
+    <CsWinRTAotWarningLevel>2</CsWinRTAotWarningLevel>
+    <OptimizationPreference>Speed</OptimizationPreference>
+    <StackTraceSupport>false</StackTraceSupport>
+    <!-- Preserve Windows OS ICU globalization for 35 languages & CLDR regional formatting (ADR 0008, ADR 0016) -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- Disable legacy reflection-based XAML {Binding}; enforce compile-time x:Bind -->
+    <EnableXamlCompilerReflection>false</EnableXamlCompilerReflection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.250401001" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
+  </ItemGroup>
+
+  <!-- Architecture-matched native Rust DLL staged next to totaldrop-winui.exe -->
+  <ItemGroup Condition="'$(Platform)' == 'x64'">
+    <Content Include="..\target\x86_64-pc-windows-msvc\release\totaldrop_windows_bridge.dll"
+             Condition="Exists('..\target\x86_64-pc-windows-msvc\release\totaldrop_windows_bridge.dll')"
+             Link="totaldrop_windows_bridge.dll"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(Platform)' == 'ARM64'">
+    <Content Include="..\target\aarch64-pc-windows-msvc\release\totaldrop_windows_bridge.dll"
+             Condition="Exists('..\target\aarch64-pc-windows-msvc\release\totaldrop_windows_bridge.dll')"
+             Link="totaldrop_windows_bridge.dll"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 The TotalDrop Contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Cargo target configuration for isolated Windows 11 x86_64 builds (`windows-2025` CI runner).
+# Copy or pass via `--config target-x86_64/cargo-config.toml`.
+#
+# Cryptography & SIMD notes (`totaldrop-crypto` / `blake3` / `ring`):
+# - Baseline x86_64 Windows 11 (8th-gen Intel Core / AMD Zen+ and newer) guarantees
+#   SSE4.2, AES-NI (`+aes`), PCLMULQDQ (`+pclmulqdq`), and AVX2 (`+avx2`).
+# - `blake3` and `ring` already perform runtime CPUID dispatch for AVX2/AVX-512
+#   and AES-NI/PCLMULQDQ, while enabling `+aes,+pclmulqdq,+sse4.2` at compile time
+#   eliminates scalar fallbacks for polynomial carry-less multiplication on every
+#   supported Windows 11 x64 CPU. To also inline `+avx2` across pure-Rust crates
+#   when targeting strict Windows 11 x86-64-v3 hardware, append `-Ctarget-cpu=x86-64-v3`
+#   (kept optional below so virtualized CI guests without AVX2 passthrough still run tests).
+
+[build]
+target = "x86_64-pc-windows-msvc"
+
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+    # Hardware carry-less multiplication (PCLMULQDQ) + AES-NI guaranteed on Windows 11 x64 CPUs;
+    # AVX2 (`+avx2`) is runtime-dispatched by blake3 and ring on Haswell / Zen+ and newer.
+    "-C", "target-feature=+aes,+pclmulqdq,+sse4.2",
+    # Harden Win32 DLL search order (`LOAD_LIBRARY_SEARCH_SYSTEM32` = 0x800) against DLL planting.
+    "-C", "link-arg=/DEPENDENTLOADFLAG:0x800",
+    # Enable Intel CET / AMD Shadow Stack compatibility and 64-bit high-entropy ASLR.
+    "-C", "link-arg=/CETCOMPAT",
+    "-C", "link-arg=/DYNAMICBASE",
+    "-C", "link-arg=/HIGHENTROPYVA",
+    "-C", "link-arg=/NXCOMPAT",
+]

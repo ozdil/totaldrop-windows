@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 The TotalDrop Contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Rust build artifacts
+/target
+
+# .NET / WinUI 3 / Native AOT build outputs
+**/bin/
+**/obj/
+*.user
+.vs/
+
+# Packaged MSIX / bundle outputs and ephemeral CI test certificates
+/dist/
+*.msix
+*.msixbundle
+*.msixupload
+*.appxsym
+*.cer
+*.pfx
+
+# Editor / OS scratch files
+*.swp
+.DS_Store
+Thumbs.db

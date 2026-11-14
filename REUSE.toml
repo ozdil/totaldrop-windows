@@ -1,0 +1,26 @@
+# Copyright and license of the files that cannot carry them in a comment
+# (JSON, translations, lockfiles) or build and configuration files.
+# Source files carry their own SPDX lines; the REUSE tool checks both
+# (`reuse lint`, in CI).
+version = 1
+
+# Everything not listed below: the Windows app, packaging, scripts, and CI.
+[[annotations]]
+path = "**"
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 The TotalDrop Contributors"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# The protocol libraries and the translations that totaldrop-l10n compiles
+# into itself.
+[[annotations]]
+path = [
+  "crates/totaldrop-crypto/**",
+  "crates/totaldrop-proto/**",
+  "crates/totaldrop-core/**",
+  "crates/totaldrop-l10n/**",
+  "l10n/**",
+]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 The TotalDrop Contributors"
+SPDX-License-Identifier = "MIT OR Apache-2.0"

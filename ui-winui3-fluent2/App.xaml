@@ -1,0 +1,37 @@
+<!-- SPDX-FileCopyrightText: 2026 The TotalDrop Contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<Application
+    x:Class="TotalDrop.WinUI.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Windows 11 Fluent 2 Controls & Typography (Segoe UI Variable) -->
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Brand Mark (Kose) invariant colors per docs/tasarim.md; High Contrast uses SystemColorWindowTextColor -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="TotalDropMarkBrush" Color="#6D4AE0" />
+                    <SolidColorBrush x:Key="TotalDropCardBackgroundBrush" Color="#B3FFFFFF" />
+                    <SolidColorBrush x:Key="TotalDropCardStrokeBrush" Color="#19000000" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="TotalDropMarkBrush" Color="#A68BFF" />
+                    <SolidColorBrush x:Key="TotalDropCardBackgroundBrush" Color="#66202020" />
+                    <SolidColorBrush x:Key="TotalDropCardStrokeBrush" Color="#1FFFFFFF" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="HighContrast">
+                    <SolidColorBrush x:Key="TotalDropMarkBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+                    <SolidColorBrush x:Key="TotalDropCardBackgroundBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="TotalDropCardStrokeBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+
+            <!-- TotalDrop Kose geometry (112x112 unit canvas, never mirrored in RTL) -->
+            <x:String x:Key="TotalDropKosePathData">M55 15H97V57A42 42 0 1 1 55 15Z</x:String>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

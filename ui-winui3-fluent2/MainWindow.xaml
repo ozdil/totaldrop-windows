@@ -1,0 +1,90 @@
+<!-- SPDX-FileCopyrightText: 2026 The TotalDrop Contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<Window
+    x:Class="TotalDrop.WinUI.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="TotalDrop">
+
+    <!-- Primary Fluent 2 Mica surface; MainWindow.xaml.cs falls back to DesktopAcrylicBackdrop or HighContrast solid surface -->
+    <Window.SystemBackdrop>
+        <MicaBackdrop Kind="Base" />
+    </Window.SystemBackdrop>
+
+    <Grid
+        x:Name="RootShellGrid"
+        AutomationProperties.LandmarkType="Main"
+        AutomationProperties.Name="TotalDrop">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="48" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Custom Windows 11 TitleBar integrated with DWM caption buttons -->
+        <Grid
+            x:Name="AppTitleBar"
+            Grid.Row="0"
+            Padding="16,0,148,0"
+            Background="Transparent">
+            <StackPanel
+                Orientation="Horizontal"
+                Spacing="12"
+                VerticalAlignment="Center">
+                <!-- TotalDrop Kose Mark: explicitly LeftToRight so RTL layouts never mirror the upper-right corner (docs/tasarim.md) -->
+                <Viewbox
+                    Width="20"
+                    Height="20"
+                    FlowDirection="LeftToRight"
+                    AutomationProperties.AccessibilityView="Raw">
+                    <Canvas Width="112" Height="112">
+                        <Path
+                            x:Name="BrandMarkPath"
+                            Data="M55 15H97V57A42 42 0 1 1 55 15Z"
+                            Fill="{ThemeResource TotalDropMarkBrush}" />
+                    </Canvas>
+                </Viewbox>
+
+                <TextBlock
+                    x:Name="WindowTitleText"
+                    Text="TotalDrop"
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    VerticalAlignment="Center"
+                    IsTextScaleFactorEnabled="True" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Top-level Fluent 2 Navigation between Send and Receive -->
+        <NavigationView
+            x:Name="ShellNavigation"
+            Grid.Row="1"
+            PaneDisplayMode="Top"
+            IsBackButtonVisible="Collapsed"
+            IsSettingsVisible="True"
+            SelectionChanged="OnNavigationSelectionChanged"
+            AutomationProperties.Name="Main navigation">
+            <NavigationView.MenuItems>
+                <NavigationViewItem
+                    x:Name="NavSendItem"
+                    Tag="send"
+                    Content="{x:Bind SendTabTitle, Mode=OneWay}"
+                    AutomationProperties.Name="{x:Bind SendTabTitle, Mode=OneWay}">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Upload" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+
+                <NavigationViewItem
+                    x:Name="NavReceiveItem"
+                    Tag="receive"
+                    Content="{x:Bind ReceiveTabTitle, Mode=OneWay}"
+                    AutomationProperties.Name="{x:Bind ReceiveTabTitle, Mode=OneWay}">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Download" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+
+            <Frame x:Name="ContentFrame" Padding="24,16,24,24" />
+        </NavigationView>
+    </Grid>
+</Window>

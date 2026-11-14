@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: 2026 The TotalDrop Contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.singleton.1.9.0.schema.json
+#
+# Per ADR 0016, TotalDrop distributes exclusively as Microsoft Store-signed MSIX
+# (`winget install --source msstore 9N...`). This arm64 manifest documents the
+# isolated native ARM64 MSIX installer metadata for Snapdragon X Copilot+ PCs.
+
+PackageIdentifier: app.totaldrop.TotalDrop
+PackageVersion: 0.2.0-beta.5
+PackageLocale: en-US
+Publisher: TotalDrop
+PublisherUrl: https://totaldrop.app
+PublisherSupportUrl: https://github.com/totaldrop-app/totaldrop/issues
+PrivacyUrl: https://totaldrop.app/privacy/
+PackageName: TotalDrop
+PackageUrl: https://totaldrop.app
+License: GPL-3.0-or-later
+LicenseUrl: https://github.com/totaldrop-app/totaldrop/blob/main/LICENSING.md
+ShortDescription: Send files straight to another device, end-to-end encrypted
+Description: >-
+  TotalDrop sends files and folders from one device to another, end-to-end
+  encrypted with CPace, QUIC, Noise XXpsk3 + ML-KEM-768, and BLAKE3-verified
+  STREAM chunks. Native ARM64 build for Windows 11 on ARM and Copilot+ PCs.
+Moniker: totaldrop
+Tags:
+  - airdrop
+  - arm64
+  - encryption
+  - file-sharing
+  - file-transfer
+  - localsend
+  - p2p
+  - quic
+  - wormhole
+Protocols:
+  - totaldrop
+Installers:
+  - Architecture: arm64
+    InstallerType: msix
+    PackageFamilyName: TotalDrop.TotalDrop_0000000000000
+    MinimumOSVersion: 10.0.19041.0
+    Platform:
+      - Windows.Desktop
+    InstallerUrl: https://totaldrop.app/store/msix-only-see-adr-0016/TotalDrop_0.2.0.0_arm64.msix
+    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    SignatureSha256: 0000000000000000000000000000000000000000000000000000000000000000
+ManifestType: singleton
+ManifestVersion: 1.9.0
