@@ -1,0 +1,628 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 The TotalDrop Contributors -->
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="appTagline" xml:space="preserve">
+    <value>Sebarang fail, kepada sesiapa, di mana-mana.</value>
+    <comment>Short slogan under the app name on the home screen</comment>
+  </data>
+  <data name="back" xml:space="preserve">
+    <value>Kembali</value>
+  </data>
+  <data name="cancel" xml:space="preserve">
+    <value>Batal</value>
+  </data>
+  <data name="cancelTransferBody" xml:space="preserve">
+    <value>Pihak satu lagi akan dimaklumkan bahawa pemindahan telah dihentikan.</value>
+  </data>
+  <data name="cancelTransferTitle" xml:space="preserve">
+    <value>Hentikan pemindahan ini?</value>
+  </data>
+  <data name="causeConnectionLost" xml:space="preserve">
+    <value>Sambungan ke peranti lain terputus.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeDiskFull" xml:space="preserve">
+    <value>Ruang kosong pada peranti ini tidak mencukupi.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeFileChanged" xml:space="preserve">
+    <value>Satu fail berubah semasa dihantar. Hantar semula selepas fail disimpan.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoPermission" xml:space="preserve">
+    <value>TotalDrop tidak dibenarkan membaca atau menulis fail atau folder yang diperlukannya.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoRoute" xml:space="preserve">
+    <value>Peranti lain tidak dapat dicapai, sama ada secara terus atau melalui pelayan geganti.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNotFound" xml:space="preserve">
+    <value>Fail atau folder tidak ditemui. Ia mungkin telah dialihkan atau dipadam.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeProtocol" xml:space="preserve">
+    <value>Peranti lain menghantar sesuatu yang tidak difahami oleh versi ini. Mengemas kini TotalDrop pada kedua-dua peranti mungkin membantu.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeReadOnly" xml:space="preserve">
+    <value>Folder berada pada cakera yang tidak boleh ditulis.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeRelay" xml:space="preserve">
+    <value>Pelayan geganti tidak dapat dicapai atau belum ditetapkan, atau kedua-dua peranti tidak menggunakan pelayan yang sama.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeTimedOut" xml:space="preserve">
+    <value>Sambungan berhenti memberi respons. Salah satu peranti mungkin kehilangan rangkaian atau masuk mod tidur.</value>
+    <comment>Under Details of a failed transfer: why it failed. The connection went silent (QUIC idle timeout), or the sender stopped sending.</comment>
+  </data>
+  <data name="codeSuggestions" xml:space="preserve">
+    <value>Cadangan</value>
+  </data>
+  <data name="copyText" xml:space="preserve">
+    <value>Salin teks</value>
+    <comment>Receive result: button that copies the received text to the clipboard</comment>
+  </data>
+  <data name="desktopComment" xml:space="preserve">
+    <value>Hantar fail terus ke peranti lain, disulitkan hujung ke hujung</value>
+    <comment>Linux desktop entry: one-line description shown as a tooltip in app menus</comment>
+  </data>
+  <data name="desktopGenericName" xml:space="preserve">
+    <value>Pemindahan fail</value>
+    <comment>Linux desktop entry: what kind of app TotalDrop is, shown under its name in app menus and launchers</comment>
+  </data>
+  <data name="desktopKeywords" xml:space="preserve">
+    <value>hantar;terima;kongsi;pindah;fail;</value>
+    <comment>Linux desktop entry: search words for app launchers, separated by semicolons and ending with one. Words people type to find a file-sending app; no spaces around the semicolons</comment>
+  </data>
+  <data name="desktopSendWith" xml:space="preserve">
+    <value>Hantar dengan TotalDrop</value>
+    <comment>Linux file managers (Dolphin, Files, Nemo): right-click menu item that sends the selected files and folders with TotalDrop. Also Android: the item in the menu of text selected in any app, which sends that text</comment>
+  </data>
+  <data name="done" xml:space="preserve">
+    <value>Selesai</value>
+  </data>
+  <data name="draftTranslation" xml:space="preserve">
+    <value>Terjemahan ini sedang disemak. Bantu memperbaikinya di GitHub.</value>
+    <comment>Shown in Settings when some of the text in this language is an unreviewed draft</comment>
+  </data>
+  <data name="editCopy" xml:space="preserve">
+    <value>Salin</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editCut" xml:space="preserve">
+    <value>Potong</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editDelete" xml:space="preserve">
+    <value>Padam</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editPaste" xml:space="preserve">
+    <value>Tampal</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editRedo" xml:space="preserve">
+    <value>Buat semula</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editSelectAll" xml:space="preserve">
+    <value>Pilih semua</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editUndo" xml:space="preserve">
+    <value>Buat asal</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="errorBadServer" xml:space="preserve">
+    <value>Alamat pelayan tidak sah. Ia mesti bermula dengan wss://.</value>
+    <comment>The rendezvous server address in the settings is not valid. Same text as cliErrBadServer</comment>
+  </data>
+  <data name="errorCancelled" xml:space="preserve">
+    <value>Pihak satu lagi menghentikan pemindahan.</value>
+  </data>
+  <data name="errorCodeExpired" xml:space="preserve">
+    <value>Kod tamat tempoh sebelum sesiapa menggunakannya. Hantar semula untuk mendapatkan kod baharu.</value>
+    <comment>Shown to the sender: nobody came for the code before the server let it expire (15 minutes). Same text as cliErrCodeExpired</comment>
+  </data>
+  <data name="errorCodeNotInUse" xml:space="preserve">
+    <value>Kod itu tidak digunakan: tersalah taip, telah tamat tempoh atau sudah digunakan. Minta kod baharu daripada penghantar.</value>
+    <comment>The server says no sender is using this code's number. Same text as cliErrCodeNotInUse</comment>
+  </data>
+  <data name="errorConnect" xml:space="preserve">
+    <value>Tidak dapat menyambung ke peranti lain. Pastikan kedua-dua peranti dalam talian dan cuba lagi.</value>
+  </data>
+  <data name="errorDeclined" xml:space="preserve">
+    <value>Penerima menolak fail tersebut.</value>
+  </data>
+  <data name="errorInvalidCode" xml:space="preserve">
+    <value>Kod itu tidak sah.</value>
+  </data>
+  <data name="errorInvalidOffer" xml:space="preserve">
+    <value>The offer broke a safety rule, so it was refused.</value>
+  </data>
+  <data name="errorOther" xml:space="preserve">
+    <value>Ada sesuatu yang tidak kena.</value>
+  </data>
+  <data name="errorPeerLeft" xml:space="preserve">
+    <value>Pihak satu lagi keluar sebelum pemindahan selesai.</value>
+  </data>
+  <data name="errorServer" xml:space="preserve">
+    <value>Tidak dapat mencapai pelayan TotalDrop. Semak sambungan internet anda.</value>
+  </data>
+  <data name="errorStopped" xml:space="preserve">
+    <value>Dihentikan pada peranti ini.</value>
+  </data>
+  <data name="errorStorage" xml:space="preserve">
+    <value>Satu fail tidak dapat dibaca atau disimpan.</value>
+  </data>
+  <data name="errorTextDamaged" xml:space="preserve">
+    <value>Teks tidak tiba dengan lengkap, jadi ia tidak dipaparkan.</value>
+    <comment>Receive result: the text failed its integrity check or is not valid text, so it is not shown</comment>
+  </data>
+  <data name="errorWrongCode" xml:space="preserve">
+    <value>The code did not match. It was mistyped, or someone tried to intercept the transfer. Nothing was sent. Start again with a new code.</value>
+  </data>
+  <data name="homeFooter" xml:space="preserve">
+    <value>Disulitkan hujung ke hujung. Tiada akaun, e-mel atau nombor telefon.</value>
+  </data>
+  <data name="homeReceiveBody" xml:space="preserve">
+    <value>Masukkan kod dan simpan fail</value>
+  </data>
+  <data name="homeReceiveTitle" xml:space="preserve">
+    <value>Terima</value>
+  </data>
+  <data name="homeSendBody" xml:space="preserve">
+    <value>Pilih fail dan kongsi kod pendek</value>
+  </data>
+  <data name="homeSendTitle" xml:space="preserve">
+    <value>Hantar</value>
+  </data>
+  <data name="itemsAndSize" xml:space="preserve">
+    <value>{count} item · {size}</value>
+  </data>
+  <data name="keepAwakeReason" xml:space="preserve">
+    <value>TotalDrop sedang menghantar atau menerima fail</value>
+    <comment>Linux: why the computer is kept from sleeping while a transfer runs; the desktop may show it in its power settings or battery menu</comment>
+  </data>
+  <data name="keepGoing" xml:space="preserve">
+    <value>Teruskan</value>
+  </data>
+  <data name="linkBusy" xml:space="preserve">
+    <value>Selesaikan atau hentikan apa yang ada pada skrin, kemudian buka pautan itu semula.</value>
+    <comment>Android: shown when a TotalDrop link (totaldrop://r/… or https://totaldrop.app/r#…) opens the app while Receive cannot take a new code: a send or receive is running, an offer waits for an answer, or a received text is shown. The screen it refers to is shown; the link's code is not filled in</comment>
+  </data>
+  <data name="metainfoAbout" xml:space="preserve">
+    <value>TotalDrop menghantar fail dan folder dari satu peranti ke peranti lain, disulitkan hujung ke hujung. Pilih fail, kongsi kod pendek atau kod QR, dan peranti lain akan menerimanya. Tiada akaun, tiada e-mel, tiada nombor telefon.</value>
+    <comment>Linux software centres: the paragraph that introduces TotalDrop on its page</comment>
+  </data>
+  <data name="metainfoOnePackage" xml:space="preserve">
+    <value>Gunakan satu pakej Linux pada satu masa. Flatpak dan pakej .pkg, .deb atau .rpm berkongsi satu nama, jadi semasa salah satunya dibuka, memulakan yang lain akan membawa tetingkap yang terbuka ke hadapan dan bukannya membuka tetingkap kedua.</value>
+    <comment>Linux software centres: last paragraph of the description; the Flatpak and the distribution package (.pkg, .deb, .rpm) cannot run at the same time (#351). Keep .pkg, .deb, .rpm and Flatpak as they are</comment>
+  </data>
+  <data name="metainfoSummary" xml:space="preserve">
+    <value>Hantar fail terus ke peranti lain</value>
+    <comment>Linux software centres (Discover, GNOME Software, Flathub): one-line summary under the app's name. No full stop at the end</comment>
+  </data>
+  <data name="metainfoTheme" xml:space="preserve">
+    <value>Mengikut tema desktop anda: Plasma, Hyprland, Omarchy, GNOME</value>
+    <comment>Linux software centres: feature list item; keep the desktop names Plasma, Hyprland, Omarchy and GNOME as they are</comment>
+  </data>
+  <data name="metainfoVerified" xml:space="preserve">
+    <value>Setiap fail disahkan apabila tiba; fail yang rosak dibuang</value>
+    <comment>Linux software centres: feature list item about every received file being checked</comment>
+  </data>
+  <data name="metainfoWords" xml:space="preserve">
+    <value>Empat perkataan pengesahan menunjukkan tiada sesiapa di tengah</value>
+    <comment>Linux software centres: feature list item about the four verification words that show no one is intercepting the transfer</comment>
+  </data>
+  <data name="moreInfo" xml:space="preserve">
+    <value>Butiran</value>
+  </data>
+  <data name="openFolder" xml:space="preserve">
+    <value>Buka folder</value>
+  </data>
+  <data name="otherPackageFlatpak" xml:space="preserve">
+    <value>TotalDrop sudah dibuka daripada Flatpak, jadi tetingkap itu dibawa ke hadapan. Gunakan satu pakej pada satu masa: tutup tetingkap itu untuk membuka yang ini.</value>
+    <comment>Linux desktop notification when TotalDrop is started from the distribution package while the Flatpak window is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="otherPackageSystem" xml:space="preserve">
+    <value>TotalDrop sudah dibuka daripada pakej .pkg, .deb atau .rpm, jadi tetingkap itu dibawa ke hadapan. Gunakan satu pakej pada satu masa: tutup tetingkap itu untuk membuka yang ini.</value>
+    <comment>Linux desktop notification when TotalDrop is started from the Flatpak while the window of the .pkg, .deb or .rpm package is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="pickImageTitle" xml:space="preserve">
+    <value>Pilih imej yang mempunyai kod QR</value>
+  </data>
+  <data name="pickTitle" xml:space="preserve">
+    <value>Pilih fail untuk dihantar</value>
+  </data>
+  <data name="privacyMode" xml:space="preserve">
+    <value>Sembunyikan alamat saya daripada peranti lain</value>
+  </data>
+  <data name="privacyModeConfirmBody" xml:space="preserve">
+    <value>Pemindahan akan menjadi lebih perlahan, kerana tiada apa-apa yang bergerak terus antara peranti. Pelayan pertemuan dan pelayan geganti masih melihat alamat IP anda; kedua-duanya tidak pernah melihat fail atau kunci anda.</value>
+  </data>
+  <data name="privacyModeConfirmTitle" xml:space="preserve">
+    <value>Hidupkan mod privasi?</value>
+  </data>
+  <data name="privacyModeHint" xml:space="preserve">
+    <value>Mod privasi: semuanya melalui pelayan geganti, jadi peranti lain tidak pernah mengetahui alamat IP anda. Lebih perlahan, dan peranti lain mesti menggunakan geganti yang sama (geganti lalai memenuhinya).</value>
+  </data>
+  <data name="privacyModeTurnOn" xml:space="preserve">
+    <value>Hidupkan</value>
+  </data>
+  <data name="progressPercent" xml:space="preserve">
+    <value>{percent}%</value>
+    <comment>Transfer progress; use your language's percent style</comment>
+  </data>
+  <data name="receiveAccept" xml:space="preserve">
+    <value>Accept</value>
+  </data>
+  <data name="receiveAndMore" xml:space="preserve">
+    <value>dan {count} lagi</value>
+  </data>
+  <data name="receiveCodeHelp" xml:space="preserve">
+    <value>Minta kod daripada penghantar.</value>
+  </data>
+  <data name="receiveCodeHint" xml:space="preserve">
+    <value>7-harbor-rocket</value>
+  </data>
+  <data name="receiveCodeInvalid" xml:space="preserve">
+    <value>Itu tidak kelihatan seperti kod. Kod bermula dengan nombor, diikuti dua atau tiga perkataan.</value>
+  </data>
+  <data name="receiveCodeLabel" xml:space="preserve">
+    <value>Kod</value>
+  </data>
+  <data name="receiveConnect" xml:space="preserve">
+    <value>Sambung</value>
+  </data>
+  <data name="receiveConnecting" xml:space="preserve">
+    <value>Menyambung dengan selamat…</value>
+  </data>
+  <data name="receiveDecline" xml:space="preserve">
+    <value>Decline</value>
+  </data>
+  <data name="receiveDeclined" xml:space="preserve">
+    <value>Anda telah menolak fail tersebut.</value>
+  </data>
+  <data name="receiveDone" xml:space="preserve">
+    <value>Diterima dan disahkan</value>
+  </data>
+  <data name="receiveFromImage" xml:space="preserve">
+    <value>Baca QR daripada imej</value>
+  </data>
+  <data name="receiveOffer" xml:space="preserve">
+    <value>Fail masuk</value>
+  </data>
+  <data name="receiveOfferSummary" xml:space="preserve">
+    <value>{files} fail · {size}</value>
+  </data>
+  <data name="receiveOfferText" xml:space="preserve">
+    <value>Teks masuk</value>
+    <comment>Receive screen: title when the other side wants to send a text, not files</comment>
+  </data>
+  <data name="receiveOfferTextNote" xml:space="preserve">
+    <value>Teks dipaparkan di sini, tidak disimpan.</value>
+    <comment>Receive screen: under an incoming text, in place of the folder files are saved to</comment>
+  </data>
+  <data name="receivePaste" xml:space="preserve">
+    <value>Tampal</value>
+  </data>
+  <data name="receiveQrNotFound" xml:space="preserve">
+    <value>Tiada kod TotalDrop dalam imej itu.</value>
+  </data>
+  <data name="receiveReceiving" xml:space="preserve">
+    <value>Menerima</value>
+  </data>
+  <data name="receiveSaveTo" xml:space="preserve">
+    <value>Disimpan ke {folder}</value>
+  </data>
+  <data name="receiveTextDeclined" xml:space="preserve">
+    <value>Anda telah menolak teks tersebut.</value>
+    <comment>Receive result: the person declined an incoming text</comment>
+  </data>
+  <data name="receiveTextDone" xml:space="preserve">
+    <value>Teks diterima dan disahkan</value>
+    <comment>Receive result: title when a text arrived and its check passed; the text is shown below it</comment>
+  </data>
+  <data name="receiveTextHidden" xml:space="preserve">
+    <value>Teks mengandungi aksara tersembunyi yang dipaparkan sebagai U+…. Apabila disalin, teks diperoleh tepat seperti ia tiba.</value>
+    <comment>Receive result: the text holds invisible control or direction characters, shown in the text by their code, as &lt;U+202E&gt;; keep U+… as it is</comment>
+  </data>
+  <data name="receiveTextShortened" xml:space="preserve">
+    <value>Hanya permulaan teks ditunjukkan. Salin teks menyalin keseluruhannya.</value>
+    <comment>Receive result: a very long text is shown only in part; the Copy text button copies the whole text</comment>
+  </data>
+  <data name="receiveTitle" xml:space="preserve">
+    <value>Terima fail</value>
+  </data>
+  <data name="sameNetworkNote" xml:space="preserve">
+    <value>Berfungsi melalui internet. Apabila peranti tidak dapat berhubung secara terus, pemindahan yang disulitkan melalui pelayan geganti, yang tidak dapat membacanya.</value>
+  </data>
+  <data name="sendAddFailed" xml:space="preserve">
+    <value>Fail tidak dapat ditambah. Cuba lagi. Jika berlaku lagi, pastikan ruang kosong pada peranti ini mencukupi, atau pilih fail dari tempat lain.</value>
+    <comment>Shown on the send screen when the system file picker could not hand over the chosen files (a path it cannot read, too little memory, or no space left for its copy).</comment>
+  </data>
+  <data name="sendAddFiles" xml:space="preserve">
+    <value>Tambah fail</value>
+  </data>
+  <data name="sendClipboard" xml:space="preserve">
+    <value>Hantar papan keratan</value>
+    <comment>Linux desktop entry action and Android shortcut: opens Send with the text on the clipboard filled in</comment>
+  </data>
+  <data name="sendClipboardEmpty" xml:space="preserve">
+    <value>Papan keratan tidak mengandungi teks.</value>
+    <comment>Send screen: shown when Send clipboard finds no text on the clipboard</comment>
+  </data>
+  <data name="sendClipboardKept" xml:space="preserve">
+    <value>Teks yang sudah ditaip dikekalkan; papan keratan tidak digunakan.</value>
+    <comment>Send screen: Send clipboard was chosen while the text box already held typed text, so the clipboard was not pasted</comment>
+  </data>
+  <data name="sendCodeHint" xml:space="preserve">
+    <value>Pada peranti lain, buka TotalDrop, ketik Terima dan masukkan kod ini.</value>
+  </data>
+  <data name="sendCopied" xml:space="preserve">
+    <value>Kod disalin</value>
+  </data>
+  <data name="sendCopy" xml:space="preserve">
+    <value>Salin</value>
+  </data>
+  <data name="sendCounting" xml:space="preserve">
+    <value>Mengira…</value>
+  </data>
+  <data name="sendCreateCode" xml:space="preserve">
+    <value>Cipta kod</value>
+  </data>
+  <data name="sendDone" xml:space="preserve">
+    <value>Dihantar dan disahkan</value>
+  </data>
+  <data name="sendDoneBody" xml:space="preserve">
+    <value>{count, plural, =1{Fail tiba dengan sempurna.} other{Kesemua {count} fail tiba dengan sempurna.}}</value>
+  </data>
+  <data name="sendDropHere" xml:space="preserve">
+    <value>Lepaskan fail di sini</value>
+  </data>
+  <data name="sendDropHint" xml:space="preserve">
+    <value>Anda juga boleh seret fail ke tetingkap ini.</value>
+  </data>
+  <data name="sendEmpty" xml:space="preserve">
+    <value>Belum ada yang dipilih</value>
+  </data>
+  <data name="sendEmptyHint" xml:space="preserve">
+    <value>Tambah fail yang anda mahu hantar. Penerima hanya mendapat fail ini, tiada yang lain.</value>
+  </data>
+  <data name="sendPreparing" xml:space="preserve">
+    <value>Menyediakan fail anda…</value>
+  </data>
+  <data name="sendQrHint" xml:space="preserve">
+    <value>Atau imbas kod ini dengan kamera peranti lain.</value>
+  </data>
+  <data name="sendRemove" xml:space="preserve">
+    <value>Alih keluar</value>
+  </data>
+  <data name="sendSending" xml:space="preserve">
+    <value>Menghantar</value>
+  </data>
+  <data name="sendShare" xml:space="preserve">
+    <value>Kongsi</value>
+  </data>
+  <data name="sendShareText" xml:space="preserve">
+    <value>Dapatkan fail saya dengan TotalDrop. Kod: {code}</value>
+  </data>
+  <data name="sendSomeFailed" xml:space="preserve">
+    <value>{count, plural, =1{Satu fail tidak tiba dengan sempurna dan telah dibuang.} other{{count} fail tidak tiba dengan sempurna dan telah dibuang.}}</value>
+  </data>
+  <data name="sendStrongCode" xml:space="preserve">
+    <value>Kod lebih kukuh</value>
+  </data>
+  <data name="sendStrongCodeHint" xml:space="preserve">
+    <value>Tiga perkataan, bukan dua: jauh lebih sukar diteka</value>
+  </data>
+  <data name="sendText" xml:space="preserve">
+    <value>Hantar teks</value>
+    <comment>Send screen: button and screen title for sending a piece of text instead of files</comment>
+  </data>
+  <data name="sendTextDone" xml:space="preserve">
+    <value>Teks tiba dengan lengkap.</value>
+    <comment>Send result: the text reached the receiver and its check passed</comment>
+  </data>
+  <data name="sendTextHidden" xml:space="preserve">
+    <value>Teks mengandungi aksara tersembunyi, seperti tanda arah. Aksara itu turut dihantar.</value>
+    <comment>Send screen: the text to send holds invisible control or direction characters; they are sent as they are</comment>
+  </data>
+  <data name="sendTextHint" xml:space="preserve">
+    <value>Taip atau tampal teks yang hendak dihantar</value>
+    <comment>Send screen: placeholder in the box where the person types or pastes the text to send</comment>
+  </data>
+  <data name="sendTextShortened" xml:space="preserve">
+    <value>Hanya permulaan teks ditunjukkan; keseluruhannya dihantar.</value>
+    <comment>Send screen: a very long pasted text is shown only in part; the whole text is still sent</comment>
+  </data>
+  <data name="sendTextTooLong" xml:space="preserve">
+    <value>Teks boleh sebesar {size} sahaja. Hantar teks yang lebih panjang sebagai fail.</value>
+    <comment>Send screen: the text is over the limit; {size} is the limit, such as 1 MB</comment>
+  </data>
+  <data name="sendTitle" xml:space="preserve">
+    <value>Hantar fail</value>
+  </data>
+  <data name="sendWaiting" xml:space="preserve">
+    <value>Menunggu penerima…</value>
+  </data>
+  <data name="sendWaitingAccept" xml:space="preserve">
+    <value>Semak perkataan, kemudian tunggu penerima menerimanya.</value>
+  </data>
+  <data name="sendYourCode" xml:space="preserve">
+    <value>Kod anda</value>
+  </data>
+  <data name="settings" xml:space="preserve">
+    <value>Tetapan</value>
+  </data>
+  <data name="settingsAbout" xml:space="preserve">
+    <value>Perihal</value>
+  </data>
+  <data name="settingsAboutBody" xml:space="preserve">
+    <value>TotalDrop percuma dan sumber terbuka, dibiayai oleh derma. Berlesen GPL-3.0-or-later.</value>
+  </data>
+  <data name="settingsBackground" xml:space="preserve">
+    <value>Pemindahan di latar belakang</value>
+    <comment>Settings: heading of the section about background transfers</comment>
+  </data>
+  <data name="settingsBackgroundOpen" xml:space="preserve">
+    <value>Tetapan bateri</value>
+    <comment>Settings: button that opens the background transfers page</comment>
+  </data>
+  <data name="settingsPrivacy" xml:space="preserve">
+    <value>Privasi</value>
+  </data>
+  <data name="settingsPrivacyBody" xml:space="preserve">
+    <value>Pelayan pertemuan, pelayan geganti dan pelayan STUN Cloudflare melihat alamat IP anda, begitu juga peranti lain apabila anda bersambung secara terus (kecuali mod privasi dihidupkan). Tiada satu pun daripadanya melihat nama fail, kandungan atau kunci, dan pelayan kami tidak menyimpan log. Fail bergerak terus antara peranti apabila boleh, jika tidak melalui pelayan geganti; kedua-duanya tetap disulitkan hujung ke hujung.</value>
+  </data>
+  <data name="settingsSave" xml:space="preserve">
+    <value>Simpan</value>
+  </data>
+  <data name="settingsServer" xml:space="preserve">
+    <value>Pelayan pertemuan</value>
+  </data>
+  <data name="settingsServerHelp" xml:space="preserve">
+    <value>Membantu dua peranti dengan kod yang sama mencari satu sama lain. Ia tidak pernah melihat fail atau kunci anda.</value>
+  </data>
+  <data name="settingsServerInvalid" xml:space="preserve">
+    <value>Mesti bermula dengan wss://</value>
+  </data>
+  <data name="settingsServerReset" xml:space="preserve">
+    <value>Guna lalai</value>
+  </data>
+  <data name="settingsVersion" xml:space="preserve">
+    <value>Versi {version}</value>
+  </data>
+  <data name="settingsWordsEnglish" xml:space="preserve">
+    <value>Kod dan perkataan pengesahan sentiasa dalam bahasa Inggeris, supaya dua peranti dalam bahasa berbeza menunjukkan perkataan yang sama.</value>
+    <comment>Shown in Settings under About. Explains why the transfer code and the verification words stay in English: they come from one English word list so that both devices show the same ones</comment>
+  </data>
+  <data name="setupBackgroundAllowed" xml:space="preserve">
+    <value>Pengoptimuman bateri Android dimatikan untuk TotalDrop.</value>
+    <comment>The same page: status when Android's battery optimisation is already off for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundAutostart" xml:space="preserve">
+    <value>Buka Automula</value>
+    <comment>The same page: button that opens the maker's Autostart page (Xiaomi)</comment>
+  </data>
+  <data name="setupBackgroundBattery" xml:space="preserve">
+    <value>Buka tetapan bateri</value>
+    <comment>The same page: button that opens TotalDrop's app info, where its battery use is set</comment>
+  </data>
+  <data name="setupBackgroundBatteryHint" xml:space="preserve">
+    <value>Pada halaman maklumat apl TotalDrop, buka Bateri dan benarkan penggunaan tanpa had. Nama tetapan ini berbeza antara telefon.</value>
+    <comment>The same page: under the first button, which opens TotalDrop's app info; what to do there</comment>
+  </data>
+  <data name="setupBackgroundBody" xml:space="preserve">
+    <value>Supaya pemindahan diteruskan apabila anda menukar apl atau mengunci skrin, benarkan TotalDrop berjalan tanpa sekatan bateri. TotalDrop hanya berfungsi di latar belakang semasa pemindahan yang anda mulakan sedang berjalan.</value>
+    <comment>The same page: why TotalDrop asks to run without battery restrictions</comment>
+  </data>
+  <data name="setupBackgroundMaker" xml:space="preserve">
+    <value>Telefon {maker} mempunyai penjimat bateri sendiri</value>
+    <comment>The same page: heading of the second step on Xiaomi, Redmi and POCO phones, which add a battery saver of their own</comment>
+  </data>
+  <data name="setupBackgroundMakerBody" xml:space="preserve">
+    <value>Buka juga penjimat bateri TotalDrop dan pilih "Tiada sekatan". Jika telefon mempunyai Automula, hidupkannya untuk TotalDrop.</value>
+    <comment>The same page: what to choose in the maker's battery saver; "No restrictions" is the label on Xiaomi phones, use the label those phones show in your language</comment>
+  </data>
+  <data name="setupBackgroundMakerOpen" xml:space="preserve">
+    <value>Buka penjimat bateri TotalDrop</value>
+    <comment>The same page: button that opens the maker's battery saver for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundRestricted" xml:space="preserve">
+    <value>Pengoptimuman bateri Android dihidupkan untuk TotalDrop: pemindahan mungkin berhenti apabila anda menukar apl.</value>
+    <comment>The same page: status when Android's battery optimisation is still on for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundSkip" xml:space="preserve">
+    <value>Bukan sekarang</value>
+    <comment>The same page at first start: skip it for now</comment>
+  </data>
+  <data name="setupBackgroundTitle" xml:space="preserve">
+    <value>Teruskan pemindahan di latar belakang</value>
+    <comment>First-run and Settings page about background transfers (#338): heading</comment>
+  </data>
+  <data name="shareBusy" xml:space="preserve">
+    <value>Pemindahan masih berjalan. Tunggu sehingga selesai atau hentikannya, kemudian kongsi semula.</value>
+    <comment>Android: shown when files are shared to TotalDrop while a send or receive is still running; the shared files are not added</comment>
+  </data>
+  <data name="shareSkipped" xml:space="preserve">
+    <value>{count, plural, =1{Satu item yang dikongsi tidak dapat dibaca dan telah ditinggalkan.} other{{count} item yang dikongsi tidak dapat dibaca dan telah ditinggalkan.}}</value>
+    <comment>Android: shown when some of the items another app shared to TotalDrop could not be read (no read permission, or the app's own files) and were left out; the rest were added</comment>
+  </data>
+  <data name="sizeBytes" xml:space="preserve">
+    <value>{value} B</value>
+    <comment>A size in bytes. value is already formatted for the region</comment>
+  </data>
+  <data name="sizeGB" xml:space="preserve">
+    <value>{value} GB</value>
+    <comment>Gigabytes</comment>
+  </data>
+  <data name="sizeKB" xml:space="preserve">
+    <value>{value} kB</value>
+    <comment>Kilobytes (1000 bytes)</comment>
+  </data>
+  <data name="sizeMB" xml:space="preserve">
+    <value>{value} MB</value>
+    <comment>Megabytes</comment>
+  </data>
+  <data name="sizePB" xml:space="preserve">
+    <value>{value} PB</value>
+    <comment>Petabytes</comment>
+  </data>
+  <data name="sizeTB" xml:space="preserve">
+    <value>{value} TB</value>
+    <comment>Terabytes</comment>
+  </data>
+  <data name="stop" xml:space="preserve">
+    <value>Hentikan</value>
+  </data>
+  <data name="technicalDetail" xml:space="preserve">
+    <value>Mesej teknikal dalam bahasa Inggeris, untuk disertakan semasa melaporkan masalah:</value>
+    <comment>Under Details, above the error's technical text, which stays in English so it can be searched and reported</comment>
+  </data>
+  <data name="textCopied" xml:space="preserve">
+    <value>Teks disalin</value>
+    <comment>Tooltip after the received text was copied</comment>
+  </data>
+  <data name="transferNoticeBody" xml:space="preserve">
+    <value>Terus berjalan semasa anda menggunakan apl lain.</value>
+    <comment>Text of the ongoing transfer notification: the transfer continues while the person uses other apps</comment>
+  </data>
+  <data name="transferNoticeChannel" xml:space="preserve">
+    <value>Pemindahan</value>
+    <comment>Android notification channel name for running transfers (shown in system settings)</comment>
+  </data>
+  <data name="transferNoticeReceiving" xml:space="preserve">
+    <value>Menerima dengan TotalDrop</value>
+    <comment>Title of the ongoing notification while a receive runs in the background</comment>
+  </data>
+  <data name="transferNoticeSending" xml:space="preserve">
+    <value>Menghantar dengan TotalDrop</value>
+    <comment>Title of the ongoing notification while a send runs in the background</comment>
+  </data>
+  <data name="tryAgain" xml:space="preserve">
+    <value>Cuba lagi</value>
+  </data>
+  <data name="verificationHint" xml:space="preserve">
+    <value>The other person sees the same four words. If they differ, stop.</value>
+  </data>
+  <data name="verificationTitle" xml:space="preserve">
+    <value>Verification words</value>
+  </data>
+</root>

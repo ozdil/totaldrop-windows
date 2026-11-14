@@ -1,0 +1,628 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 The TotalDrop Contributors -->
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="appTagline" xml:space="preserve">
+    <value>যেকোনো ফাইল, যে কাউকে, যেকোনো জায়গায়।</value>
+    <comment>Short slogan under the app name on the home screen</comment>
+  </data>
+  <data name="back" xml:space="preserve">
+    <value>ফিরে যান</value>
+  </data>
+  <data name="cancel" xml:space="preserve">
+    <value>বাতিল</value>
+  </data>
+  <data name="cancelTransferBody" xml:space="preserve">
+    <value>অন্য পক্ষকে জানানো হবে যে ট্রান্সফার থেমে গেছে।</value>
+  </data>
+  <data name="cancelTransferTitle" xml:space="preserve">
+    <value>এই ট্রান্সফার থামাবেন?</value>
+  </data>
+  <data name="causeConnectionLost" xml:space="preserve">
+    <value>অন্য ডিভাইসের সঙ্গে সংযোগ বিচ্ছিন্ন হয়েছে।</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeDiskFull" xml:space="preserve">
+    <value>এই ডিভাইসে যথেষ্ট খালি জায়গা নেই।</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeFileChanged" xml:space="preserve">
+    <value>পাঠানোর সময় একটি ফাইল বদলে গেছে। সেভ করার পর আবার পাঠান।</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoPermission" xml:space="preserve">
+    <value>TotalDrop-এর প্রয়োজনীয় একটি ফাইল বা ফোল্ডার পড়ার বা লেখার অনুমতি নেই।</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoRoute" xml:space="preserve">
+    <value>সরাসরি বা রিলে সার্ভারের মাধ্যমে, কোনো উপায়েই অন্য ডিভাইসে পৌঁছানো যায়নি।</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNotFound" xml:space="preserve">
+    <value>একটি ফাইল বা ফোল্ডার পাওয়া যায়নি। হয়তো সরানো বা মুছে ফেলা হয়েছে।</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeProtocol" xml:space="preserve">
+    <value>অন্য ডিভাইস এমন কিছু পাঠিয়েছে যা এই সংস্করণ বোঝে না। দুটি ডিভাইসেই TotalDrop আপডেট করলে সাহায্য হতে পারে।</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeReadOnly" xml:space="preserve">
+    <value>ফোল্ডারটি এমন একটি ডিস্কে আছে যেখানে লেখা যায় না।</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeRelay" xml:space="preserve">
+    <value>রিলে সার্ভারে পৌঁছানো যায়নি বা সেটি সেট করা নেই, অথবা দুটি ডিভাইস একই রিলে সার্ভার ব্যবহার করছে না।</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeTimedOut" xml:space="preserve">
+    <value>সংযোগ সাড়া দেওয়া বন্ধ করেছে। কোনো একটি ডিভাইস হয়তো নেটওয়ার্ক হারিয়েছে বা ঘুমিয়ে পড়েছে।</value>
+    <comment>Under Details of a failed transfer: why it failed. The connection went silent (QUIC idle timeout), or the sender stopped sending.</comment>
+  </data>
+  <data name="codeSuggestions" xml:space="preserve">
+    <value>পরামর্শ</value>
+  </data>
+  <data name="copyText" xml:space="preserve">
+    <value>লেখা কপি করুন</value>
+    <comment>Receive result: button that copies the received text to the clipboard</comment>
+  </data>
+  <data name="desktopComment" xml:space="preserve">
+    <value>ফাইল সরাসরি অন্য ডিভাইসে পাঠান, এন্ড-টু-এন্ড এনক্রিপ্টেড</value>
+    <comment>Linux desktop entry: one-line description shown as a tooltip in app menus</comment>
+  </data>
+  <data name="desktopGenericName" xml:space="preserve">
+    <value>ফাইল স্থানান্তর</value>
+    <comment>Linux desktop entry: what kind of app TotalDrop is, shown under its name in app menus and launchers</comment>
+  </data>
+  <data name="desktopKeywords" xml:space="preserve">
+    <value>পাঠান;গ্রহণ;শেয়ার;স্থানান্তর;ফাইল;</value>
+    <comment>Linux desktop entry: search words for app launchers, separated by semicolons and ending with one. Words people type to find a file-sending app; no spaces around the semicolons</comment>
+  </data>
+  <data name="desktopSendWith" xml:space="preserve">
+    <value>TotalDrop দিয়ে পাঠান</value>
+    <comment>Linux file managers (Dolphin, Files, Nemo): right-click menu item that sends the selected files and folders with TotalDrop. Also Android: the item in the menu of text selected in any app, which sends that text</comment>
+  </data>
+  <data name="done" xml:space="preserve">
+    <value>সম্পন্ন</value>
+  </data>
+  <data name="draftTranslation" xml:space="preserve">
+    <value>এই অনুবাদটি পর্যালোচনা করা হচ্ছে। GitHub-এ এটি আরও ভালো করতে সাহায্য করুন।</value>
+    <comment>Shown in Settings when some of the text in this language is an unreviewed draft</comment>
+  </data>
+  <data name="editCopy" xml:space="preserve">
+    <value>কপি করুন</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editCut" xml:space="preserve">
+    <value>কাটুন</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editDelete" xml:space="preserve">
+    <value>মুছুন</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editPaste" xml:space="preserve">
+    <value>পেস্ট করুন</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editRedo" xml:space="preserve">
+    <value>পুনরায় করুন</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editSelectAll" xml:space="preserve">
+    <value>সব নির্বাচন করুন</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editUndo" xml:space="preserve">
+    <value>পূর্বাবস্থায় ফেরান</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="errorBadServer" xml:space="preserve">
+    <value>সার্ভারের ঠিকানাটি বৈধ নয়। এটি wss:// দিয়ে শুরু হতে হবে।</value>
+    <comment>The rendezvous server address in the settings is not valid. Same text as cliErrBadServer</comment>
+  </data>
+  <data name="errorCancelled" xml:space="preserve">
+    <value>অন্য পক্ষ ট্রান্সফার থামিয়ে দিয়েছে।</value>
+  </data>
+  <data name="errorCodeExpired" xml:space="preserve">
+    <value>কেউ ব্যবহার করার আগেই কোডটির মেয়াদ শেষ হয়ে গেছে। নতুন কোড পেতে আবার পাঠান।</value>
+    <comment>Shown to the sender: nobody came for the code before the server let it expire (15 minutes). Same text as cliErrCodeExpired</comment>
+  </data>
+  <data name="errorCodeNotInUse" xml:space="preserve">
+    <value>এই কোডটি ব্যবহারে নেই: এটি ভুল টাইপ হয়েছে, মেয়াদ শেষ হয়ে গেছে অথবা আগেই ব্যবহার করা হয়েছে। প্রেরকের কাছে নতুন কোড চেয়ে নিন।</value>
+    <comment>The server says no sender is using this code's number. Same text as cliErrCodeNotInUse</comment>
+  </data>
+  <data name="errorConnect" xml:space="preserve">
+    <value>অন্য ডিভাইসের সঙ্গে সংযোগ করা যায়নি। দুটি ডিভাইসই অনলাইনে আছে কিনা দেখে আবার চেষ্টা করুন।</value>
+  </data>
+  <data name="errorDeclined" xml:space="preserve">
+    <value>প্রাপক ফাইলগুলো প্রত্যাখ্যান করেছেন।</value>
+  </data>
+  <data name="errorInvalidCode" xml:space="preserve">
+    <value>এই কোডটি বৈধ নয়।</value>
+  </data>
+  <data name="errorInvalidOffer" xml:space="preserve">
+    <value>The offer broke a safety rule, so it was refused.</value>
+  </data>
+  <data name="errorOther" xml:space="preserve">
+    <value>কিছু একটা সমস্যা হয়েছে।</value>
+  </data>
+  <data name="errorPeerLeft" xml:space="preserve">
+    <value>ট্রান্সফার শেষ হওয়ার আগেই অন্য পক্ষ চলে গেছে।</value>
+  </data>
+  <data name="errorServer" xml:space="preserve">
+    <value>TotalDrop সার্ভারে পৌঁছানো যায়নি। আপনার ইন্টারনেট সংযোগ দেখুন।</value>
+  </data>
+  <data name="errorStopped" xml:space="preserve">
+    <value>এই ডিভাইসে থামানো হয়েছে।</value>
+  </data>
+  <data name="errorStorage" xml:space="preserve">
+    <value>একটি ফাইল পড়া বা সেভ করা যায়নি।</value>
+  </data>
+  <data name="errorTextDamaged" xml:space="preserve">
+    <value>লেখাটি সম্পূর্ণ অবস্থায় পৌঁছায়নি, তাই দেখানো হচ্ছে না।</value>
+    <comment>Receive result: the text failed its integrity check or is not valid text, so it is not shown</comment>
+  </data>
+  <data name="errorWrongCode" xml:space="preserve">
+    <value>The code did not match. It was mistyped, or someone tried to intercept the transfer. Nothing was sent. Start again with a new code.</value>
+  </data>
+  <data name="homeFooter" xml:space="preserve">
+    <value>এন্ড-টু-এন্ড এনক্রিপ্টেড। কোনো অ্যাকাউন্ট, ইমেল বা ফোন নম্বর লাগে না।</value>
+  </data>
+  <data name="homeReceiveBody" xml:space="preserve">
+    <value>কোড লিখুন আর ফাইলগুলো সেভ করুন</value>
+  </data>
+  <data name="homeReceiveTitle" xml:space="preserve">
+    <value>গ্রহণ করুন</value>
+  </data>
+  <data name="homeSendBody" xml:space="preserve">
+    <value>ফাইল বেছে নিন আর একটি ছোট কোড শেয়ার করুন</value>
+  </data>
+  <data name="homeSendTitle" xml:space="preserve">
+    <value>পাঠান</value>
+  </data>
+  <data name="itemsAndSize" xml:space="preserve">
+    <value>{count}টি আইটেম · {size}</value>
+  </data>
+  <data name="keepAwakeReason" xml:space="preserve">
+    <value>TotalDrop ফাইল পাঠাচ্ছে বা গ্রহণ করছে</value>
+    <comment>Linux: why the computer is kept from sleeping while a transfer runs; the desktop may show it in its power settings or battery menu</comment>
+  </data>
+  <data name="keepGoing" xml:space="preserve">
+    <value>চালিয়ে যান</value>
+  </data>
+  <data name="linkBusy" xml:space="preserve">
+    <value>স্ক্রিনে যা আছে তা শেষ করুন বা থামান, তারপর লিংকটি আবার খুলুন।</value>
+    <comment>Android: shown when a TotalDrop link (totaldrop://r/… or https://totaldrop.app/r#…) opens the app while Receive cannot take a new code: a send or receive is running, an offer waits for an answer, or a received text is shown. The screen it refers to is shown; the link's code is not filled in</comment>
+  </data>
+  <data name="metainfoAbout" xml:space="preserve">
+    <value>TotalDrop এক ডিভাইস থেকে আরেক ডিভাইসে ফাইল ও ফোল্ডার পাঠায়, এন্ড-টু-এন্ড এনক্রিপ্টেড। ফাইল বেছে নিন, একটি ছোট কোড বা QR কোড শেয়ার করুন, আর অন্য ডিভাইস সেগুলো পেয়ে যাবে। কোনো অ্যাকাউন্ট, ইমেল বা ফোন নম্বর লাগে না।</value>
+    <comment>Linux software centres: the paragraph that introduces TotalDrop on its page</comment>
+  </data>
+  <data name="metainfoOnePackage" xml:space="preserve">
+    <value>একবারে একটি Linux প্যাকেজ ব্যবহার করুন। Flatpak এবং .pkg, .deb বা .rpm প্যাকেজের নাম একই, তাই একটি খোলা থাকলে অন্যটি চালু করলে দ্বিতীয় উইন্ডো খোলে না, খোলা উইন্ডোটি সামনে আসে।</value>
+    <comment>Linux software centres: last paragraph of the description; the Flatpak and the distribution package (.pkg, .deb, .rpm) cannot run at the same time (#351). Keep .pkg, .deb, .rpm and Flatpak as they are</comment>
+  </data>
+  <data name="metainfoSummary" xml:space="preserve">
+    <value>ফাইল সরাসরি অন্য ডিভাইসে পাঠান</value>
+    <comment>Linux software centres (Discover, GNOME Software, Flathub): one-line summary under the app's name. No full stop at the end</comment>
+  </data>
+  <data name="metainfoTheme" xml:space="preserve">
+    <value>আপনার ডেস্কটপের থিম অনুসরণ করে: Plasma, Hyprland, Omarchy, GNOME</value>
+    <comment>Linux software centres: feature list item; keep the desktop names Plasma, Hyprland, Omarchy and GNOME as they are</comment>
+  </data>
+  <data name="metainfoVerified" xml:space="preserve">
+    <value>পৌঁছানোর পর প্রতিটি ফাইল যাচাই করা হয়; নষ্ট ফাইল বাদ দেওয়া হয়</value>
+    <comment>Linux software centres: feature list item about every received file being checked</comment>
+  </data>
+  <data name="metainfoWords" xml:space="preserve">
+    <value>যাচাইয়ের চারটি শব্দ দেখায় যে মাঝখানে কেউ নেই</value>
+    <comment>Linux software centres: feature list item about the four verification words that show no one is intercepting the transfer</comment>
+  </data>
+  <data name="moreInfo" xml:space="preserve">
+    <value>বিস্তারিত</value>
+  </data>
+  <data name="openFolder" xml:space="preserve">
+    <value>ফোল্ডার খুলুন</value>
+  </data>
+  <data name="otherPackageFlatpak" xml:space="preserve">
+    <value>TotalDrop ইতিমধ্যে Flatpak থেকে খোলা আছে, তাই সেই উইন্ডোটি সামনে আনা হয়েছে। একবারে একটি প্যাকেজ ব্যবহার করুন: এটি খুলতে সেই উইন্ডোটি বন্ধ করুন।</value>
+    <comment>Linux desktop notification when TotalDrop is started from the distribution package while the Flatpak window is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="otherPackageSystem" xml:space="preserve">
+    <value>TotalDrop ইতিমধ্যে .pkg, .deb বা .rpm প্যাকেজ থেকে খোলা আছে, তাই সেই উইন্ডোটি সামনে আনা হয়েছে। একবারে একটি প্যাকেজ ব্যবহার করুন: এটি খুলতে সেই উইন্ডোটি বন্ধ করুন।</value>
+    <comment>Linux desktop notification when TotalDrop is started from the Flatpak while the window of the .pkg, .deb or .rpm package is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="pickImageTitle" xml:space="preserve">
+    <value>QR কোডসহ একটি ছবি বেছে নিন</value>
+  </data>
+  <data name="pickTitle" xml:space="preserve">
+    <value>পাঠানোর জন্য ফাইল বেছে নিন</value>
+  </data>
+  <data name="privacyMode" xml:space="preserve">
+    <value>অন্য ডিভাইস থেকে আমার ঠিকানা লুকান</value>
+  </data>
+  <data name="privacyModeConfirmBody" xml:space="preserve">
+    <value>ট্রান্সফার ধীর হবে, কারণ ডিভাইসগুলোর মধ্যে কিছুই সরাসরি যায় না। সংযোগকারী সার্ভার ও রিলে সার্ভার তখনও আপনার IP ঠিকানা দেখে; তারা কখনও আপনার ফাইল বা কী দেখে না।</value>
+  </data>
+  <data name="privacyModeConfirmTitle" xml:space="preserve">
+    <value>গোপনীয়তা মোড চালু করবেন?</value>
+  </data>
+  <data name="privacyModeHint" xml:space="preserve">
+    <value>গোপনীয়তা মোড: সবকিছু রিলে সার্ভারের মধ্য দিয়ে যায়, তাই অন্য ডিভাইস কখনও আপনার IP ঠিকানা জানতে পারে না। এটি ধীর, আর অন্য ডিভাইসকেও একই রিলে সার্ভার ব্যবহার করতে হবে (ডিফল্ট সার্ভার তাই করে)।</value>
+  </data>
+  <data name="privacyModeTurnOn" xml:space="preserve">
+    <value>চালু করুন</value>
+  </data>
+  <data name="progressPercent" xml:space="preserve">
+    <value>{percent}%</value>
+    <comment>Transfer progress; use your language's percent style</comment>
+  </data>
+  <data name="receiveAccept" xml:space="preserve">
+    <value>Accept</value>
+  </data>
+  <data name="receiveAndMore" xml:space="preserve">
+    <value>এবং আরও {count}টি</value>
+  </data>
+  <data name="receiveCodeHelp" xml:space="preserve">
+    <value>প্রেরকের কাছে তাঁর কোড চেয়ে নিন।</value>
+  </data>
+  <data name="receiveCodeHint" xml:space="preserve">
+    <value>7-harbor-rocket</value>
+  </data>
+  <data name="receiveCodeInvalid" xml:space="preserve">
+    <value>এটি কোডের মতো দেখাচ্ছে না। কোড একটি সংখ্যা দিয়ে শুরু হয়, তারপর দুটি বা তিনটি শব্দ থাকে।</value>
+  </data>
+  <data name="receiveCodeLabel" xml:space="preserve">
+    <value>কোড</value>
+  </data>
+  <data name="receiveConnect" xml:space="preserve">
+    <value>সংযোগ করুন</value>
+  </data>
+  <data name="receiveConnecting" xml:space="preserve">
+    <value>নিরাপদে সংযোগ করা হচ্ছে…</value>
+  </data>
+  <data name="receiveDecline" xml:space="preserve">
+    <value>Decline</value>
+  </data>
+  <data name="receiveDeclined" xml:space="preserve">
+    <value>আপনি ফাইলগুলো প্রত্যাখ্যান করেছেন।</value>
+  </data>
+  <data name="receiveDone" xml:space="preserve">
+    <value>গ্রহণ ও যাচাই করা হয়েছে</value>
+  </data>
+  <data name="receiveFromImage" xml:space="preserve">
+    <value>ছবি থেকে QR পড়ুন</value>
+  </data>
+  <data name="receiveOffer" xml:space="preserve">
+    <value>আসা ফাইল</value>
+  </data>
+  <data name="receiveOfferSummary" xml:space="preserve">
+    <value>{files}টি ফাইল · {size}</value>
+  </data>
+  <data name="receiveOfferText" xml:space="preserve">
+    <value>আসা লেখা</value>
+    <comment>Receive screen: title when the other side wants to send a text, not files</comment>
+  </data>
+  <data name="receiveOfferTextNote" xml:space="preserve">
+    <value>লেখাটি এখানে দেখানো হয়, সংরক্ষণ করা হয় না।</value>
+    <comment>Receive screen: under an incoming text, in place of the folder files are saved to</comment>
+  </data>
+  <data name="receivePaste" xml:space="preserve">
+    <value>পেস্ট করুন</value>
+  </data>
+  <data name="receiveQrNotFound" xml:space="preserve">
+    <value>এই ছবিতে কোনো TotalDrop কোড নেই।</value>
+  </data>
+  <data name="receiveReceiving" xml:space="preserve">
+    <value>গ্রহণ করা হচ্ছে</value>
+  </data>
+  <data name="receiveSaveTo" xml:space="preserve">
+    <value>{folder}-এ সেভ করা হয়েছে</value>
+  </data>
+  <data name="receiveTextDeclined" xml:space="preserve">
+    <value>আপনি লেখাটি প্রত্যাখ্যান করেছেন।</value>
+    <comment>Receive result: the person declined an incoming text</comment>
+  </data>
+  <data name="receiveTextDone" xml:space="preserve">
+    <value>লেখা গ্রহণ ও যাচাই করা হয়েছে</value>
+    <comment>Receive result: title when a text arrived and its check passed; the text is shown below it</comment>
+  </data>
+  <data name="receiveTextHidden" xml:space="preserve">
+    <value>লেখায় লুকানো অক্ষর আছে, সেগুলো U+… হিসেবে দেখানো হচ্ছে। কপি করলে লেখাটি ঠিক যেমন এসেছে তেমনই কপি হয়।</value>
+    <comment>Receive result: the text holds invisible control or direction characters, shown in the text by their code, as &lt;U+202E&gt;; keep U+… as it is</comment>
+  </data>
+  <data name="receiveTextShortened" xml:space="preserve">
+    <value>লেখার শুধু শুরুটা দেখানো হচ্ছে। লেখা কপি করুন পুরোটাই কপি করে।</value>
+    <comment>Receive result: a very long text is shown only in part; the Copy text button copies the whole text</comment>
+  </data>
+  <data name="receiveTitle" xml:space="preserve">
+    <value>ফাইল গ্রহণ করুন</value>
+  </data>
+  <data name="sameNetworkNote" xml:space="preserve">
+    <value>ইন্টারনেটের মাধ্যমে কাজ করে। ডিভাইসগুলো সরাসরি একে অপরের কাছে পৌঁছাতে না পারলে এনক্রিপ্ট করা ট্রান্সফার রিলে সার্ভারের মধ্য দিয়ে যায়, যা এটি পড়তে পারে না।</value>
+  </data>
+  <data name="sendAddFailed" xml:space="preserve">
+    <value>ফাইলগুলো যোগ করা যায়নি। আবার চেষ্টা করুন। আবারও এমন হলে দেখুন এই ডিভাইসে যথেষ্ট খালি জায়গা আছে কি না, অথবা অন্য কোনো জায়গা থেকে ফাইলগুলো বেছে নিন।</value>
+    <comment>Shown on the send screen when the system file picker could not hand over the chosen files (a path it cannot read, too little memory, or no space left for its copy).</comment>
+  </data>
+  <data name="sendAddFiles" xml:space="preserve">
+    <value>ফাইল যোগ করুন</value>
+  </data>
+  <data name="sendClipboard" xml:space="preserve">
+    <value>ক্লিপবোর্ডের লেখা পাঠান</value>
+    <comment>Linux desktop entry action and Android shortcut: opens Send with the text on the clipboard filled in</comment>
+  </data>
+  <data name="sendClipboardEmpty" xml:space="preserve">
+    <value>ক্লিপবোর্ডে কোনো লেখা নেই।</value>
+    <comment>Send screen: shown when Send clipboard finds no text on the clipboard</comment>
+  </data>
+  <data name="sendClipboardKept" xml:space="preserve">
+    <value>আগে লেখা লেখাটি রাখা হয়েছে, ক্লিপবোর্ড ব্যবহার করা হয়নি।</value>
+    <comment>Send screen: Send clipboard was chosen while the text box already held typed text, so the clipboard was not pasted</comment>
+  </data>
+  <data name="sendCodeHint" xml:space="preserve">
+    <value>অন্য ডিভাইসে TotalDrop খুলুন, গ্রহণ করুন-এ ট্যাপ করুন আর এই কোডটি লিখুন।</value>
+  </data>
+  <data name="sendCopied" xml:space="preserve">
+    <value>কোড কপি হয়েছে</value>
+  </data>
+  <data name="sendCopy" xml:space="preserve">
+    <value>কপি করুন</value>
+  </data>
+  <data name="sendCounting" xml:space="preserve">
+    <value>গোনা হচ্ছে…</value>
+  </data>
+  <data name="sendCreateCode" xml:space="preserve">
+    <value>কোড তৈরি করুন</value>
+  </data>
+  <data name="sendDone" xml:space="preserve">
+    <value>পাঠানো ও যাচাই করা হয়েছে</value>
+  </data>
+  <data name="sendDoneBody" xml:space="preserve">
+    <value>{count, plural, =1{ফাইলটি অক্ষত অবস্থায় পৌঁছেছে।} other{{count}টি ফাইলই অক্ষত অবস্থায় পৌঁছেছে।}}</value>
+  </data>
+  <data name="sendDropHere" xml:space="preserve">
+    <value>ফাইলগুলো এখানে ছাড়ুন</value>
+  </data>
+  <data name="sendDropHint" xml:space="preserve">
+    <value>আপনি ফাইলগুলো এই উইন্ডোতে টেনেও আনতে পারেন।</value>
+  </data>
+  <data name="sendEmpty" xml:space="preserve">
+    <value>এখনও কিছু বেছে নেওয়া হয়নি</value>
+  </data>
+  <data name="sendEmptyHint" xml:space="preserve">
+    <value>যে ফাইলগুলো পাঠাতে চান সেগুলো যোগ করুন। প্রাপক ঠিক এগুলোই পাবেন, আর কিছু নয়।</value>
+  </data>
+  <data name="sendPreparing" xml:space="preserve">
+    <value>আপনার ফাইলগুলো প্রস্তুত করা হচ্ছে…</value>
+  </data>
+  <data name="sendQrHint" xml:space="preserve">
+    <value>অথবা অন্য ডিভাইসের ক্যামেরা দিয়ে এই কোডটি স্ক্যান করুন।</value>
+  </data>
+  <data name="sendRemove" xml:space="preserve">
+    <value>সরান</value>
+  </data>
+  <data name="sendSending" xml:space="preserve">
+    <value>পাঠানো হচ্ছে</value>
+  </data>
+  <data name="sendShare" xml:space="preserve">
+    <value>শেয়ার করুন</value>
+  </data>
+  <data name="sendShareText" xml:space="preserve">
+    <value>TotalDrop দিয়ে আমার ফাইলগুলো নিন। কোড: {code}</value>
+  </data>
+  <data name="sendSomeFailed" xml:space="preserve">
+    <value>{count, plural, =1{একটি ফাইল অক্ষত অবস্থায় পৌঁছায়নি, তাই বাতিল করা হয়েছে।} other{{count}টি ফাইল অক্ষত অবস্থায় পৌঁছায়নি, তাই বাতিল করা হয়েছে।}}</value>
+  </data>
+  <data name="sendStrongCode" xml:space="preserve">
+    <value>আরও শক্তিশালী কোড</value>
+  </data>
+  <data name="sendStrongCodeHint" xml:space="preserve">
+    <value>দুটির বদলে তিনটি শব্দ: অনুমান করা অনেক বেশি কঠিন</value>
+  </data>
+  <data name="sendText" xml:space="preserve">
+    <value>লেখা পাঠান</value>
+    <comment>Send screen: button and screen title for sending a piece of text instead of files</comment>
+  </data>
+  <data name="sendTextDone" xml:space="preserve">
+    <value>লেখাটি সম্পূর্ণ অবস্থায় পৌঁছেছে।</value>
+    <comment>Send result: the text reached the receiver and its check passed</comment>
+  </data>
+  <data name="sendTextHidden" xml:space="preserve">
+    <value>লেখায় দিক-চিহ্নের মতো লুকানো অক্ষর আছে। সেগুলোও লেখার সঙ্গে পাঠানো হয়।</value>
+    <comment>Send screen: the text to send holds invisible control or direction characters; they are sent as they are</comment>
+  </data>
+  <data name="sendTextHint" xml:space="preserve">
+    <value>যে লেখা পাঠাতে চান তা লিখুন বা পেস্ট করুন</value>
+    <comment>Send screen: placeholder in the box where the person types or pastes the text to send</comment>
+  </data>
+  <data name="sendTextShortened" xml:space="preserve">
+    <value>লেখার শুধু শুরুটা দেখানো হচ্ছে, পুরোটাই পাঠানো হবে।</value>
+    <comment>Send screen: a very long pasted text is shown only in part; the whole text is still sent</comment>
+  </data>
+  <data name="sendTextTooLong" xml:space="preserve">
+    <value>লেখা সর্বোচ্চ {size} হতে পারে। এর চেয়ে বড় লেখা ফাইল হিসেবে পাঠান।</value>
+    <comment>Send screen: the text is over the limit; {size} is the limit, such as 1 MB</comment>
+  </data>
+  <data name="sendTitle" xml:space="preserve">
+    <value>ফাইল পাঠান</value>
+  </data>
+  <data name="sendWaiting" xml:space="preserve">
+    <value>প্রাপকের জন্য অপেক্ষা করা হচ্ছে…</value>
+  </data>
+  <data name="sendWaitingAccept" xml:space="preserve">
+    <value>শব্দগুলো মিলিয়ে দেখুন, তারপর প্রাপকের গ্রহণ করার জন্য অপেক্ষা করুন।</value>
+  </data>
+  <data name="sendYourCode" xml:space="preserve">
+    <value>আপনার কোড</value>
+  </data>
+  <data name="settings" xml:space="preserve">
+    <value>সেটিংস</value>
+  </data>
+  <data name="settingsAbout" xml:space="preserve">
+    <value>সম্পর্কে</value>
+  </data>
+  <data name="settingsAboutBody" xml:space="preserve">
+    <value>TotalDrop বিনামূল্যে ও ওপেন সোর্স, অনুদানে চলে। লাইসেন্স GPL-3.0-or-later।</value>
+  </data>
+  <data name="settingsBackground" xml:space="preserve">
+    <value>ব্যাকগ্রাউন্ডে ট্রান্সফার</value>
+    <comment>Settings: heading of the section about background transfers</comment>
+  </data>
+  <data name="settingsBackgroundOpen" xml:space="preserve">
+    <value>ব্যাটারি সেটিংস</value>
+    <comment>Settings: button that opens the background transfers page</comment>
+  </data>
+  <data name="settingsPrivacy" xml:space="preserve">
+    <value>গোপনীয়তা</value>
+  </data>
+  <data name="settingsPrivacyBody" xml:space="preserve">
+    <value>সংযোগকারী সার্ভার, রিলে সার্ভার ও Cloudflare-এর STUN সার্ভার আপনার IP ঠিকানা দেখে, আর সরাসরি সংযোগ হলে অন্য ডিভাইসও দেখে (গোপনীয়তা মোড চালু না থাকলে)। এদের কেউই ফাইলের নাম, বিষয়বস্তু বা কী দেখে না, আর আমাদের সার্ভার কোনো লগ রাখে না। সম্ভব হলে ফাইল সরাসরি ডিভাইসগুলোর মধ্যে যায়, না হলে রিলে সার্ভারের মধ্য দিয়ে; দুই ক্ষেত্রেই সেগুলো এন্ড-টু-এন্ড এনক্রিপ্টেড থাকে।</value>
+  </data>
+  <data name="settingsSave" xml:space="preserve">
+    <value>সেভ করুন</value>
+  </data>
+  <data name="settingsServer" xml:space="preserve">
+    <value>সংযোগকারী সার্ভার</value>
+  </data>
+  <data name="settingsServerHelp" xml:space="preserve">
+    <value>একই কোডওয়ালা দুটি ডিভাইসকে একে অপরকে খুঁজে পেতে সাহায্য করে। এটি কখনও আপনার ফাইল বা কী দেখে না।</value>
+  </data>
+  <data name="settingsServerInvalid" xml:space="preserve">
+    <value>wss:// দিয়ে শুরু হতে হবে</value>
+  </data>
+  <data name="settingsServerReset" xml:space="preserve">
+    <value>ডিফল্ট ব্যবহার করুন</value>
+  </data>
+  <data name="settingsVersion" xml:space="preserve">
+    <value>সংস্করণ {version}</value>
+  </data>
+  <data name="settingsWordsEnglish" xml:space="preserve">
+    <value>কোড ও যাচাইয়ের শব্দ সব ভাষাতেই ইংরেজিতে থাকে, যাতে ভিন্ন ভাষার দুটি ডিভাইস একই শব্দ দেখায়।</value>
+    <comment>Shown in Settings under About. Explains why the transfer code and the verification words stay in English: they come from one English word list so that both devices show the same ones</comment>
+  </data>
+  <data name="setupBackgroundAllowed" xml:space="preserve">
+    <value>TotalDrop-এর জন্য Android-এর ব্যাটারি অপ্টিমাইজেশন বন্ধ আছে।</value>
+    <comment>The same page: status when Android's battery optimisation is already off for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundAutostart" xml:space="preserve">
+    <value>অটোস্টার্ট খুলুন</value>
+    <comment>The same page: button that opens the maker's Autostart page (Xiaomi)</comment>
+  </data>
+  <data name="setupBackgroundBattery" xml:space="preserve">
+    <value>ব্যাটারি সেটিংস খুলুন</value>
+    <comment>The same page: button that opens TotalDrop's app info, where its battery use is set</comment>
+  </data>
+  <data name="setupBackgroundBatteryHint" xml:space="preserve">
+    <value>TotalDrop-এর অ্যাপ তথ্য পৃষ্ঠায় "ব্যাটারি" খুলে সীমাহীন ব্যবহারের অনুমতি দিন। এই সেটিংসের নাম ফোনভেদে আলাদা হয়।</value>
+    <comment>The same page: under the first button, which opens TotalDrop's app info; what to do there</comment>
+  </data>
+  <data name="setupBackgroundBody" xml:space="preserve">
+    <value>অন্য অ্যাপে গেলে বা স্ক্রিন লক করলেও যাতে ট্রান্সফার চলতে থাকে, সেজন্য TotalDrop-কে ব্যাটারির বিধিনিষেধ ছাড়া চলতে দিন। আপনার শুরু করা কোনো ট্রান্সফার চলার সময়েই কেবল TotalDrop ব্যাকগ্রাউন্ডে কাজ করে।</value>
+    <comment>The same page: why TotalDrop asks to run without battery restrictions</comment>
+  </data>
+  <data name="setupBackgroundMaker" xml:space="preserve">
+    <value>{maker} ফোনের নিজস্ব ব্যাটারি সেভার আছে</value>
+    <comment>The same page: heading of the second step on Xiaomi, Redmi and POCO phones, which add a battery saver of their own</comment>
+  </data>
+  <data name="setupBackgroundMakerBody" xml:space="preserve">
+    <value>TotalDrop-এর ব্যাটারি সেভারও খুলে "কোনো বিধিনিষেধ নেই" বেছে নিন। ফোনে অটোস্টার্ট থাকলে TotalDrop-এর জন্য তা চালু করুন।</value>
+    <comment>The same page: what to choose in the maker's battery saver; "No restrictions" is the label on Xiaomi phones, use the label those phones show in your language</comment>
+  </data>
+  <data name="setupBackgroundMakerOpen" xml:space="preserve">
+    <value>TotalDrop-এর ব্যাটারি সেভার খুলুন</value>
+    <comment>The same page: button that opens the maker's battery saver for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundRestricted" xml:space="preserve">
+    <value>TotalDrop-এর জন্য Android-এর ব্যাটারি অপ্টিমাইজেশন চালু আছে: অন্য অ্যাপে গেলে ট্রান্সফার থেমে যেতে পারে।</value>
+    <comment>The same page: status when Android's battery optimisation is still on for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundSkip" xml:space="preserve">
+    <value>এখন নয়</value>
+    <comment>The same page at first start: skip it for now</comment>
+  </data>
+  <data name="setupBackgroundTitle" xml:space="preserve">
+    <value>ব্যাকগ্রাউন্ডে ট্রান্সফার চালু রাখুন</value>
+    <comment>First-run and Settings page about background transfers (#338): heading</comment>
+  </data>
+  <data name="shareBusy" xml:space="preserve">
+    <value>একটি স্থানান্তর এখনও চলছে। শেষ হওয়া পর্যন্ত অপেক্ষা করুন বা থামান, তারপর আবার শেয়ার করুন।</value>
+    <comment>Android: shown when files are shared to TotalDrop while a send or receive is still running; the shared files are not added</comment>
+  </data>
+  <data name="shareSkipped" xml:space="preserve">
+    <value>{count, plural, =1{শেয়ার করা একটি আইটেম পড়া যায়নি, তাই বাদ দেওয়া হয়েছে।} other{শেয়ার করা {count}টি আইটেম পড়া যায়নি, তাই বাদ দেওয়া হয়েছে।}}</value>
+    <comment>Android: shown when some of the items another app shared to TotalDrop could not be read (no read permission, or the app's own files) and were left out; the rest were added</comment>
+  </data>
+  <data name="sizeBytes" xml:space="preserve">
+    <value>{value} B</value>
+    <comment>A size in bytes. value is already formatted for the region</comment>
+  </data>
+  <data name="sizeGB" xml:space="preserve">
+    <value>{value} GB</value>
+    <comment>Gigabytes</comment>
+  </data>
+  <data name="sizeKB" xml:space="preserve">
+    <value>{value} kB</value>
+    <comment>Kilobytes (1000 bytes)</comment>
+  </data>
+  <data name="sizeMB" xml:space="preserve">
+    <value>{value} MB</value>
+    <comment>Megabytes</comment>
+  </data>
+  <data name="sizePB" xml:space="preserve">
+    <value>{value} PB</value>
+    <comment>Petabytes</comment>
+  </data>
+  <data name="sizeTB" xml:space="preserve">
+    <value>{value} TB</value>
+    <comment>Terabytes</comment>
+  </data>
+  <data name="stop" xml:space="preserve">
+    <value>থামান</value>
+  </data>
+  <data name="technicalDetail" xml:space="preserve">
+    <value>ইংরেজিতে প্রযুক্তিগত বার্তা, সমস্যা জানানোর সময় যোগ করার জন্য:</value>
+    <comment>Under Details, above the error's technical text, which stays in English so it can be searched and reported</comment>
+  </data>
+  <data name="textCopied" xml:space="preserve">
+    <value>লেখা কপি হয়েছে</value>
+    <comment>Tooltip after the received text was copied</comment>
+  </data>
+  <data name="transferNoticeBody" xml:space="preserve">
+    <value>অন্য অ্যাপ ব্যবহার করার সময়ও চলতে থাকে।</value>
+    <comment>Text of the ongoing transfer notification: the transfer continues while the person uses other apps</comment>
+  </data>
+  <data name="transferNoticeChannel" xml:space="preserve">
+    <value>স্থানান্তর</value>
+    <comment>Android notification channel name for running transfers (shown in system settings)</comment>
+  </data>
+  <data name="transferNoticeReceiving" xml:space="preserve">
+    <value>TotalDrop দিয়ে গ্রহণ করা হচ্ছে</value>
+    <comment>Title of the ongoing notification while a receive runs in the background</comment>
+  </data>
+  <data name="transferNoticeSending" xml:space="preserve">
+    <value>TotalDrop দিয়ে পাঠানো হচ্ছে</value>
+    <comment>Title of the ongoing notification while a send runs in the background</comment>
+  </data>
+  <data name="tryAgain" xml:space="preserve">
+    <value>আবার চেষ্টা করুন</value>
+  </data>
+  <data name="verificationHint" xml:space="preserve">
+    <value>The other person sees the same four words. If they differ, stop.</value>
+  </data>
+  <data name="verificationTitle" xml:space="preserve">
+    <value>Verification words</value>
+  </data>
+</root>

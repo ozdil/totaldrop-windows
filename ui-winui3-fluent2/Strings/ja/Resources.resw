@@ -1,0 +1,628 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 The TotalDrop Contributors -->
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="appTagline" xml:space="preserve">
+    <value>どんなファイルも、誰にでも、どこへでも。</value>
+    <comment>Short slogan under the app name on the home screen</comment>
+  </data>
+  <data name="back" xml:space="preserve">
+    <value>戻る</value>
+  </data>
+  <data name="cancel" xml:space="preserve">
+    <value>キャンセル</value>
+  </data>
+  <data name="cancelTransferBody" xml:space="preserve">
+    <value>転送を中止したことが相手に通知されます。</value>
+  </data>
+  <data name="cancelTransferTitle" xml:space="preserve">
+    <value>この転送を中止しますか？</value>
+  </data>
+  <data name="causeConnectionLost" xml:space="preserve">
+    <value>相手のデバイスとの接続が切れました。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeDiskFull" xml:space="preserve">
+    <value>このデバイスの空き容量が足りません。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeFileChanged" xml:space="preserve">
+    <value>送信中にファイルが変更されました。保存してからもう一度送信してください。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoPermission" xml:space="preserve">
+    <value>TotalDrop に、必要なファイルやフォルダーの読み取りまたは書き込みの許可がありません。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoRoute" xml:space="preserve">
+    <value>直接でもリレー経由でも、相手のデバイスに届きませんでした。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNotFound" xml:space="preserve">
+    <value>ファイルまたはフォルダーが見つかりません。移動または削除された可能性があります。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeProtocol" xml:space="preserve">
+    <value>相手のデバイスが、このバージョンでは理解できないものを送ってきました。両方のデバイスで TotalDrop を更新すると解決する場合があります。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeReadOnly" xml:space="preserve">
+    <value>フォルダーが書き込みできないディスク上にあります。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeRelay" xml:space="preserve">
+    <value>リレーに接続できないか、リレーが設定されていないか、2台のデバイスが同じリレーを使っていません。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeTimedOut" xml:space="preserve">
+    <value>接続が応答しなくなりました。どちらかのデバイスがネットワークから切断されたか、スリープした可能性があります。</value>
+    <comment>Under Details of a failed transfer: why it failed. The connection went silent (QUIC idle timeout), or the sender stopped sending.</comment>
+  </data>
+  <data name="codeSuggestions" xml:space="preserve">
+    <value>候補</value>
+  </data>
+  <data name="copyText" xml:space="preserve">
+    <value>テキストをコピー</value>
+    <comment>Receive result: button that copies the received text to the clipboard</comment>
+  </data>
+  <data name="desktopComment" xml:space="preserve">
+    <value>ファイルを別のデバイスへ直接送信。エンドツーエンドで暗号化</value>
+    <comment>Linux desktop entry: one-line description shown as a tooltip in app menus</comment>
+  </data>
+  <data name="desktopGenericName" xml:space="preserve">
+    <value>ファイル転送</value>
+    <comment>Linux desktop entry: what kind of app TotalDrop is, shown under its name in app menus and launchers</comment>
+  </data>
+  <data name="desktopKeywords" xml:space="preserve">
+    <value>送信;受信;共有;転送;ファイル;</value>
+    <comment>Linux desktop entry: search words for app launchers, separated by semicolons and ending with one. Words people type to find a file-sending app; no spaces around the semicolons</comment>
+  </data>
+  <data name="desktopSendWith" xml:space="preserve">
+    <value>TotalDrop で送信</value>
+    <comment>Linux file managers (Dolphin, Files, Nemo): right-click menu item that sends the selected files and folders with TotalDrop. Also Android: the item in the menu of text selected in any app, which sends that text</comment>
+  </data>
+  <data name="done" xml:space="preserve">
+    <value>完了</value>
+  </data>
+  <data name="draftTranslation" xml:space="preserve">
+    <value>この翻訳はレビュー中です。GitHub で改善にご協力ください。</value>
+    <comment>Shown in Settings when some of the text in this language is an unreviewed draft</comment>
+  </data>
+  <data name="editCopy" xml:space="preserve">
+    <value>コピー</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editCut" xml:space="preserve">
+    <value>切り取り</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editDelete" xml:space="preserve">
+    <value>削除</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editPaste" xml:space="preserve">
+    <value>貼り付け</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editRedo" xml:space="preserve">
+    <value>やり直す</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editSelectAll" xml:space="preserve">
+    <value>すべて選択</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editUndo" xml:space="preserve">
+    <value>元に戻す</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="errorBadServer" xml:space="preserve">
+    <value>サーバーのアドレスが無効です。「wss://」で始まる必要があります。</value>
+    <comment>The rendezvous server address in the settings is not valid. Same text as cliErrBadServer</comment>
+  </data>
+  <data name="errorCancelled" xml:space="preserve">
+    <value>相手が転送を中止しました。</value>
+  </data>
+  <data name="errorCodeExpired" xml:space="preserve">
+    <value>誰にも使われないまま、コードの有効期限が切れました。もう一度送信すると新しいコードが発行されます。</value>
+    <comment>Shown to the sender: nobody came for the code before the server let it expire (15 minutes). Same text as cliErrCodeExpired</comment>
+  </data>
+  <data name="errorCodeNotInUse" xml:space="preserve">
+    <value>このコードは使われていません。入力を間違えたか、有効期限が切れたか、すでに使用済みです。送信者に新しいコードを依頼してください。</value>
+    <comment>The server says no sender is using this code's number. Same text as cliErrCodeNotInUse</comment>
+  </data>
+  <data name="errorConnect" xml:space="preserve">
+    <value>相手のデバイスに接続できませんでした。両方のデバイスがオンラインであることを確認して、もう一度お試しください。</value>
+  </data>
+  <data name="errorDeclined" xml:space="preserve">
+    <value>受信者がファイルを拒否しました。</value>
+  </data>
+  <data name="errorInvalidCode" xml:space="preserve">
+    <value>このコードは無効です。</value>
+  </data>
+  <data name="errorInvalidOffer" xml:space="preserve">
+    <value>The offer broke a safety rule, so it was refused.</value>
+  </data>
+  <data name="errorOther" xml:space="preserve">
+    <value>問題が発生しました。</value>
+  </data>
+  <data name="errorPeerLeft" xml:space="preserve">
+    <value>転送が終わる前に相手が離れました。</value>
+  </data>
+  <data name="errorServer" xml:space="preserve">
+    <value>TotalDrop サーバーに接続できませんでした。インターネット接続を確認してください。</value>
+  </data>
+  <data name="errorStopped" xml:space="preserve">
+    <value>このデバイスで中止しました。</value>
+  </data>
+  <data name="errorStorage" xml:space="preserve">
+    <value>ファイルを読み込めないか、保存できませんでした。</value>
+  </data>
+  <data name="errorTextDamaged" xml:space="preserve">
+    <value>テキストが欠けることなく届かなかったため、表示しません。</value>
+    <comment>Receive result: the text failed its integrity check or is not valid text, so it is not shown</comment>
+  </data>
+  <data name="errorWrongCode" xml:space="preserve">
+    <value>The code did not match. It was mistyped, or someone tried to intercept the transfer. Nothing was sent. Start again with a new code.</value>
+  </data>
+  <data name="homeFooter" xml:space="preserve">
+    <value>エンドツーエンドで暗号化。アカウントもメールアドレスも電話番号も不要です。</value>
+  </data>
+  <data name="homeReceiveBody" xml:space="preserve">
+    <value>コードを入力してファイルを保存</value>
+  </data>
+  <data name="homeReceiveTitle" xml:space="preserve">
+    <value>受信</value>
+  </data>
+  <data name="homeSendBody" xml:space="preserve">
+    <value>ファイルを選んで短いコードを共有</value>
+  </data>
+  <data name="homeSendTitle" xml:space="preserve">
+    <value>送信</value>
+  </data>
+  <data name="itemsAndSize" xml:space="preserve">
+    <value>{count}個の項目 · {size}</value>
+  </data>
+  <data name="keepAwakeReason" xml:space="preserve">
+    <value>TotalDrop がファイルを送受信しています</value>
+    <comment>Linux: why the computer is kept from sleeping while a transfer runs; the desktop may show it in its power settings or battery menu</comment>
+  </data>
+  <data name="keepGoing" xml:space="preserve">
+    <value>続ける</value>
+  </data>
+  <data name="linkBusy" xml:space="preserve">
+    <value>画面上の操作を完了するか停止してから、もう一度リンクを開いてください。</value>
+    <comment>Android: shown when a TotalDrop link (totaldrop://r/… or https://totaldrop.app/r#…) opens the app while Receive cannot take a new code: a send or receive is running, an offer waits for an answer, or a received text is shown. The screen it refers to is shown; the link's code is not filled in</comment>
+  </data>
+  <data name="metainfoAbout" xml:space="preserve">
+    <value>TotalDrop は、ファイルやフォルダーをデバイスから別のデバイスへエンドツーエンドで暗号化して送ります。ファイルを選んで短いコードか QR コードを共有すれば、相手のデバイスが受け取ります。アカウントもメールアドレスも電話番号も不要です。</value>
+    <comment>Linux software centres: the paragraph that introduces TotalDrop on its page</comment>
+  </data>
+  <data name="metainfoOnePackage" xml:space="preserve">
+    <value>Linux のパッケージは一度に 1 つだけ使ってください。Flatpak と .pkg・.deb・.rpm パッケージは同じ名前を使うため、一方を開いている間にもう一方を起動すると、2 つ目のウィンドウは開かず、開いているウィンドウが前面に出ます。</value>
+    <comment>Linux software centres: last paragraph of the description; the Flatpak and the distribution package (.pkg, .deb, .rpm) cannot run at the same time (#351). Keep .pkg, .deb, .rpm and Flatpak as they are</comment>
+  </data>
+  <data name="metainfoSummary" xml:space="preserve">
+    <value>ファイルを別のデバイスへ直接送信</value>
+    <comment>Linux software centres (Discover, GNOME Software, Flathub): one-line summary under the app's name. No full stop at the end</comment>
+  </data>
+  <data name="metainfoTheme" xml:space="preserve">
+    <value>デスクトップのテーマに合わせます: Plasma、Hyprland、Omarchy、GNOME</value>
+    <comment>Linux software centres: feature list item; keep the desktop names Plasma, Hyprland, Omarchy and GNOME as they are</comment>
+  </data>
+  <data name="metainfoVerified" xml:space="preserve">
+    <value>届いたファイルはすべて検証され、壊れたファイルは破棄されます</value>
+    <comment>Linux software centres: feature list item about every received file being checked</comment>
+  </data>
+  <data name="metainfoWords" xml:space="preserve">
+    <value>4 つの確認用の単語で、間に誰もいないことを確かめられます</value>
+    <comment>Linux software centres: feature list item about the four verification words that show no one is intercepting the transfer</comment>
+  </data>
+  <data name="moreInfo" xml:space="preserve">
+    <value>詳細</value>
+  </data>
+  <data name="openFolder" xml:space="preserve">
+    <value>フォルダを開く</value>
+  </data>
+  <data name="otherPackageFlatpak" xml:space="preserve">
+    <value>TotalDrop はすでに Flatpak 版で開いているため、そのウィンドウを前面に出しました。パッケージは一度に 1 つだけ使ってください。こちらを開くには、そのウィンドウを終了してください。</value>
+    <comment>Linux desktop notification when TotalDrop is started from the distribution package while the Flatpak window is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="otherPackageSystem" xml:space="preserve">
+    <value>TotalDrop はすでに .pkg・.deb・.rpm パッケージ版で開いているため、そのウィンドウを前面に出しました。パッケージは一度に 1 つだけ使ってください。こちらを開くには、そのウィンドウを終了してください。</value>
+    <comment>Linux desktop notification when TotalDrop is started from the Flatpak while the window of the .pkg, .deb or .rpm package is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="pickImageTitle" xml:space="preserve">
+    <value>QR コードを含む画像を選択</value>
+  </data>
+  <data name="pickTitle" xml:space="preserve">
+    <value>送信するファイルを選択</value>
+  </data>
+  <data name="privacyMode" xml:space="preserve">
+    <value>相手のデバイスに自分のアドレスを隠す</value>
+  </data>
+  <data name="privacyModeConfirmBody" xml:space="preserve">
+    <value>デバイス間で直接やり取りしなくなるため、転送は遅くなります。仲介サーバーとリレーには引き続き IP アドレスが見えますが、ファイルや鍵が見えることはありません。</value>
+  </data>
+  <data name="privacyModeConfirmTitle" xml:space="preserve">
+    <value>プライバシーモードをオンにしますか？</value>
+  </data>
+  <data name="privacyModeHint" xml:space="preserve">
+    <value>プライバシーモード：すべてがリレーを経由するため、相手のデバイスにあなたの IP アドレスが知られることはありません。速度は遅くなり、相手のデバイスも同じリレーを使う必要があります（デフォルトのリレーなら同じです）。</value>
+  </data>
+  <data name="privacyModeTurnOn" xml:space="preserve">
+    <value>オンにする</value>
+  </data>
+  <data name="progressPercent" xml:space="preserve">
+    <value>{percent}%</value>
+    <comment>Transfer progress; use your language's percent style</comment>
+  </data>
+  <data name="receiveAccept" xml:space="preserve">
+    <value>Accept</value>
+  </data>
+  <data name="receiveAndMore" xml:space="preserve">
+    <value>ほか{count}件</value>
+  </data>
+  <data name="receiveCodeHelp" xml:space="preserve">
+    <value>送信者にコードを教えてもらってください。</value>
+  </data>
+  <data name="receiveCodeHint" xml:space="preserve">
+    <value>7-harbor-rocket</value>
+  </data>
+  <data name="receiveCodeInvalid" xml:space="preserve">
+    <value>コードの形式ではありません。コードは数字で始まり、そのあとに2語または3語が続きます。</value>
+  </data>
+  <data name="receiveCodeLabel" xml:space="preserve">
+    <value>コード</value>
+  </data>
+  <data name="receiveConnect" xml:space="preserve">
+    <value>接続</value>
+  </data>
+  <data name="receiveConnecting" xml:space="preserve">
+    <value>安全に接続しています…</value>
+  </data>
+  <data name="receiveDecline" xml:space="preserve">
+    <value>Decline</value>
+  </data>
+  <data name="receiveDeclined" xml:space="preserve">
+    <value>ファイルの受け取りを拒否しました。</value>
+  </data>
+  <data name="receiveDone" xml:space="preserve">
+    <value>受信完了・検証済み</value>
+  </data>
+  <data name="receiveFromImage" xml:space="preserve">
+    <value>画像から QR コードを読み取る</value>
+  </data>
+  <data name="receiveOffer" xml:space="preserve">
+    <value>受信するファイル</value>
+  </data>
+  <data name="receiveOfferSummary" xml:space="preserve">
+    <value>{files}個のファイル · {size}</value>
+  </data>
+  <data name="receiveOfferText" xml:space="preserve">
+    <value>受信するテキスト</value>
+    <comment>Receive screen: title when the other side wants to send a text, not files</comment>
+  </data>
+  <data name="receiveOfferTextNote" xml:space="preserve">
+    <value>テキストはここに表示され、保存はされません。</value>
+    <comment>Receive screen: under an incoming text, in place of the folder files are saved to</comment>
+  </data>
+  <data name="receivePaste" xml:space="preserve">
+    <value>貼り付け</value>
+  </data>
+  <data name="receiveQrNotFound" xml:space="preserve">
+    <value>この画像には TotalDrop のコードがありません。</value>
+  </data>
+  <data name="receiveReceiving" xml:space="preserve">
+    <value>受信中</value>
+  </data>
+  <data name="receiveSaveTo" xml:space="preserve">
+    <value>保存先：{folder}</value>
+  </data>
+  <data name="receiveTextDeclined" xml:space="preserve">
+    <value>テキストの受け取りを拒否しました。</value>
+    <comment>Receive result: the person declined an incoming text</comment>
+  </data>
+  <data name="receiveTextDone" xml:space="preserve">
+    <value>テキスト受信完了・検証済み</value>
+    <comment>Receive result: title when a text arrived and its check passed; the text is shown below it</comment>
+  </data>
+  <data name="receiveTextHidden" xml:space="preserve">
+    <value>テキストに見えない文字が含まれており、U+… の形で表示しています。コピーすると、届いたとおりのテキストがコピーされます。</value>
+    <comment>Receive result: the text holds invisible control or direction characters, shown in the text by their code, as &lt;U+202E&gt;; keep U+… as it is</comment>
+  </data>
+  <data name="receiveTextShortened" xml:space="preserve">
+    <value>テキストの冒頭だけを表示しています。「テキストをコピー」で全文をコピーします。</value>
+    <comment>Receive result: a very long text is shown only in part; the Copy text button copies the whole text</comment>
+  </data>
+  <data name="receiveTitle" xml:space="preserve">
+    <value>ファイルを受信</value>
+  </data>
+  <data name="sameNetworkNote" xml:space="preserve">
+    <value>インターネット経由で使えます。デバイス同士が直接つながらない場合、暗号化された転送はリレーを経由します。リレーは内容を読めません。</value>
+  </data>
+  <data name="sendAddFailed" xml:space="preserve">
+    <value>ファイルを追加できませんでした。もう一度お試しください。それでも追加できない場合は、このデバイスに十分な空き容量があるかを確かめるか、別の場所からファイルを選んでください。</value>
+    <comment>Shown on the send screen when the system file picker could not hand over the chosen files (a path it cannot read, too little memory, or no space left for its copy).</comment>
+  </data>
+  <data name="sendAddFiles" xml:space="preserve">
+    <value>ファイルを追加</value>
+  </data>
+  <data name="sendClipboard" xml:space="preserve">
+    <value>クリップボードを送信</value>
+    <comment>Linux desktop entry action and Android shortcut: opens Send with the text on the clipboard filled in</comment>
+  </data>
+  <data name="sendClipboardEmpty" xml:space="preserve">
+    <value>クリップボードにテキストがありません。</value>
+    <comment>Send screen: shown when Send clipboard finds no text on the clipboard</comment>
+  </data>
+  <data name="sendClipboardKept" xml:space="preserve">
+    <value>入力済みのテキストはそのままです。クリップボードは使われていません。</value>
+    <comment>Send screen: Send clipboard was chosen while the text box already held typed text, so the clipboard was not pasted</comment>
+  </data>
+  <data name="sendCodeHint" xml:space="preserve">
+    <value>相手のデバイスで TotalDrop を開き、「受信」をタップしてこのコードを入力してください。</value>
+  </data>
+  <data name="sendCopied" xml:space="preserve">
+    <value>コードをコピーしました</value>
+  </data>
+  <data name="sendCopy" xml:space="preserve">
+    <value>コピー</value>
+  </data>
+  <data name="sendCounting" xml:space="preserve">
+    <value>計算中…</value>
+  </data>
+  <data name="sendCreateCode" xml:space="preserve">
+    <value>コードを作成</value>
+  </data>
+  <data name="sendDone" xml:space="preserve">
+    <value>送信完了・検証済み</value>
+  </data>
+  <data name="sendDoneBody" xml:space="preserve">
+    <value>{count, plural, =1{ファイルは破損なく届きました。} other{{count}個のファイルがすべて破損なく届きました。}}</value>
+  </data>
+  <data name="sendDropHere" xml:space="preserve">
+    <value>ここにファイルをドロップ</value>
+  </data>
+  <data name="sendDropHint" xml:space="preserve">
+    <value>このウィンドウにファイルをドラッグして追加することもできます。</value>
+  </data>
+  <data name="sendEmpty" xml:space="preserve">
+    <value>まだ何も選択されていません</value>
+  </data>
+  <data name="sendEmptyHint" xml:space="preserve">
+    <value>送信するファイルを追加してください。受信者が受け取るのはこれらのファイルだけです。</value>
+  </data>
+  <data name="sendPreparing" xml:space="preserve">
+    <value>ファイルを準備しています…</value>
+  </data>
+  <data name="sendQrHint" xml:space="preserve">
+    <value>または、相手のデバイスのカメラでこのコードを読み取ってください。</value>
+  </data>
+  <data name="sendRemove" xml:space="preserve">
+    <value>削除</value>
+  </data>
+  <data name="sendSending" xml:space="preserve">
+    <value>送信中</value>
+  </data>
+  <data name="sendShare" xml:space="preserve">
+    <value>共有</value>
+  </data>
+  <data name="sendShareText" xml:space="preserve">
+    <value>TotalDrop で私のファイルを受け取ってください。コード：{code}</value>
+  </data>
+  <data name="sendSomeFailed" xml:space="preserve">
+    <value>{count, plural, =1{1個のファイルが正しく届かなかったため、破棄されました。} other{{count}個のファイルが正しく届かなかったため、破棄されました。}}</value>
+  </data>
+  <data name="sendStrongCode" xml:space="preserve">
+    <value>より強力なコード</value>
+  </data>
+  <data name="sendStrongCodeHint" xml:space="preserve">
+    <value>2語ではなく3語：推測がはるかに難しくなります</value>
+  </data>
+  <data name="sendText" xml:space="preserve">
+    <value>テキストを送信</value>
+    <comment>Send screen: button and screen title for sending a piece of text instead of files</comment>
+  </data>
+  <data name="sendTextDone" xml:space="preserve">
+    <value>テキストは欠けることなく届きました。</value>
+    <comment>Send result: the text reached the receiver and its check passed</comment>
+  </data>
+  <data name="sendTextHidden" xml:space="preserve">
+    <value>テキストに方向記号などの見えない文字が含まれています。これらも一緒に送信されます。</value>
+    <comment>Send screen: the text to send holds invisible control or direction characters; they are sent as they are</comment>
+  </data>
+  <data name="sendTextHint" xml:space="preserve">
+    <value>送信するテキストを入力するか貼り付けてください</value>
+    <comment>Send screen: placeholder in the box where the person types or pastes the text to send</comment>
+  </data>
+  <data name="sendTextShortened" xml:space="preserve">
+    <value>テキストの冒頭だけを表示しています。送信されるのは全文です。</value>
+    <comment>Send screen: a very long pasted text is shown only in part; the whole text is still sent</comment>
+  </data>
+  <data name="sendTextTooLong" xml:space="preserve">
+    <value>テキストは最大 {size} までです。それより長いものはファイルとして送信してください。</value>
+    <comment>Send screen: the text is over the limit; {size} is the limit, such as 1 MB</comment>
+  </data>
+  <data name="sendTitle" xml:space="preserve">
+    <value>ファイルを送信</value>
+  </data>
+  <data name="sendWaiting" xml:space="preserve">
+    <value>受信者を待っています…</value>
+  </data>
+  <data name="sendWaitingAccept" xml:space="preserve">
+    <value>単語を確認してから、受信者が受け取るのを待ってください。</value>
+  </data>
+  <data name="sendYourCode" xml:space="preserve">
+    <value>あなたのコード</value>
+  </data>
+  <data name="settings" xml:space="preserve">
+    <value>設定</value>
+  </data>
+  <data name="settingsAbout" xml:space="preserve">
+    <value>このアプリについて</value>
+  </data>
+  <data name="settingsAboutBody" xml:space="preserve">
+    <value>TotalDrop は無料のオープンソースソフトウェアで、寄付によって運営されています。ライセンスは GPL-3.0-or-later です。</value>
+  </data>
+  <data name="settingsBackground" xml:space="preserve">
+    <value>バックグラウンドでの転送</value>
+    <comment>Settings: heading of the section about background transfers</comment>
+  </data>
+  <data name="settingsBackgroundOpen" xml:space="preserve">
+    <value>バッテリー設定</value>
+    <comment>Settings: button that opens the background transfers page</comment>
+  </data>
+  <data name="settingsPrivacy" xml:space="preserve">
+    <value>プライバシー</value>
+  </data>
+  <data name="settingsPrivacyBody" xml:space="preserve">
+    <value>仲介サーバー、リレー、Cloudflare の STUN サーバーにはあなたの IP アドレスが見えます。直接接続した場合は相手のデバイスにも見えます（プライバシーモードがオンの場合を除く）。いずれもファイル名、内容、鍵は見えず、私たちのサーバーはログを残しません。ファイルは可能であればデバイス間で直接、そうでなければリレーを経由して送られます。どちらの場合もエンドツーエンドで暗号化されます。</value>
+  </data>
+  <data name="settingsSave" xml:space="preserve">
+    <value>保存</value>
+  </data>
+  <data name="settingsServer" xml:space="preserve">
+    <value>仲介サーバー</value>
+  </data>
+  <data name="settingsServerHelp" xml:space="preserve">
+    <value>同じコードを持つ2台のデバイスが互いを見つけられるようにします。ファイルや鍵を見ることはありません。</value>
+  </data>
+  <data name="settingsServerInvalid" xml:space="preserve">
+    <value>「wss://」で始まる必要があります</value>
+  </data>
+  <data name="settingsServerReset" xml:space="preserve">
+    <value>デフォルトを使用</value>
+  </data>
+  <data name="settingsVersion" xml:space="preserve">
+    <value>バージョン {version}</value>
+  </data>
+  <data name="settingsWordsEnglish" xml:space="preserve">
+    <value>コードと確認用の単語はどの言語でも英語のままです。言語の異なるデバイス同士でも同じ単語が表示されるようにするためです。</value>
+    <comment>Shown in Settings under About. Explains why the transfer code and the verification words stay in English: they come from one English word list so that both devices show the same ones</comment>
+  </data>
+  <data name="setupBackgroundAllowed" xml:space="preserve">
+    <value>TotalDrop の Android バッテリー最適化はオフです。</value>
+    <comment>The same page: status when Android's battery optimisation is already off for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundAutostart" xml:space="preserve">
+    <value>自動起動を開く</value>
+    <comment>The same page: button that opens the maker's Autostart page (Xiaomi)</comment>
+  </data>
+  <data name="setupBackgroundBattery" xml:space="preserve">
+    <value>バッテリー設定を開く</value>
+    <comment>The same page: button that opens TotalDrop's app info, where its battery use is set</comment>
+  </data>
+  <data name="setupBackgroundBatteryHint" xml:space="preserve">
+    <value>TotalDrop のアプリ情報で「バッテリー」を開き、制限なしの使用を許可してください。設定の名前は端末によって異なります。</value>
+    <comment>The same page: under the first button, which opens TotalDrop's app info; what to do there</comment>
+  </data>
+  <data name="setupBackgroundBody" xml:space="preserve">
+    <value>アプリを切り替えたり画面をロックしたりしても転送が続くように、TotalDrop をバッテリーの制限なしで動かせるようにしてください。TotalDrop がバックグラウンドで動くのは、あなたが始めた転送の間だけです。</value>
+    <comment>The same page: why TotalDrop asks to run without battery restrictions</comment>
+  </data>
+  <data name="setupBackgroundMaker" xml:space="preserve">
+    <value>{maker} の端末には独自のバッテリーセーバーがあります</value>
+    <comment>The same page: heading of the second step on Xiaomi, Redmi and POCO phones, which add a battery saver of their own</comment>
+  </data>
+  <data name="setupBackgroundMakerBody" xml:space="preserve">
+    <value>TotalDrop のバッテリーセーバーも開き、「制限なし」を選んでください。自動起動がある場合は、TotalDrop で有効にしてください。</value>
+    <comment>The same page: what to choose in the maker's battery saver; "No restrictions" is the label on Xiaomi phones, use the label those phones show in your language</comment>
+  </data>
+  <data name="setupBackgroundMakerOpen" xml:space="preserve">
+    <value>TotalDrop のバッテリーセーバーを開く</value>
+    <comment>The same page: button that opens the maker's battery saver for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundRestricted" xml:space="preserve">
+    <value>TotalDrop の Android バッテリー最適化はオンです。アプリを切り替えると転送が止まることがあります。</value>
+    <comment>The same page: status when Android's battery optimisation is still on for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundSkip" xml:space="preserve">
+    <value>後で</value>
+    <comment>The same page at first start: skip it for now</comment>
+  </data>
+  <data name="setupBackgroundTitle" xml:space="preserve">
+    <value>バックグラウンドでも転送を続ける</value>
+    <comment>First-run and Settings page about background transfers (#338): heading</comment>
+  </data>
+  <data name="shareBusy" xml:space="preserve">
+    <value>転送がまだ進行中です。完了を待つか停止してから、もう一度共有してください。</value>
+    <comment>Android: shown when files are shared to TotalDrop while a send or receive is still running; the shared files are not added</comment>
+  </data>
+  <data name="shareSkipped" xml:space="preserve">
+    <value>{count, plural, =1{共有された1件の項目を読み取れなかったため、除外しました。} other{共有された{count}件の項目を読み取れなかったため、除外しました。}}</value>
+    <comment>Android: shown when some of the items another app shared to TotalDrop could not be read (no read permission, or the app's own files) and were left out; the rest were added</comment>
+  </data>
+  <data name="sizeBytes" xml:space="preserve">
+    <value>{value} B</value>
+    <comment>A size in bytes. value is already formatted for the region</comment>
+  </data>
+  <data name="sizeGB" xml:space="preserve">
+    <value>{value} GB</value>
+    <comment>Gigabytes</comment>
+  </data>
+  <data name="sizeKB" xml:space="preserve">
+    <value>{value} kB</value>
+    <comment>Kilobytes (1000 bytes)</comment>
+  </data>
+  <data name="sizeMB" xml:space="preserve">
+    <value>{value} MB</value>
+    <comment>Megabytes</comment>
+  </data>
+  <data name="sizePB" xml:space="preserve">
+    <value>{value} PB</value>
+    <comment>Petabytes</comment>
+  </data>
+  <data name="sizeTB" xml:space="preserve">
+    <value>{value} TB</value>
+    <comment>Terabytes</comment>
+  </data>
+  <data name="stop" xml:space="preserve">
+    <value>中止</value>
+  </data>
+  <data name="technicalDetail" xml:space="preserve">
+    <value>問題を報告するときに添える、英語の技術メッセージ:</value>
+    <comment>Under Details, above the error's technical text, which stays in English so it can be searched and reported</comment>
+  </data>
+  <data name="textCopied" xml:space="preserve">
+    <value>テキストをコピーしました</value>
+    <comment>Tooltip after the received text was copied</comment>
+  </data>
+  <data name="transferNoticeBody" xml:space="preserve">
+    <value>ほかのアプリを使っている間も続きます。</value>
+    <comment>Text of the ongoing transfer notification: the transfer continues while the person uses other apps</comment>
+  </data>
+  <data name="transferNoticeChannel" xml:space="preserve">
+    <value>転送</value>
+    <comment>Android notification channel name for running transfers (shown in system settings)</comment>
+  </data>
+  <data name="transferNoticeReceiving" xml:space="preserve">
+    <value>TotalDrop で受信中</value>
+    <comment>Title of the ongoing notification while a receive runs in the background</comment>
+  </data>
+  <data name="transferNoticeSending" xml:space="preserve">
+    <value>TotalDrop で送信中</value>
+    <comment>Title of the ongoing notification while a send runs in the background</comment>
+  </data>
+  <data name="tryAgain" xml:space="preserve">
+    <value>再試行</value>
+  </data>
+  <data name="verificationHint" xml:space="preserve">
+    <value>The other person sees the same four words. If they differ, stop.</value>
+  </data>
+  <data name="verificationTitle" xml:space="preserve">
+    <value>Verification words</value>
+  </data>
+</root>

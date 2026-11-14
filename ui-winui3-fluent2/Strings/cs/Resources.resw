@@ -1,0 +1,628 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 The TotalDrop Contributors -->
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="appTagline" xml:space="preserve">
+    <value>Jakýkoli soubor, komukoli, kamkoli.</value>
+    <comment>Short slogan under the app name on the home screen</comment>
+  </data>
+  <data name="back" xml:space="preserve">
+    <value>Zpět</value>
+  </data>
+  <data name="cancel" xml:space="preserve">
+    <value>Zrušit</value>
+  </data>
+  <data name="cancelTransferBody" xml:space="preserve">
+    <value>Druhá strana se dozví, že byl přenos zastaven.</value>
+  </data>
+  <data name="cancelTransferTitle" xml:space="preserve">
+    <value>Zastavit tento přenos?</value>
+  </data>
+  <data name="causeConnectionLost" xml:space="preserve">
+    <value>Spojení s druhým zařízením se přerušilo.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeDiskFull" xml:space="preserve">
+    <value>Na tomto zařízení není dost volného místa.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeFileChanged" xml:space="preserve">
+    <value>Soubor se během odesílání změnil. Až bude uložený, pošlete ho znovu.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoPermission" xml:space="preserve">
+    <value>TotalDrop nemá oprávnění číst nebo zapisovat potřebný soubor či složku.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoRoute" xml:space="preserve">
+    <value>Druhé zařízení se nepodařilo zastihnout přímo ani přes zprostředkující server.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNotFound" xml:space="preserve">
+    <value>Soubor nebo složku se nepodařilo najít. Možná byly přesunuty nebo smazány.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeProtocol" xml:space="preserve">
+    <value>Druhé zařízení poslalo něco, čemu tato verze nerozumí. Pomoci může aktualizace TotalDrop na obou zařízeních.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeReadOnly" xml:space="preserve">
+    <value>Složka je na disku, na který nelze zapisovat.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeRelay" xml:space="preserve">
+    <value>Zprostředkující server není dostupný nebo není nastaven, případně obě zařízení nepoužívají tentýž.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeTimedOut" xml:space="preserve">
+    <value>Spojení přestalo odpovídat. Jedno ze zařízení možná ztratilo síť nebo přešlo do režimu spánku.</value>
+    <comment>Under Details of a failed transfer: why it failed. The connection went silent (QUIC idle timeout), or the sender stopped sending.</comment>
+  </data>
+  <data name="codeSuggestions" xml:space="preserve">
+    <value>Návrhy</value>
+  </data>
+  <data name="copyText" xml:space="preserve">
+    <value>Kopírovat text</value>
+    <comment>Receive result: button that copies the received text to the clipboard</comment>
+  </data>
+  <data name="desktopComment" xml:space="preserve">
+    <value>Posílejte soubory přímo do jiného zařízení, koncově šifrované</value>
+    <comment>Linux desktop entry: one-line description shown as a tooltip in app menus</comment>
+  </data>
+  <data name="desktopGenericName" xml:space="preserve">
+    <value>Přenos souborů</value>
+    <comment>Linux desktop entry: what kind of app TotalDrop is, shown under its name in app menus and launchers</comment>
+  </data>
+  <data name="desktopKeywords" xml:space="preserve">
+    <value>poslat;přijmout;sdílet;přenos;soubory;</value>
+    <comment>Linux desktop entry: search words for app launchers, separated by semicolons and ending with one. Words people type to find a file-sending app; no spaces around the semicolons</comment>
+  </data>
+  <data name="desktopSendWith" xml:space="preserve">
+    <value>Odeslat pomocí TotalDrop</value>
+    <comment>Linux file managers (Dolphin, Files, Nemo): right-click menu item that sends the selected files and folders with TotalDrop. Also Android: the item in the menu of text selected in any app, which sends that text</comment>
+  </data>
+  <data name="done" xml:space="preserve">
+    <value>Hotovo</value>
+  </data>
+  <data name="draftTranslation" xml:space="preserve">
+    <value>Tento překlad se kontroluje. Pomozte ho vylepšit na GitHubu.</value>
+    <comment>Shown in Settings when some of the text in this language is an unreviewed draft</comment>
+  </data>
+  <data name="editCopy" xml:space="preserve">
+    <value>Kopírovat</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editCut" xml:space="preserve">
+    <value>Vyjmout</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editDelete" xml:space="preserve">
+    <value>Smazat</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editPaste" xml:space="preserve">
+    <value>Vložit</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editRedo" xml:space="preserve">
+    <value>Znovu</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editSelectAll" xml:space="preserve">
+    <value>Vybrat vše</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editUndo" xml:space="preserve">
+    <value>Zpět</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="errorBadServer" xml:space="preserve">
+    <value>Adresa serveru není platná. Musí začínat wss://.</value>
+    <comment>The rendezvous server address in the settings is not valid. Same text as cliErrBadServer</comment>
+  </data>
+  <data name="errorCancelled" xml:space="preserve">
+    <value>Druhá strana přenos zastavila.</value>
+  </data>
+  <data name="errorCodeExpired" xml:space="preserve">
+    <value>Kód vypršel dřív, než ho někdo použil. Pro nový kód odešlete soubory znovu.</value>
+    <comment>Shown to the sender: nobody came for the code before the server let it expire (15 minutes). Same text as cliErrCodeExpired</comment>
+  </data>
+  <data name="errorCodeNotInUse" xml:space="preserve">
+    <value>Tento kód se nepoužívá: byl chybně zadán, vypršel nebo už byl použit. Požádejte odesílatele o nový.</value>
+    <comment>The server says no sender is using this code's number. Same text as cliErrCodeNotInUse</comment>
+  </data>
+  <data name="errorConnect" xml:space="preserve">
+    <value>Nelze se připojit k druhému zařízení. Zkontrolujte, že jsou obě zařízení online, a zkuste to znovu.</value>
+  </data>
+  <data name="errorDeclined" xml:space="preserve">
+    <value>Příjemce soubory odmítl.</value>
+  </data>
+  <data name="errorInvalidCode" xml:space="preserve">
+    <value>Tento kód není platný.</value>
+  </data>
+  <data name="errorInvalidOffer" xml:space="preserve">
+    <value>The offer broke a safety rule, so it was refused.</value>
+  </data>
+  <data name="errorOther" xml:space="preserve">
+    <value>Něco se pokazilo.</value>
+  </data>
+  <data name="errorPeerLeft" xml:space="preserve">
+    <value>Druhá strana odešla před dokončením přenosu.</value>
+  </data>
+  <data name="errorServer" xml:space="preserve">
+    <value>Nelze se spojit se serverem TotalDrop. Zkontrolujte připojení k internetu.</value>
+  </data>
+  <data name="errorStopped" xml:space="preserve">
+    <value>Zastaveno na tomto zařízení.</value>
+  </data>
+  <data name="errorStorage" xml:space="preserve">
+    <value>Soubor nelze přečíst nebo uložit.</value>
+  </data>
+  <data name="errorTextDamaged" xml:space="preserve">
+    <value>Text nedorazil v pořádku, proto se nezobrazí.</value>
+    <comment>Receive result: the text failed its integrity check or is not valid text, so it is not shown</comment>
+  </data>
+  <data name="errorWrongCode" xml:space="preserve">
+    <value>The code did not match. It was mistyped, or someone tried to intercept the transfer. Nothing was sent. Start again with a new code.</value>
+  </data>
+  <data name="homeFooter" xml:space="preserve">
+    <value>Koncové šifrování. Žádný účet, e-mail ani telefonní číslo.</value>
+  </data>
+  <data name="homeReceiveBody" xml:space="preserve">
+    <value>Zadejte kód a uložte soubory</value>
+  </data>
+  <data name="homeReceiveTitle" xml:space="preserve">
+    <value>Přijmout</value>
+  </data>
+  <data name="homeSendBody" xml:space="preserve">
+    <value>Vyberte soubory a sdílejte krátký kód</value>
+  </data>
+  <data name="homeSendTitle" xml:space="preserve">
+    <value>Odeslat</value>
+  </data>
+  <data name="itemsAndSize" xml:space="preserve">
+    <value>{count, plural, one{{count} položka} few{{count} položky} many{{count} položky} other{{count} položek}} · {size}</value>
+  </data>
+  <data name="keepAwakeReason" xml:space="preserve">
+    <value>TotalDrop odesílá nebo přijímá soubory</value>
+    <comment>Linux: why the computer is kept from sleeping while a transfer runs; the desktop may show it in its power settings or battery menu</comment>
+  </data>
+  <data name="keepGoing" xml:space="preserve">
+    <value>Pokračovat</value>
+  </data>
+  <data name="linkBusy" xml:space="preserve">
+    <value>Dokončete nebo zastavte to, co je na obrazovce, a pak odkaz otevřete znovu.</value>
+    <comment>Android: shown when a TotalDrop link (totaldrop://r/… or https://totaldrop.app/r#…) opens the app while Receive cannot take a new code: a send or receive is running, an offer waits for an answer, or a received text is shown. The screen it refers to is shown; the link's code is not filled in</comment>
+  </data>
+  <data name="metainfoAbout" xml:space="preserve">
+    <value>TotalDrop posílá soubory a složky z jednoho zařízení do druhého, koncově šifrované. Vyberte soubory, sdílejte krátký kód nebo QR kód a druhé zařízení je přijme. Žádný účet, e-mail ani telefonní číslo.</value>
+    <comment>Linux software centres: the paragraph that introduces TotalDrop on its page</comment>
+  </data>
+  <data name="metainfoOnePackage" xml:space="preserve">
+    <value>Používejte vždy jen jeden linuxový balíček. Flatpak a balíček .pkg, .deb nebo .rpm sdílejí jeden název, takže když je jeden otevřený, spuštění druhého jen přenese otevřené okno do popředí, místo aby otevřelo druhé.</value>
+    <comment>Linux software centres: last paragraph of the description; the Flatpak and the distribution package (.pkg, .deb, .rpm) cannot run at the same time (#351). Keep .pkg, .deb, .rpm and Flatpak as they are</comment>
+  </data>
+  <data name="metainfoSummary" xml:space="preserve">
+    <value>Posílejte soubory přímo do jiného zařízení</value>
+    <comment>Linux software centres (Discover, GNOME Software, Flathub): one-line summary under the app's name. No full stop at the end</comment>
+  </data>
+  <data name="metainfoTheme" xml:space="preserve">
+    <value>Řídí se motivem vašeho prostředí: Plasma, Hyprland, Omarchy, GNOME</value>
+    <comment>Linux software centres: feature list item; keep the desktop names Plasma, Hyprland, Omarchy and GNOME as they are</comment>
+  </data>
+  <data name="metainfoVerified" xml:space="preserve">
+    <value>Každý soubor se po doručení ověří; poškozené soubory se zahodí</value>
+    <comment>Linux software centres: feature list item about every received file being checked</comment>
+  </data>
+  <data name="metainfoWords" xml:space="preserve">
+    <value>Čtyři ověřovací slova ukážou, že mezi vámi nikdo není</value>
+    <comment>Linux software centres: feature list item about the four verification words that show no one is intercepting the transfer</comment>
+  </data>
+  <data name="moreInfo" xml:space="preserve">
+    <value>Podrobnosti</value>
+  </data>
+  <data name="openFolder" xml:space="preserve">
+    <value>Otevřít složku</value>
+  </data>
+  <data name="otherPackageFlatpak" xml:space="preserve">
+    <value>TotalDrop je už otevřený z Flatpaku, takže se jeho okno přeneslo do popředí. Používejte vždy jen jeden balíček: pro otevření tohoto ukončete to okno.</value>
+    <comment>Linux desktop notification when TotalDrop is started from the distribution package while the Flatpak window is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="otherPackageSystem" xml:space="preserve">
+    <value>TotalDrop je už otevřený z balíčku .pkg, .deb nebo .rpm, takže se jeho okno přeneslo do popředí. Používejte vždy jen jeden balíček: pro otevření tohoto ukončete to okno.</value>
+    <comment>Linux desktop notification when TotalDrop is started from the Flatpak while the window of the .pkg, .deb or .rpm package is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="pickImageTitle" xml:space="preserve">
+    <value>Vyberte obrázek s QR kódem</value>
+  </data>
+  <data name="pickTitle" xml:space="preserve">
+    <value>Vyberte soubory k odeslání</value>
+  </data>
+  <data name="privacyMode" xml:space="preserve">
+    <value>Skrýt mou adresu před druhým zařízením</value>
+  </data>
+  <data name="privacyModeConfirmBody" xml:space="preserve">
+    <value>Přenosy budou pomalejší, protože nic nepůjde přímo mezi zařízeními. Server pro navázání spojení a zprostředkující server stále vidí vaši IP adresu; vaše soubory ani klíče nikdy nevidí.</value>
+  </data>
+  <data name="privacyModeConfirmTitle" xml:space="preserve">
+    <value>Zapnout režim soukromí?</value>
+  </data>
+  <data name="privacyModeHint" xml:space="preserve">
+    <value>Režim soukromí: vše jde přes zprostředkující server, takže druhé zařízení se vaši IP adresu nikdy nedozví. Je to pomalejší a druhé zařízení musí používat stejný zprostředkující server (výchozí to splňuje).</value>
+  </data>
+  <data name="privacyModeTurnOn" xml:space="preserve">
+    <value>Zapnout</value>
+  </data>
+  <data name="progressPercent" xml:space="preserve">
+    <value>{percent} %</value>
+    <comment>Transfer progress; use your language's percent style</comment>
+  </data>
+  <data name="receiveAccept" xml:space="preserve">
+    <value>Accept</value>
+  </data>
+  <data name="receiveAndMore" xml:space="preserve">
+    <value>a {count} dalších</value>
+  </data>
+  <data name="receiveCodeHelp" xml:space="preserve">
+    <value>Požádejte odesílatele o kód.</value>
+  </data>
+  <data name="receiveCodeHint" xml:space="preserve">
+    <value>7-harbor-rocket</value>
+  </data>
+  <data name="receiveCodeInvalid" xml:space="preserve">
+    <value>Tohle nevypadá jako kód. Kód začíná číslem, za kterým následují dvě nebo tři slova.</value>
+  </data>
+  <data name="receiveCodeLabel" xml:space="preserve">
+    <value>Kód</value>
+  </data>
+  <data name="receiveConnect" xml:space="preserve">
+    <value>Připojit</value>
+  </data>
+  <data name="receiveConnecting" xml:space="preserve">
+    <value>Navazování zabezpečeného spojení…</value>
+  </data>
+  <data name="receiveDecline" xml:space="preserve">
+    <value>Decline</value>
+  </data>
+  <data name="receiveDeclined" xml:space="preserve">
+    <value>Soubory jste odmítli.</value>
+  </data>
+  <data name="receiveDone" xml:space="preserve">
+    <value>Přijato a ověřeno</value>
+  </data>
+  <data name="receiveFromImage" xml:space="preserve">
+    <value>Načíst QR kód z obrázku</value>
+  </data>
+  <data name="receiveOffer" xml:space="preserve">
+    <value>Příchozí soubory</value>
+  </data>
+  <data name="receiveOfferSummary" xml:space="preserve">
+    <value>{files, plural, one{{files} soubor} few{{files} soubory} many{{files} souboru} other{{files} souborů}} · {size}</value>
+  </data>
+  <data name="receiveOfferText" xml:space="preserve">
+    <value>Příchozí text</value>
+    <comment>Receive screen: title when the other side wants to send a text, not files</comment>
+  </data>
+  <data name="receiveOfferTextNote" xml:space="preserve">
+    <value>Text se zobrazí zde, neukládá se.</value>
+    <comment>Receive screen: under an incoming text, in place of the folder files are saved to</comment>
+  </data>
+  <data name="receivePaste" xml:space="preserve">
+    <value>Vložit</value>
+  </data>
+  <data name="receiveQrNotFound" xml:space="preserve">
+    <value>V tomto obrázku není kód TotalDrop.</value>
+  </data>
+  <data name="receiveReceiving" xml:space="preserve">
+    <value>Přijímání</value>
+  </data>
+  <data name="receiveSaveTo" xml:space="preserve">
+    <value>Uloženo do {folder}</value>
+  </data>
+  <data name="receiveTextDeclined" xml:space="preserve">
+    <value>Text jste odmítli.</value>
+    <comment>Receive result: the person declined an incoming text</comment>
+  </data>
+  <data name="receiveTextDone" xml:space="preserve">
+    <value>Text přijat a ověřen</value>
+    <comment>Receive result: title when a text arrived and its check passed; the text is shown below it</comment>
+  </data>
+  <data name="receiveTextHidden" xml:space="preserve">
+    <value>Text obsahuje skryté znaky, zobrazené jako U+…. Zkopírováním získáte text přesně tak, jak dorazil.</value>
+    <comment>Receive result: the text holds invisible control or direction characters, shown in the text by their code, as &lt;U+202E&gt;; keep U+… as it is</comment>
+  </data>
+  <data name="receiveTextShortened" xml:space="preserve">
+    <value>Zobrazen je jen začátek textu. Kopírovat text zkopíruje celý.</value>
+    <comment>Receive result: a very long text is shown only in part; the Copy text button copies the whole text</comment>
+  </data>
+  <data name="receiveTitle" xml:space="preserve">
+    <value>Přijmout soubory</value>
+  </data>
+  <data name="sameNetworkNote" xml:space="preserve">
+    <value>Funguje přes internet. Když se zařízení nemohou spojit přímo, šifrovaný přenos jde přes zprostředkující server, který ho nemůže přečíst.</value>
+  </data>
+  <data name="sendAddFailed" xml:space="preserve">
+    <value>Soubory se nepodařilo přidat. Zkuste to znovu. Pokud se to stane znovu, zkontrolujte, zda je v tomto zařízení dost volného místa, nebo vyberte soubory z jiného místa.</value>
+    <comment>Shown on the send screen when the system file picker could not hand over the chosen files (a path it cannot read, too little memory, or no space left for its copy).</comment>
+  </data>
+  <data name="sendAddFiles" xml:space="preserve">
+    <value>Přidat soubory</value>
+  </data>
+  <data name="sendClipboard" xml:space="preserve">
+    <value>Odeslat schránku</value>
+    <comment>Linux desktop entry action and Android shortcut: opens Send with the text on the clipboard filled in</comment>
+  </data>
+  <data name="sendClipboardEmpty" xml:space="preserve">
+    <value>Ve schránce není žádný text.</value>
+    <comment>Send screen: shown when Send clipboard finds no text on the clipboard</comment>
+  </data>
+  <data name="sendClipboardKept" xml:space="preserve">
+    <value>Napsaný text zůstal, schránka nebyla použita.</value>
+    <comment>Send screen: Send clipboard was chosen while the text box already held typed text, so the clipboard was not pasted</comment>
+  </data>
+  <data name="sendCodeHint" xml:space="preserve">
+    <value>Na druhém zařízení otevřete TotalDrop, klepněte na Přijmout a zadejte tento kód.</value>
+  </data>
+  <data name="sendCopied" xml:space="preserve">
+    <value>Kód zkopírován</value>
+  </data>
+  <data name="sendCopy" xml:space="preserve">
+    <value>Kopírovat</value>
+  </data>
+  <data name="sendCounting" xml:space="preserve">
+    <value>Počítání…</value>
+  </data>
+  <data name="sendCreateCode" xml:space="preserve">
+    <value>Vytvořit kód</value>
+  </data>
+  <data name="sendDone" xml:space="preserve">
+    <value>Odesláno a ověřeno</value>
+  </data>
+  <data name="sendDoneBody" xml:space="preserve">
+    <value>{count, plural, one{Soubor dorazil v pořádku.} few{Všechny {count} soubory dorazily v pořádku.} many{Všech {count} souboru dorazilo v pořádku.} other{Všech {count} souborů dorazilo v pořádku.}}</value>
+  </data>
+  <data name="sendDropHere" xml:space="preserve">
+    <value>Přetáhněte soubory sem</value>
+  </data>
+  <data name="sendDropHint" xml:space="preserve">
+    <value>Soubory můžete také přetáhnout do tohoto okna.</value>
+  </data>
+  <data name="sendEmpty" xml:space="preserve">
+    <value>Zatím nic nevybráno</value>
+  </data>
+  <data name="sendEmptyHint" xml:space="preserve">
+    <value>Přidejte soubory, které chcete odeslat. Příjemce dostane přesně tyto a nic jiného.</value>
+  </data>
+  <data name="sendPreparing" xml:space="preserve">
+    <value>Příprava souborů…</value>
+  </data>
+  <data name="sendQrHint" xml:space="preserve">
+    <value>Nebo tento kód naskenujte fotoaparátem druhého zařízení.</value>
+  </data>
+  <data name="sendRemove" xml:space="preserve">
+    <value>Odebrat</value>
+  </data>
+  <data name="sendSending" xml:space="preserve">
+    <value>Odesílání</value>
+  </data>
+  <data name="sendShare" xml:space="preserve">
+    <value>Sdílet</value>
+  </data>
+  <data name="sendShareText" xml:space="preserve">
+    <value>Přijmi moje soubory v TotalDrop. Kód: {code}</value>
+  </data>
+  <data name="sendSomeFailed" xml:space="preserve">
+    <value>{count, plural, one{Jeden soubor nedorazil v pořádku a byl zahozen.} few{{count} soubory nedorazily v pořádku a byly zahozeny.} many{{count} souboru nedorazilo v pořádku a bylo zahozeno.} other{{count} souborů nedorazilo v pořádku a bylo zahozeno.}}</value>
+  </data>
+  <data name="sendStrongCode" xml:space="preserve">
+    <value>Silnější kód</value>
+  </data>
+  <data name="sendStrongCodeHint" xml:space="preserve">
+    <value>Tři slova místo dvou: mnohem těžší uhodnout</value>
+  </data>
+  <data name="sendText" xml:space="preserve">
+    <value>Odeslat text</value>
+    <comment>Send screen: button and screen title for sending a piece of text instead of files</comment>
+  </data>
+  <data name="sendTextDone" xml:space="preserve">
+    <value>Text dorazil v pořádku.</value>
+    <comment>Send result: the text reached the receiver and its check passed</comment>
+  </data>
+  <data name="sendTextHidden" xml:space="preserve">
+    <value>Text obsahuje skryté znaky, například značky směru. Odešlou se spolu s ním.</value>
+    <comment>Send screen: the text to send holds invisible control or direction characters; they are sent as they are</comment>
+  </data>
+  <data name="sendTextHint" xml:space="preserve">
+    <value>Napište nebo vložte text k odeslání</value>
+    <comment>Send screen: placeholder in the box where the person types or pastes the text to send</comment>
+  </data>
+  <data name="sendTextShortened" xml:space="preserve">
+    <value>Zobrazen je jen začátek textu, odešle se celý.</value>
+    <comment>Send screen: a very long pasted text is shown only in part; the whole text is still sent</comment>
+  </data>
+  <data name="sendTextTooLong" xml:space="preserve">
+    <value>Text může mít nejvýše {size}. Delší text pošlete jako soubor.</value>
+    <comment>Send screen: the text is over the limit; {size} is the limit, such as 1 MB</comment>
+  </data>
+  <data name="sendTitle" xml:space="preserve">
+    <value>Odeslat soubory</value>
+  </data>
+  <data name="sendWaiting" xml:space="preserve">
+    <value>Čekání na příjemce…</value>
+  </data>
+  <data name="sendWaitingAccept" xml:space="preserve">
+    <value>Zkontrolujte slova a počkejte, až příjemce soubory přijme.</value>
+  </data>
+  <data name="sendYourCode" xml:space="preserve">
+    <value>Váš kód</value>
+  </data>
+  <data name="settings" xml:space="preserve">
+    <value>Nastavení</value>
+  </data>
+  <data name="settingsAbout" xml:space="preserve">
+    <value>O aplikaci</value>
+  </data>
+  <data name="settingsAboutBody" xml:space="preserve">
+    <value>TotalDrop je zdarma a má otevřený zdrojový kód, financují ho dary. Licence GPL-3.0-or-later.</value>
+  </data>
+  <data name="settingsBackground" xml:space="preserve">
+    <value>Přenosy na pozadí</value>
+    <comment>Settings: heading of the section about background transfers</comment>
+  </data>
+  <data name="settingsBackgroundOpen" xml:space="preserve">
+    <value>Nastavení baterie</value>
+    <comment>Settings: button that opens the background transfers page</comment>
+  </data>
+  <data name="settingsPrivacy" xml:space="preserve">
+    <value>Soukromí</value>
+  </data>
+  <data name="settingsPrivacyBody" xml:space="preserve">
+    <value>Server pro navázání spojení, zprostředkující server a STUN server Cloudflare vidí vaši IP adresu, stejně jako druhé zařízení při přímém spojení (pokud není zapnutý režim soukromí). Žádný z nich nevidí názvy souborů, jejich obsah ani klíče a naše servery nevedou záznamy. Soubory jdou přímo mezi zařízeními, když to jde, jinak přes zprostředkující server; v obou případech jsou koncově šifrované.</value>
+  </data>
+  <data name="settingsSave" xml:space="preserve">
+    <value>Uložit</value>
+  </data>
+  <data name="settingsServer" xml:space="preserve">
+    <value>Server pro navázání spojení</value>
+  </data>
+  <data name="settingsServerHelp" xml:space="preserve">
+    <value>Pomáhá dvěma zařízením se stejným kódem najít se navzájem. Nikdy nevidí vaše soubory ani klíče.</value>
+  </data>
+  <data name="settingsServerInvalid" xml:space="preserve">
+    <value>Musí začínat wss://</value>
+  </data>
+  <data name="settingsServerReset" xml:space="preserve">
+    <value>Použít výchozí</value>
+  </data>
+  <data name="settingsVersion" xml:space="preserve">
+    <value>Verze {version}</value>
+  </data>
+  <data name="settingsWordsEnglish" xml:space="preserve">
+    <value>Kódy a ověřovací slova jsou v každém jazyce v angličtině, aby dvě zařízení v různých jazycích zobrazovala stejná slova.</value>
+    <comment>Shown in Settings under About. Explains why the transfer code and the verification words stay in English: they come from one English word list so that both devices show the same ones</comment>
+  </data>
+  <data name="setupBackgroundAllowed" xml:space="preserve">
+    <value>Optimalizace baterie systému Android je pro TotalDrop vypnutá.</value>
+    <comment>The same page: status when Android's battery optimisation is already off for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundAutostart" xml:space="preserve">
+    <value>Otevřít Automatické spuštění</value>
+    <comment>The same page: button that opens the maker's Autostart page (Xiaomi)</comment>
+  </data>
+  <data name="setupBackgroundBattery" xml:space="preserve">
+    <value>Otevřít nastavení baterie</value>
+    <comment>The same page: button that opens TotalDrop's app info, where its battery use is set</comment>
+  </data>
+  <data name="setupBackgroundBatteryHint" xml:space="preserve">
+    <value>Na stránce informací o aplikaci TotalDrop otevřete Baterii a povolte neomezené používání. Názvy těchto nastavení se v různých telefonech liší.</value>
+    <comment>The same page: under the first button, which opens TotalDrop's app info; what to do there</comment>
+  </data>
+  <data name="setupBackgroundBody" xml:space="preserve">
+    <value>Aby přenos pokračoval i po přepnutí do jiné aplikace nebo zamknutí obrazovky, povolte TotalDropu běžet bez omezení baterie. TotalDrop pracuje na pozadí jen během přenosu, který jste sami spustili.</value>
+    <comment>The same page: why TotalDrop asks to run without battery restrictions</comment>
+  </data>
+  <data name="setupBackgroundMaker" xml:space="preserve">
+    <value>Telefony {maker} mají vlastní spořič baterie</value>
+    <comment>The same page: heading of the second step on Xiaomi, Redmi and POCO phones, which add a battery saver of their own</comment>
+  </data>
+  <data name="setupBackgroundMakerBody" xml:space="preserve">
+    <value>Otevřete také spořič baterie pro TotalDrop a zvolte „Bez omezení“. Pokud telefon nabízí Automatické spuštění, zapněte ho pro TotalDrop.</value>
+    <comment>The same page: what to choose in the maker's battery saver; "No restrictions" is the label on Xiaomi phones, use the label those phones show in your language</comment>
+  </data>
+  <data name="setupBackgroundMakerOpen" xml:space="preserve">
+    <value>Otevřít spořič baterie TotalDropu</value>
+    <comment>The same page: button that opens the maker's battery saver for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundRestricted" xml:space="preserve">
+    <value>Optimalizace baterie systému Android je pro TotalDrop zapnutá: po přepnutí do jiné aplikace se přenos může zastavit.</value>
+    <comment>The same page: status when Android's battery optimisation is still on for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundSkip" xml:space="preserve">
+    <value>Teď ne</value>
+    <comment>The same page at first start: skip it for now</comment>
+  </data>
+  <data name="setupBackgroundTitle" xml:space="preserve">
+    <value>Přenosy pokračují na pozadí</value>
+    <comment>First-run and Settings page about background transfers (#338): heading</comment>
+  </data>
+  <data name="shareBusy" xml:space="preserve">
+    <value>Přenos stále probíhá. Počkejte, až skončí, nebo ho zastavte, a pak sdílejte znovu.</value>
+    <comment>Android: shown when files are shared to TotalDrop while a send or receive is still running; the shared files are not added</comment>
+  </data>
+  <data name="shareSkipped" xml:space="preserve">
+    <value>{count, plural, one{Jednu sdílenou položku nebylo možné přečíst, proto byla vynechána.} few{{count} sdílené položky nebylo možné přečíst, proto byly vynechány.} many{{count} sdílené položky nebylo možné přečíst, proto byly vynechány.} other{{count} sdílených položek nebylo možné přečíst, proto byly vynechány.}}</value>
+    <comment>Android: shown when some of the items another app shared to TotalDrop could not be read (no read permission, or the app's own files) and were left out; the rest were added</comment>
+  </data>
+  <data name="sizeBytes" xml:space="preserve">
+    <value>{value} B</value>
+    <comment>A size in bytes. value is already formatted for the region</comment>
+  </data>
+  <data name="sizeGB" xml:space="preserve">
+    <value>{value} GB</value>
+    <comment>Gigabytes</comment>
+  </data>
+  <data name="sizeKB" xml:space="preserve">
+    <value>{value} kB</value>
+    <comment>Kilobytes (1000 bytes)</comment>
+  </data>
+  <data name="sizeMB" xml:space="preserve">
+    <value>{value} MB</value>
+    <comment>Megabytes</comment>
+  </data>
+  <data name="sizePB" xml:space="preserve">
+    <value>{value} PB</value>
+    <comment>Petabytes</comment>
+  </data>
+  <data name="sizeTB" xml:space="preserve">
+    <value>{value} TB</value>
+    <comment>Terabytes</comment>
+  </data>
+  <data name="stop" xml:space="preserve">
+    <value>Zastavit</value>
+  </data>
+  <data name="technicalDetail" xml:space="preserve">
+    <value>Technická zpráva v angličtině, kterou přiložte při hlášení problému:</value>
+    <comment>Under Details, above the error's technical text, which stays in English so it can be searched and reported</comment>
+  </data>
+  <data name="textCopied" xml:space="preserve">
+    <value>Text zkopírován</value>
+    <comment>Tooltip after the received text was copied</comment>
+  </data>
+  <data name="transferNoticeBody" xml:space="preserve">
+    <value>Pokračuje, i když používáte jiné aplikace.</value>
+    <comment>Text of the ongoing transfer notification: the transfer continues while the person uses other apps</comment>
+  </data>
+  <data name="transferNoticeChannel" xml:space="preserve">
+    <value>Přenosy</value>
+    <comment>Android notification channel name for running transfers (shown in system settings)</comment>
+  </data>
+  <data name="transferNoticeReceiving" xml:space="preserve">
+    <value>Příjem přes TotalDrop</value>
+    <comment>Title of the ongoing notification while a receive runs in the background</comment>
+  </data>
+  <data name="transferNoticeSending" xml:space="preserve">
+    <value>Odesílání přes TotalDrop</value>
+    <comment>Title of the ongoing notification while a send runs in the background</comment>
+  </data>
+  <data name="tryAgain" xml:space="preserve">
+    <value>Zkusit znovu</value>
+  </data>
+  <data name="verificationHint" xml:space="preserve">
+    <value>The other person sees the same four words. If they differ, stop.</value>
+  </data>
+  <data name="verificationTitle" xml:space="preserve">
+    <value>Verification words</value>
+  </data>
+</root>

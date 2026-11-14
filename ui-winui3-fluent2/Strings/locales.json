@@ -1,0 +1,251 @@
+{
+  "defaultLocale": "en",
+  "localeCount": 35,
+  "locales": [
+    {
+      "tag": "ar",
+      "autonym": "العربية",
+      "dir": "rtl",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "bn",
+      "autonym": "বাংলা",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "cs",
+      "autonym": "Čeština",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "da",
+      "autonym": "Dansk",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "de",
+      "autonym": "Deutsch",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "el",
+      "autonym": "Ελληνικά",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "en",
+      "autonym": "English",
+      "dir": "ltr",
+      "reviewed": true,
+      "keyCount": 176
+    },
+    {
+      "tag": "es",
+      "autonym": "Español",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "fa",
+      "autonym": "فارسی",
+      "dir": "rtl",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "fi",
+      "autonym": "Suomi",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "fr",
+      "autonym": "Français",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "he",
+      "autonym": "עברית",
+      "dir": "rtl",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "hi",
+      "autonym": "हिन्दी",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "hu",
+      "autonym": "Magyar",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "id",
+      "autonym": "Bahasa Indonesia",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "it",
+      "autonym": "Italiano",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "ja",
+      "autonym": "日本語",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "ko",
+      "autonym": "한국어",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "ms",
+      "autonym": "Bahasa Melayu",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "nb",
+      "autonym": "Norsk bokmål",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "nl",
+      "autonym": "Nederlands",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "pl",
+      "autonym": "Polski",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "pt-BR",
+      "autonym": "Português (Brasil)",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "pt-PT",
+      "autonym": "Português (Portugal)",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "ro",
+      "autonym": "Română",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "ru",
+      "autonym": "Русский",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "sv",
+      "autonym": "Svenska",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "sw",
+      "autonym": "Kiswahili",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "th",
+      "autonym": "ไทย",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "tr",
+      "autonym": "Türkçe",
+      "dir": "ltr",
+      "reviewed": true,
+      "keyCount": 176
+    },
+    {
+      "tag": "uk",
+      "autonym": "Українська",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "ur",
+      "autonym": "اردو",
+      "dir": "rtl",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "vi",
+      "autonym": "Tiếng Việt",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "zh-Hans",
+      "autonym": "简体中文",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    },
+    {
+      "tag": "zh-Hant",
+      "autonym": "繁體中文",
+      "dir": "ltr",
+      "reviewed": false,
+      "keyCount": 176
+    }
+  ]
+}

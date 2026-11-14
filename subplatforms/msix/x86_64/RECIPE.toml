@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 The TotalDrop Contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Isolated sub-platform x CPU architecture recipe manifest (ADR 0020).
+
+unit_id = "windows-msix-x86_64"
+repository = "totaldrop-windows"
+platform = "windows"
+format = "msix"
+arch = "x86_64"
+version = "0.3.0-beta.6"
+rust_target = "x86_64-pc-windows-msvc"
+runner = "windows-latest"
+tag_prefix = "windows-msix-x86_64-v"
+workflow = ".github/workflows/pkg-msix-x86_64.yml"
+delegate = "target-x86_64/build-x64.ps1"
+artifact_name = "TotalDrop-0.3.0-beta.6-x64.msix"
+spdx_license = "GPL-3.0-or-later"
+reproducible = true
+provenance = "sigstore-oidc"
+checksums_file = "SHA256SUMS"
+l10n_locales = 35

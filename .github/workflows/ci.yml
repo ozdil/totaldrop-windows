@@ -114,22 +114,25 @@ jobs:
             }
             Write-Host "PowerShell AST OK: $script ($($tokens.Count) tokens)"
           }
-      - name: Validate XML well-formedness (.xaml and .appxmanifest)
+      - name: Validate XML well-formedness (.xaml, .appxmanifest, and 35-locale .resw)
         shell: pwsh
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = "Stop"
-          $xmlFiles = @(git ls-files '*.xaml' '*.appxmanifest')
-          if ($LASTEXITCODE -ne 0 -or $xmlFiles.Count -eq 0) {
-            throw "No tracked .xaml or .appxmanifest files found"
+          $xmlFiles = @(git ls-files '*.xaml' '*.appxmanifest' '*.resw')
+          if ($LASTEXITCODE -ne 0 -or $xmlFiles.Count -lt 37) {
+            throw "Expected tracked .xaml, .appxmanifest, and 35 .resw files (found $($xmlFiles.Count))"
           }
           foreach ($relPath in $xmlFiles) {
             $fullPath = (Resolve-Path -LiteralPath $relPath).Path
             $doc = [System.Xml.XmlDocument]::new()
             $doc.XmlResolver = $null
             $doc.Load($fullPath)
-            Write-Host "XML OK: $relPath"
           }
+          Write-Host "XML OK: $($xmlFiles.Count) files validated (including 35 WinUI 3 .resw locales)"
+      - name: Verify 6 isolated sub-platform x CPU units
+        shell: bash
+        run: python3 tools/verify-subplatforms.py
 
   deny:
     name: Dependencies (cargo-deny)

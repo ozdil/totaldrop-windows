@@ -1,0 +1,628 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 The TotalDrop Contributors -->
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="appTagline" xml:space="preserve">
+    <value>어떤 파일이든, 누구에게나, 어디로든.</value>
+    <comment>Short slogan under the app name on the home screen</comment>
+  </data>
+  <data name="back" xml:space="preserve">
+    <value>뒤로</value>
+  </data>
+  <data name="cancel" xml:space="preserve">
+    <value>취소</value>
+  </data>
+  <data name="cancelTransferBody" xml:space="preserve">
+    <value>상대방에게 전송이 중단되었다고 알립니다.</value>
+  </data>
+  <data name="cancelTransferTitle" xml:space="preserve">
+    <value>이 전송을 중단할까요?</value>
+  </data>
+  <data name="causeConnectionLost" xml:space="preserve">
+    <value>상대 기기와의 연결이 끊어졌습니다.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeDiskFull" xml:space="preserve">
+    <value>이 기기에 남은 공간이 부족합니다.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeFileChanged" xml:space="preserve">
+    <value>보내는 중에 파일이 바뀌었습니다. 저장한 뒤 다시 보내세요.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoPermission" xml:space="preserve">
+    <value>TotalDrop에 필요한 파일이나 폴더를 읽거나 쓸 권한이 없습니다.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoRoute" xml:space="preserve">
+    <value>직접 연결로도 릴레이를 거쳐서도 상대 기기에 닿지 못했습니다.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNotFound" xml:space="preserve">
+    <value>파일이나 폴더를 찾을 수 없습니다. 옮겨졌거나 삭제되었을 수 있습니다.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeProtocol" xml:space="preserve">
+    <value>상대 기기가 이 버전이 이해하지 못하는 내용을 보냈습니다. 두 기기 모두 TotalDrop을 업데이트하면 해결될 수 있습니다.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeReadOnly" xml:space="preserve">
+    <value>폴더가 쓸 수 없는 디스크에 있습니다.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeRelay" xml:space="preserve">
+    <value>릴레이에 연결할 수 없거나 릴레이가 설정되지 않았거나, 두 기기가 같은 릴레이를 쓰지 않습니다.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeTimedOut" xml:space="preserve">
+    <value>연결이 응답하지 않습니다. 기기 중 하나의 네트워크가 끊겼거나 절전 모드로 전환되었을 수 있습니다.</value>
+    <comment>Under Details of a failed transfer: why it failed. The connection went silent (QUIC idle timeout), or the sender stopped sending.</comment>
+  </data>
+  <data name="codeSuggestions" xml:space="preserve">
+    <value>추천</value>
+  </data>
+  <data name="copyText" xml:space="preserve">
+    <value>텍스트 복사</value>
+    <comment>Receive result: button that copies the received text to the clipboard</comment>
+  </data>
+  <data name="desktopComment" xml:space="preserve">
+    <value>다른 기기로 파일을 바로 보내세요. 종단 간 암호화</value>
+    <comment>Linux desktop entry: one-line description shown as a tooltip in app menus</comment>
+  </data>
+  <data name="desktopGenericName" xml:space="preserve">
+    <value>파일 전송</value>
+    <comment>Linux desktop entry: what kind of app TotalDrop is, shown under its name in app menus and launchers</comment>
+  </data>
+  <data name="desktopKeywords" xml:space="preserve">
+    <value>보내기;받기;공유;전송;파일;</value>
+    <comment>Linux desktop entry: search words for app launchers, separated by semicolons and ending with one. Words people type to find a file-sending app; no spaces around the semicolons</comment>
+  </data>
+  <data name="desktopSendWith" xml:space="preserve">
+    <value>TotalDrop으로 보내기</value>
+    <comment>Linux file managers (Dolphin, Files, Nemo): right-click menu item that sends the selected files and folders with TotalDrop. Also Android: the item in the menu of text selected in any app, which sends that text</comment>
+  </data>
+  <data name="done" xml:space="preserve">
+    <value>완료</value>
+  </data>
+  <data name="draftTranslation" xml:space="preserve">
+    <value>이 번역은 검토 중입니다. GitHub에서 개선을 도와주세요.</value>
+    <comment>Shown in Settings when some of the text in this language is an unreviewed draft</comment>
+  </data>
+  <data name="editCopy" xml:space="preserve">
+    <value>복사</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editCut" xml:space="preserve">
+    <value>잘라내기</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editDelete" xml:space="preserve">
+    <value>삭제</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editPaste" xml:space="preserve">
+    <value>붙여넣기</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editRedo" xml:space="preserve">
+    <value>다시 실행</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editSelectAll" xml:space="preserve">
+    <value>모두 선택</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editUndo" xml:space="preserve">
+    <value>실행 취소</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="errorBadServer" xml:space="preserve">
+    <value>서버 주소가 유효하지 않습니다. 'wss://'로 시작해야 합니다.</value>
+    <comment>The rendezvous server address in the settings is not valid. Same text as cliErrBadServer</comment>
+  </data>
+  <data name="errorCancelled" xml:space="preserve">
+    <value>상대방이 전송을 중단했습니다.</value>
+  </data>
+  <data name="errorCodeExpired" xml:space="preserve">
+    <value>아무도 사용하지 않은 채 코드가 만료되었습니다. 새 코드를 받으려면 다시 보내세요.</value>
+    <comment>Shown to the sender: nobody came for the code before the server let it expire (15 minutes). Same text as cliErrCodeExpired</comment>
+  </data>
+  <data name="errorCodeNotInUse" xml:space="preserve">
+    <value>사용 중인 코드가 아닙니다. 잘못 입력했거나, 만료되었거나, 이미 사용된 코드입니다. 보내는 사람에게 새 코드를 요청하세요.</value>
+    <comment>The server says no sender is using this code's number. Same text as cliErrCodeNotInUse</comment>
+  </data>
+  <data name="errorConnect" xml:space="preserve">
+    <value>다른 기기에 연결할 수 없습니다. 두 기기가 모두 온라인 상태인지 확인하고 다시 시도하세요.</value>
+  </data>
+  <data name="errorDeclined" xml:space="preserve">
+    <value>받는 사람이 파일을 거절했습니다.</value>
+  </data>
+  <data name="errorInvalidCode" xml:space="preserve">
+    <value>유효하지 않은 코드입니다.</value>
+  </data>
+  <data name="errorInvalidOffer" xml:space="preserve">
+    <value>The offer broke a safety rule, so it was refused.</value>
+  </data>
+  <data name="errorOther" xml:space="preserve">
+    <value>문제가 발생했습니다.</value>
+  </data>
+  <data name="errorPeerLeft" xml:space="preserve">
+    <value>전송이 끝나기 전에 상대방이 나갔습니다.</value>
+  </data>
+  <data name="errorServer" xml:space="preserve">
+    <value>TotalDrop 서버에 연결할 수 없습니다. 인터넷 연결을 확인하세요.</value>
+  </data>
+  <data name="errorStopped" xml:space="preserve">
+    <value>이 기기에서 중단했습니다.</value>
+  </data>
+  <data name="errorStorage" xml:space="preserve">
+    <value>파일을 읽거나 저장할 수 없습니다.</value>
+  </data>
+  <data name="errorTextDamaged" xml:space="preserve">
+    <value>텍스트가 손상 없이 도착하지 않아 표시하지 않습니다.</value>
+    <comment>Receive result: the text failed its integrity check or is not valid text, so it is not shown</comment>
+  </data>
+  <data name="errorWrongCode" xml:space="preserve">
+    <value>The code did not match. It was mistyped, or someone tried to intercept the transfer. Nothing was sent. Start again with a new code.</value>
+  </data>
+  <data name="homeFooter" xml:space="preserve">
+    <value>종단간 암호화. 계정도, 이메일도, 전화번호도 필요 없습니다.</value>
+  </data>
+  <data name="homeReceiveBody" xml:space="preserve">
+    <value>코드를 입력하고 파일을 저장하세요</value>
+  </data>
+  <data name="homeReceiveTitle" xml:space="preserve">
+    <value>받기</value>
+  </data>
+  <data name="homeSendBody" xml:space="preserve">
+    <value>파일을 고르고 짧은 코드를 공유하세요</value>
+  </data>
+  <data name="homeSendTitle" xml:space="preserve">
+    <value>보내기</value>
+  </data>
+  <data name="itemsAndSize" xml:space="preserve">
+    <value>항목 {count}개 · {size}</value>
+  </data>
+  <data name="keepAwakeReason" xml:space="preserve">
+    <value>TotalDrop이 파일을 보내거나 받는 중입니다</value>
+    <comment>Linux: why the computer is kept from sleeping while a transfer runs; the desktop may show it in its power settings or battery menu</comment>
+  </data>
+  <data name="keepGoing" xml:space="preserve">
+    <value>계속하기</value>
+  </data>
+  <data name="linkBusy" xml:space="preserve">
+    <value>화면에 있는 작업을 마치거나 중지한 다음 링크를 다시 여세요.</value>
+    <comment>Android: shown when a TotalDrop link (totaldrop://r/… or https://totaldrop.app/r#…) opens the app while Receive cannot take a new code: a send or receive is running, an offer waits for an answer, or a received text is shown. The screen it refers to is shown; the link's code is not filled in</comment>
+  </data>
+  <data name="metainfoAbout" xml:space="preserve">
+    <value>TotalDrop은 파일과 폴더를 한 기기에서 다른 기기로 종단 간 암호화하여 보냅니다. 파일을 고르고 짧은 코드나 QR 코드를 공유하면 다른 기기가 받습니다. 계정도, 이메일도, 전화번호도 필요 없습니다.</value>
+    <comment>Linux software centres: the paragraph that introduces TotalDrop on its page</comment>
+  </data>
+  <data name="metainfoOnePackage" xml:space="preserve">
+    <value>Linux 패키지는 한 번에 하나만 사용하세요. Flatpak과 .pkg, .deb 또는 .rpm 패키지는 같은 이름을 쓰기 때문에, 하나가 열려 있을 때 다른 하나를 실행하면 두 번째 창이 열리지 않고 열려 있는 창이 앞으로 나옵니다.</value>
+    <comment>Linux software centres: last paragraph of the description; the Flatpak and the distribution package (.pkg, .deb, .rpm) cannot run at the same time (#351). Keep .pkg, .deb, .rpm and Flatpak as they are</comment>
+  </data>
+  <data name="metainfoSummary" xml:space="preserve">
+    <value>다른 기기로 파일을 바로 보내기</value>
+    <comment>Linux software centres (Discover, GNOME Software, Flathub): one-line summary under the app's name. No full stop at the end</comment>
+  </data>
+  <data name="metainfoTheme" xml:space="preserve">
+    <value>데스크톱 테마를 따릅니다: Plasma, Hyprland, Omarchy, GNOME</value>
+    <comment>Linux software centres: feature list item; keep the desktop names Plasma, Hyprland, Omarchy and GNOME as they are</comment>
+  </data>
+  <data name="metainfoVerified" xml:space="preserve">
+    <value>도착한 모든 파일을 검증하며, 손상된 파일은 버립니다</value>
+    <comment>Linux software centres: feature list item about every received file being checked</comment>
+  </data>
+  <data name="metainfoWords" xml:space="preserve">
+    <value>확인 단어 네 개로 중간에 아무도 없다는 것을 확인합니다</value>
+    <comment>Linux software centres: feature list item about the four verification words that show no one is intercepting the transfer</comment>
+  </data>
+  <data name="moreInfo" xml:space="preserve">
+    <value>자세히</value>
+  </data>
+  <data name="openFolder" xml:space="preserve">
+    <value>폴더 열기</value>
+  </data>
+  <data name="otherPackageFlatpak" xml:space="preserve">
+    <value>TotalDrop이 이미 Flatpak으로 열려 있어 그 창을 앞으로 가져왔습니다. 패키지는 한 번에 하나만 사용하세요. 이 패키지를 열려면 그 창을 종료하세요.</value>
+    <comment>Linux desktop notification when TotalDrop is started from the distribution package while the Flatpak window is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="otherPackageSystem" xml:space="preserve">
+    <value>TotalDrop이 이미 .pkg, .deb 또는 .rpm 패키지로 열려 있어 그 창을 앞으로 가져왔습니다. 패키지는 한 번에 하나만 사용하세요. 이 패키지를 열려면 그 창을 종료하세요.</value>
+    <comment>Linux desktop notification when TotalDrop is started from the Flatpak while the window of the .pkg, .deb or .rpm package is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="pickImageTitle" xml:space="preserve">
+    <value>QR 코드가 있는 이미지 선택</value>
+  </data>
+  <data name="pickTitle" xml:space="preserve">
+    <value>보낼 파일 선택</value>
+  </data>
+  <data name="privacyMode" xml:space="preserve">
+    <value>상대 기기에 내 주소 숨기기</value>
+  </data>
+  <data name="privacyModeConfirmBody" xml:space="preserve">
+    <value>기기 간에 직접 전송되는 것이 없으므로 전송 속도가 느려집니다. 중개 서버와 릴레이는 여전히 IP 주소를 볼 수 있지만, 파일이나 키는 절대 볼 수 없습니다.</value>
+  </data>
+  <data name="privacyModeConfirmTitle" xml:space="preserve">
+    <value>개인정보 보호 모드를 켤까요?</value>
+  </data>
+  <data name="privacyModeHint" xml:space="preserve">
+    <value>개인정보 보호 모드: 모든 전송이 릴레이를 거치므로 상대 기기는 내 IP 주소를 알 수 없습니다. 속도가 느려지며, 상대 기기도 같은 릴레이를 사용해야 합니다(기본 릴레이는 같습니다).</value>
+  </data>
+  <data name="privacyModeTurnOn" xml:space="preserve">
+    <value>켜기</value>
+  </data>
+  <data name="progressPercent" xml:space="preserve">
+    <value>{percent}%</value>
+    <comment>Transfer progress; use your language's percent style</comment>
+  </data>
+  <data name="receiveAccept" xml:space="preserve">
+    <value>Accept</value>
+  </data>
+  <data name="receiveAndMore" xml:space="preserve">
+    <value>외 {count}개</value>
+  </data>
+  <data name="receiveCodeHelp" xml:space="preserve">
+    <value>보내는 사람에게 코드를 요청하세요.</value>
+  </data>
+  <data name="receiveCodeHint" xml:space="preserve">
+    <value>7-harbor-rocket</value>
+  </data>
+  <data name="receiveCodeInvalid" xml:space="preserve">
+    <value>코드 형식이 아닙니다. 코드는 숫자로 시작하고 그 뒤에 단어 두세 개가 옵니다.</value>
+  </data>
+  <data name="receiveCodeLabel" xml:space="preserve">
+    <value>코드</value>
+  </data>
+  <data name="receiveConnect" xml:space="preserve">
+    <value>연결</value>
+  </data>
+  <data name="receiveConnecting" xml:space="preserve">
+    <value>안전하게 연결하는 중…</value>
+  </data>
+  <data name="receiveDecline" xml:space="preserve">
+    <value>Decline</value>
+  </data>
+  <data name="receiveDeclined" xml:space="preserve">
+    <value>파일을 거절했습니다.</value>
+  </data>
+  <data name="receiveDone" xml:space="preserve">
+    <value>수신 및 확인 완료</value>
+  </data>
+  <data name="receiveFromImage" xml:space="preserve">
+    <value>이미지에서 QR 코드 읽기</value>
+  </data>
+  <data name="receiveOffer" xml:space="preserve">
+    <value>받을 파일</value>
+  </data>
+  <data name="receiveOfferSummary" xml:space="preserve">
+    <value>파일 {files}개 · {size}</value>
+  </data>
+  <data name="receiveOfferText" xml:space="preserve">
+    <value>받을 텍스트</value>
+    <comment>Receive screen: title when the other side wants to send a text, not files</comment>
+  </data>
+  <data name="receiveOfferTextNote" xml:space="preserve">
+    <value>텍스트는 여기에 표시되며 저장되지 않습니다.</value>
+    <comment>Receive screen: under an incoming text, in place of the folder files are saved to</comment>
+  </data>
+  <data name="receivePaste" xml:space="preserve">
+    <value>붙여넣기</value>
+  </data>
+  <data name="receiveQrNotFound" xml:space="preserve">
+    <value>이 이미지에 TotalDrop 코드가 없습니다.</value>
+  </data>
+  <data name="receiveReceiving" xml:space="preserve">
+    <value>받는 중</value>
+  </data>
+  <data name="receiveSaveTo" xml:space="preserve">
+    <value>저장 위치: {folder}</value>
+  </data>
+  <data name="receiveTextDeclined" xml:space="preserve">
+    <value>텍스트를 거절했습니다.</value>
+    <comment>Receive result: the person declined an incoming text</comment>
+  </data>
+  <data name="receiveTextDone" xml:space="preserve">
+    <value>텍스트 수신 및 확인 완료</value>
+    <comment>Receive result: title when a text arrived and its check passed; the text is shown below it</comment>
+  </data>
+  <data name="receiveTextHidden" xml:space="preserve">
+    <value>텍스트에 숨겨진 문자가 있어 U+… 형태로 표시합니다. 복사하면 도착한 그대로의 텍스트가 복사됩니다.</value>
+    <comment>Receive result: the text holds invisible control or direction characters, shown in the text by their code, as &lt;U+202E&gt;; keep U+… as it is</comment>
+  </data>
+  <data name="receiveTextShortened" xml:space="preserve">
+    <value>텍스트의 앞부분만 표시됩니다. 텍스트 복사는 전체를 복사합니다.</value>
+    <comment>Receive result: a very long text is shown only in part; the Copy text button copies the whole text</comment>
+  </data>
+  <data name="receiveTitle" xml:space="preserve">
+    <value>파일 받기</value>
+  </data>
+  <data name="sameNetworkNote" xml:space="preserve">
+    <value>인터넷을 통해 작동합니다. 기기끼리 직접 연결할 수 없으면 암호화된 전송은 릴레이를 거치며, 릴레이는 내용을 읽을 수 없습니다.</value>
+  </data>
+  <data name="sendAddFailed" xml:space="preserve">
+    <value>파일을 추가하지 못했습니다. 다시 시도하세요. 또 그러면 이 기기에 여유 공간이 충분한지 확인하거나 다른 위치에서 파일을 선택하세요.</value>
+    <comment>Shown on the send screen when the system file picker could not hand over the chosen files (a path it cannot read, too little memory, or no space left for its copy).</comment>
+  </data>
+  <data name="sendAddFiles" xml:space="preserve">
+    <value>파일 추가</value>
+  </data>
+  <data name="sendClipboard" xml:space="preserve">
+    <value>클립보드 보내기</value>
+    <comment>Linux desktop entry action and Android shortcut: opens Send with the text on the clipboard filled in</comment>
+  </data>
+  <data name="sendClipboardEmpty" xml:space="preserve">
+    <value>클립보드에 텍스트가 없습니다.</value>
+    <comment>Send screen: shown when Send clipboard finds no text on the clipboard</comment>
+  </data>
+  <data name="sendClipboardKept" xml:space="preserve">
+    <value>이미 입력한 텍스트는 그대로 두었으며 클립보드는 사용하지 않았습니다.</value>
+    <comment>Send screen: Send clipboard was chosen while the text box already held typed text, so the clipboard was not pasted</comment>
+  </data>
+  <data name="sendCodeHint" xml:space="preserve">
+    <value>다른 기기에서 TotalDrop을 열고 받기를 누른 다음 이 코드를 입력하세요.</value>
+  </data>
+  <data name="sendCopied" xml:space="preserve">
+    <value>코드를 복사했습니다</value>
+  </data>
+  <data name="sendCopy" xml:space="preserve">
+    <value>복사</value>
+  </data>
+  <data name="sendCounting" xml:space="preserve">
+    <value>계산 중…</value>
+  </data>
+  <data name="sendCreateCode" xml:space="preserve">
+    <value>코드 만들기</value>
+  </data>
+  <data name="sendDone" xml:space="preserve">
+    <value>전송 및 확인 완료</value>
+  </data>
+  <data name="sendDoneBody" xml:space="preserve">
+    <value>{count, plural, =1{파일이 손상 없이 도착했습니다.} other{파일 {count}개가 모두 손상 없이 도착했습니다.}}</value>
+  </data>
+  <data name="sendDropHere" xml:space="preserve">
+    <value>여기에 파일을 놓으세요</value>
+  </data>
+  <data name="sendDropHint" xml:space="preserve">
+    <value>이 창으로 파일을 끌어다 놓아도 됩니다.</value>
+  </data>
+  <data name="sendEmpty" xml:space="preserve">
+    <value>아직 선택한 항목이 없습니다</value>
+  </data>
+  <data name="sendEmptyHint" xml:space="preserve">
+    <value>보낼 파일을 추가하세요. 받는 사람은 정확히 이 파일들만 받습니다.</value>
+  </data>
+  <data name="sendPreparing" xml:space="preserve">
+    <value>파일을 준비하는 중…</value>
+  </data>
+  <data name="sendQrHint" xml:space="preserve">
+    <value>또는 다른 기기의 카메라로 이 코드를 스캔하세요.</value>
+  </data>
+  <data name="sendRemove" xml:space="preserve">
+    <value>제거</value>
+  </data>
+  <data name="sendSending" xml:space="preserve">
+    <value>보내는 중</value>
+  </data>
+  <data name="sendShare" xml:space="preserve">
+    <value>공유</value>
+  </data>
+  <data name="sendShareText" xml:space="preserve">
+    <value>TotalDrop으로 내 파일을 받으세요. 코드: {code}</value>
+  </data>
+  <data name="sendSomeFailed" xml:space="preserve">
+    <value>{count, plural, =1{파일 1개가 온전히 도착하지 않아 삭제되었습니다.} other{파일 {count}개가 온전히 도착하지 않아 삭제되었습니다.}}</value>
+  </data>
+  <data name="sendStrongCode" xml:space="preserve">
+    <value>더 강력한 코드</value>
+  </data>
+  <data name="sendStrongCodeHint" xml:space="preserve">
+    <value>두 단어 대신 세 단어: 추측하기가 훨씬 어렵습니다</value>
+  </data>
+  <data name="sendText" xml:space="preserve">
+    <value>텍스트 보내기</value>
+    <comment>Send screen: button and screen title for sending a piece of text instead of files</comment>
+  </data>
+  <data name="sendTextDone" xml:space="preserve">
+    <value>텍스트가 손상 없이 도착했습니다.</value>
+    <comment>Send result: the text reached the receiver and its check passed</comment>
+  </data>
+  <data name="sendTextHidden" xml:space="preserve">
+    <value>텍스트에 방향 표시 같은 숨겨진 문자가 있습니다. 이 문자도 함께 보내집니다.</value>
+    <comment>Send screen: the text to send holds invisible control or direction characters; they are sent as they are</comment>
+  </data>
+  <data name="sendTextHint" xml:space="preserve">
+    <value>보낼 텍스트를 입력하거나 붙여넣으세요</value>
+    <comment>Send screen: placeholder in the box where the person types or pastes the text to send</comment>
+  </data>
+  <data name="sendTextShortened" xml:space="preserve">
+    <value>텍스트의 앞부분만 표시됩니다. 전체가 전송됩니다.</value>
+    <comment>Send screen: a very long pasted text is shown only in part; the whole text is still sent</comment>
+  </data>
+  <data name="sendTextTooLong" xml:space="preserve">
+    <value>텍스트는 최대 {size}까지 보낼 수 있습니다. 더 긴 텍스트는 파일로 보내세요.</value>
+    <comment>Send screen: the text is over the limit; {size} is the limit, such as 1 MB</comment>
+  </data>
+  <data name="sendTitle" xml:space="preserve">
+    <value>파일 보내기</value>
+  </data>
+  <data name="sendWaiting" xml:space="preserve">
+    <value>받는 사람을 기다리는 중…</value>
+  </data>
+  <data name="sendWaitingAccept" xml:space="preserve">
+    <value>단어를 확인한 다음 받는 사람이 수락할 때까지 기다리세요.</value>
+  </data>
+  <data name="sendYourCode" xml:space="preserve">
+    <value>내 코드</value>
+  </data>
+  <data name="settings" xml:space="preserve">
+    <value>설정</value>
+  </data>
+  <data name="settingsAbout" xml:space="preserve">
+    <value>정보</value>
+  </data>
+  <data name="settingsAboutBody" xml:space="preserve">
+    <value>TotalDrop은 무료 오픈 소스이며 후원으로 운영됩니다. 라이선스는 GPL-3.0-or-later입니다.</value>
+  </data>
+  <data name="settingsBackground" xml:space="preserve">
+    <value>백그라운드 전송</value>
+    <comment>Settings: heading of the section about background transfers</comment>
+  </data>
+  <data name="settingsBackgroundOpen" xml:space="preserve">
+    <value>배터리 설정</value>
+    <comment>Settings: button that opens the background transfers page</comment>
+  </data>
+  <data name="settingsPrivacy" xml:space="preserve">
+    <value>개인정보 보호</value>
+  </data>
+  <data name="settingsPrivacyBody" xml:space="preserve">
+    <value>중개 서버, 릴레이, Cloudflare의 STUN 서버는 내 IP 주소를 볼 수 있으며, 직접 연결할 때는 상대 기기도 볼 수 있습니다(개인정보 보호 모드가 켜져 있지 않은 경우). 이들 중 어느 것도 파일 이름, 내용, 키를 볼 수 없으며, 저희 서버는 로그를 남기지 않습니다. 파일은 가능하면 기기 간에 직접 전송되고, 그렇지 않으면 릴레이를 거칩니다. 어느 경우든 종단간 암호화됩니다.</value>
+  </data>
+  <data name="settingsSave" xml:space="preserve">
+    <value>저장</value>
+  </data>
+  <data name="settingsServer" xml:space="preserve">
+    <value>중개 서버</value>
+  </data>
+  <data name="settingsServerHelp" xml:space="preserve">
+    <value>같은 코드를 가진 두 기기가 서로를 찾도록 돕습니다. 파일이나 키는 절대 보지 않습니다.</value>
+  </data>
+  <data name="settingsServerInvalid" xml:space="preserve">
+    <value>'wss://'로 시작해야 합니다</value>
+  </data>
+  <data name="settingsServerReset" xml:space="preserve">
+    <value>기본값 사용</value>
+  </data>
+  <data name="settingsVersion" xml:space="preserve">
+    <value>버전 {version}</value>
+  </data>
+  <data name="settingsWordsEnglish" xml:space="preserve">
+    <value>코드와 확인 단어는 어떤 언어에서도 영어로 표시됩니다. 언어가 다른 두 기기에서도 같은 단어가 보입니다.</value>
+    <comment>Shown in Settings under About. Explains why the transfer code and the verification words stay in English: they come from one English word list so that both devices show the same ones</comment>
+  </data>
+  <data name="setupBackgroundAllowed" xml:space="preserve">
+    <value>TotalDrop의 Android 배터리 최적화가 꺼져 있습니다.</value>
+    <comment>The same page: status when Android's battery optimisation is already off for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundAutostart" xml:space="preserve">
+    <value>자동 시작 열기</value>
+    <comment>The same page: button that opens the maker's Autostart page (Xiaomi)</comment>
+  </data>
+  <data name="setupBackgroundBattery" xml:space="preserve">
+    <value>배터리 설정 열기</value>
+    <comment>The same page: button that opens TotalDrop's app info, where its battery use is set</comment>
+  </data>
+  <data name="setupBackgroundBatteryHint" xml:space="preserve">
+    <value>TotalDrop의 앱 정보에서 배터리를 열고 제한 없는 사용을 허용하세요. 이 설정의 이름은 휴대전화마다 다릅니다.</value>
+    <comment>The same page: under the first button, which opens TotalDrop's app info; what to do there</comment>
+  </data>
+  <data name="setupBackgroundBody" xml:space="preserve">
+    <value>다른 앱으로 전환하거나 화면을 잠가도 전송이 계속되도록 TotalDrop이 배터리 제한 없이 실행되게 허용하세요. TotalDrop은 내가 시작한 전송이 진행되는 동안에만 백그라운드에서 작동합니다.</value>
+    <comment>The same page: why TotalDrop asks to run without battery restrictions</comment>
+  </data>
+  <data name="setupBackgroundMaker" xml:space="preserve">
+    <value>{maker} 휴대전화에는 자체 배터리 절약 기능이 있습니다</value>
+    <comment>The same page: heading of the second step on Xiaomi, Redmi and POCO phones, which add a battery saver of their own</comment>
+  </data>
+  <data name="setupBackgroundMakerBody" xml:space="preserve">
+    <value>TotalDrop의 배터리 절약도 열어 '제한 없음'을 선택하세요. 자동 시작이 있으면 TotalDrop에 대해 켜세요.</value>
+    <comment>The same page: what to choose in the maker's battery saver; "No restrictions" is the label on Xiaomi phones, use the label those phones show in your language</comment>
+  </data>
+  <data name="setupBackgroundMakerOpen" xml:space="preserve">
+    <value>TotalDrop 배터리 절약 열기</value>
+    <comment>The same page: button that opens the maker's battery saver for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundRestricted" xml:space="preserve">
+    <value>TotalDrop의 Android 배터리 최적화가 켜져 있습니다. 다른 앱으로 전환하면 전송이 멈출 수 있습니다.</value>
+    <comment>The same page: status when Android's battery optimisation is still on for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundSkip" xml:space="preserve">
+    <value>나중에</value>
+    <comment>The same page at first start: skip it for now</comment>
+  </data>
+  <data name="setupBackgroundTitle" xml:space="preserve">
+    <value>백그라운드에서도 전송 계속하기</value>
+    <comment>First-run and Settings page about background transfers (#338): heading</comment>
+  </data>
+  <data name="shareBusy" xml:space="preserve">
+    <value>아직 전송이 진행 중입니다. 끝날 때까지 기다리거나 중지한 다음 다시 공유하세요.</value>
+    <comment>Android: shown when files are shared to TotalDrop while a send or receive is still running; the shared files are not added</comment>
+  </data>
+  <data name="shareSkipped" xml:space="preserve">
+    <value>{count, plural, =1{공유된 항목 1개를 읽을 수 없어 제외했습니다.} other{공유된 항목 {count}개를 읽을 수 없어 제외했습니다.}}</value>
+    <comment>Android: shown when some of the items another app shared to TotalDrop could not be read (no read permission, or the app's own files) and were left out; the rest were added</comment>
+  </data>
+  <data name="sizeBytes" xml:space="preserve">
+    <value>{value} B</value>
+    <comment>A size in bytes. value is already formatted for the region</comment>
+  </data>
+  <data name="sizeGB" xml:space="preserve">
+    <value>{value} GB</value>
+    <comment>Gigabytes</comment>
+  </data>
+  <data name="sizeKB" xml:space="preserve">
+    <value>{value} kB</value>
+    <comment>Kilobytes (1000 bytes)</comment>
+  </data>
+  <data name="sizeMB" xml:space="preserve">
+    <value>{value} MB</value>
+    <comment>Megabytes</comment>
+  </data>
+  <data name="sizePB" xml:space="preserve">
+    <value>{value} PB</value>
+    <comment>Petabytes</comment>
+  </data>
+  <data name="sizeTB" xml:space="preserve">
+    <value>{value} TB</value>
+    <comment>Terabytes</comment>
+  </data>
+  <data name="stop" xml:space="preserve">
+    <value>중단</value>
+  </data>
+  <data name="technicalDetail" xml:space="preserve">
+    <value>문제를 신고할 때 함께 보낼 영어 기술 메시지:</value>
+    <comment>Under Details, above the error's technical text, which stays in English so it can be searched and reported</comment>
+  </data>
+  <data name="textCopied" xml:space="preserve">
+    <value>텍스트를 복사했습니다</value>
+    <comment>Tooltip after the received text was copied</comment>
+  </data>
+  <data name="transferNoticeBody" xml:space="preserve">
+    <value>다른 앱을 사용하는 동안에도 계속됩니다.</value>
+    <comment>Text of the ongoing transfer notification: the transfer continues while the person uses other apps</comment>
+  </data>
+  <data name="transferNoticeChannel" xml:space="preserve">
+    <value>전송</value>
+    <comment>Android notification channel name for running transfers (shown in system settings)</comment>
+  </data>
+  <data name="transferNoticeReceiving" xml:space="preserve">
+    <value>TotalDrop으로 받는 중</value>
+    <comment>Title of the ongoing notification while a receive runs in the background</comment>
+  </data>
+  <data name="transferNoticeSending" xml:space="preserve">
+    <value>TotalDrop으로 보내는 중</value>
+    <comment>Title of the ongoing notification while a send runs in the background</comment>
+  </data>
+  <data name="tryAgain" xml:space="preserve">
+    <value>다시 시도</value>
+  </data>
+  <data name="verificationHint" xml:space="preserve">
+    <value>The other person sees the same four words. If they differ, stop.</value>
+  </data>
+  <data name="verificationTitle" xml:space="preserve">
+    <value>Verification words</value>
+  </data>
+</root>

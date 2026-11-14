@@ -1,0 +1,628 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 The TotalDrop Contributors -->
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="appTagline" xml:space="preserve">
+    <value>Any file, to anyone, anywhere.</value>
+    <comment>Short slogan under the app name on the home screen</comment>
+  </data>
+  <data name="back" xml:space="preserve">
+    <value>Back</value>
+  </data>
+  <data name="cancel" xml:space="preserve">
+    <value>Cancel</value>
+  </data>
+  <data name="cancelTransferBody" xml:space="preserve">
+    <value>The other side will be told the transfer stopped.</value>
+  </data>
+  <data name="cancelTransferTitle" xml:space="preserve">
+    <value>Stop this transfer?</value>
+  </data>
+  <data name="causeConnectionLost" xml:space="preserve">
+    <value>The connection to the other device was cut.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeDiskFull" xml:space="preserve">
+    <value>There is not enough free space on this device.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeFileChanged" xml:space="preserve">
+    <value>A file changed while it was being sent. Send it again once it is saved.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoPermission" xml:space="preserve">
+    <value>TotalDrop is not allowed to read or write a file or folder it needs.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoRoute" xml:space="preserve">
+    <value>No way of reaching the other device worked, directly or through the relay.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNotFound" xml:space="preserve">
+    <value>A file or folder could not be found. It may have been moved or deleted.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeProtocol" xml:space="preserve">
+    <value>The other device sent something this version does not understand. Updating TotalDrop on both devices may help.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeReadOnly" xml:space="preserve">
+    <value>The folder is on a disk that cannot be written to.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeRelay" xml:space="preserve">
+    <value>The relay server could not be reached or is not set up, or the two devices do not use the same one.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeTimedOut" xml:space="preserve">
+    <value>The connection stopped responding. One of the devices may have lost its network or gone to sleep.</value>
+    <comment>Under Details of a failed transfer: why it failed. The connection went silent (QUIC idle timeout), or the sender stopped sending.</comment>
+  </data>
+  <data name="codeSuggestions" xml:space="preserve">
+    <value>Suggestions</value>
+  </data>
+  <data name="copyText" xml:space="preserve">
+    <value>Copy text</value>
+    <comment>Receive result: button that copies the received text to the clipboard</comment>
+  </data>
+  <data name="desktopComment" xml:space="preserve">
+    <value>Send files straight to another device, end-to-end encrypted</value>
+    <comment>Linux desktop entry: one-line description shown as a tooltip in app menus</comment>
+  </data>
+  <data name="desktopGenericName" xml:space="preserve">
+    <value>File transfer</value>
+    <comment>Linux desktop entry: what kind of app TotalDrop is, shown under its name in app menus and launchers</comment>
+  </data>
+  <data name="desktopKeywords" xml:space="preserve">
+    <value>send;receive;share;transfer;files;</value>
+    <comment>Linux desktop entry: search words for app launchers, separated by semicolons and ending with one. Words people type to find a file-sending app; no spaces around the semicolons</comment>
+  </data>
+  <data name="desktopSendWith" xml:space="preserve">
+    <value>Send with TotalDrop</value>
+    <comment>Linux file managers (Dolphin, Files, Nemo): right-click menu item that sends the selected files and folders with TotalDrop. Also Android: the item in the menu of text selected in any app, which sends that text</comment>
+  </data>
+  <data name="done" xml:space="preserve">
+    <value>Done</value>
+  </data>
+  <data name="draftTranslation" xml:space="preserve">
+    <value>This translation is being reviewed. Help improve it on GitHub.</value>
+    <comment>Shown in Settings when some of the text in this language is an unreviewed draft</comment>
+  </data>
+  <data name="editCopy" xml:space="preserve">
+    <value>Copy</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editCut" xml:space="preserve">
+    <value>Cut</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editDelete" xml:space="preserve">
+    <value>Delete</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editPaste" xml:space="preserve">
+    <value>Paste</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editRedo" xml:space="preserve">
+    <value>Redo</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editSelectAll" xml:space="preserve">
+    <value>Select All</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editUndo" xml:space="preserve">
+    <value>Undo</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="errorBadServer" xml:space="preserve">
+    <value>The server address is not valid. It must start with wss://.</value>
+    <comment>The rendezvous server address in the settings is not valid. Same text as cliErrBadServer</comment>
+  </data>
+  <data name="errorCancelled" xml:space="preserve">
+    <value>The other side stopped the transfer.</value>
+  </data>
+  <data name="errorCodeExpired" xml:space="preserve">
+    <value>Nobody used the code before it expired. Send again to get a new code.</value>
+    <comment>Shown to the sender: nobody came for the code before the server let it expire (15 minutes). Same text as cliErrCodeExpired</comment>
+  </data>
+  <data name="errorCodeNotInUse" xml:space="preserve">
+    <value>That code is not in use: it was mistyped, has expired or was already used. Ask the sender for a new one.</value>
+    <comment>The server says no sender is using this code's number. Same text as cliErrCodeNotInUse</comment>
+  </data>
+  <data name="errorConnect" xml:space="preserve">
+    <value>Could not connect to the other device. Check that both devices are online and try again.</value>
+  </data>
+  <data name="errorDeclined" xml:space="preserve">
+    <value>The receiver declined the files.</value>
+  </data>
+  <data name="errorInvalidCode" xml:space="preserve">
+    <value>That code is not valid.</value>
+  </data>
+  <data name="errorInvalidOffer" xml:space="preserve">
+    <value>The offer broke a safety rule, so it was refused.</value>
+  </data>
+  <data name="errorOther" xml:space="preserve">
+    <value>Something went wrong.</value>
+  </data>
+  <data name="errorPeerLeft" xml:space="preserve">
+    <value>The other side left before the transfer finished.</value>
+  </data>
+  <data name="errorServer" xml:space="preserve">
+    <value>Could not reach the TotalDrop server. Check your internet connection.</value>
+  </data>
+  <data name="errorStopped" xml:space="preserve">
+    <value>Stopped on this device.</value>
+  </data>
+  <data name="errorStorage" xml:space="preserve">
+    <value>A file could not be read or saved.</value>
+  </data>
+  <data name="errorTextDamaged" xml:space="preserve">
+    <value>The text did not arrive intact, so it is not shown.</value>
+    <comment>Receive result: the text failed its integrity check or is not valid text, so it is not shown</comment>
+  </data>
+  <data name="errorWrongCode" xml:space="preserve">
+    <value>The code did not match. It was mistyped, or someone tried to intercept the transfer. Nothing was sent. Start again with a new code.</value>
+  </data>
+  <data name="homeFooter" xml:space="preserve">
+    <value>End-to-end encrypted. No account, no email, no phone number.</value>
+  </data>
+  <data name="homeReceiveBody" xml:space="preserve">
+    <value>Enter a code and save the files</value>
+  </data>
+  <data name="homeReceiveTitle" xml:space="preserve">
+    <value>Receive</value>
+  </data>
+  <data name="homeSendBody" xml:space="preserve">
+    <value>Pick files and share a short code</value>
+  </data>
+  <data name="homeSendTitle" xml:space="preserve">
+    <value>Send</value>
+  </data>
+  <data name="itemsAndSize" xml:space="preserve">
+    <value>{count, plural, one{{count} item} other{{count} items}} · {size}</value>
+  </data>
+  <data name="keepAwakeReason" xml:space="preserve">
+    <value>TotalDrop is sending or receiving files</value>
+    <comment>Linux: why the computer is kept from sleeping while a transfer runs; the desktop may show it in its power settings or battery menu</comment>
+  </data>
+  <data name="keepGoing" xml:space="preserve">
+    <value>Keep going</value>
+  </data>
+  <data name="linkBusy" xml:space="preserve">
+    <value>Finish or stop what is on the screen, then open the link again.</value>
+    <comment>Android: shown when a TotalDrop link (totaldrop://r/… or https://totaldrop.app/r#…) opens the app while Receive cannot take a new code: a send or receive is running, an offer waits for an answer, or a received text is shown. The screen it refers to is shown; the link's code is not filled in</comment>
+  </data>
+  <data name="metainfoAbout" xml:space="preserve">
+    <value>TotalDrop sends files and folders from one device to another, end-to-end encrypted. Pick the files, share a short code or a QR code, and the other device receives them. No account, no email, no phone number.</value>
+    <comment>Linux software centres: the paragraph that introduces TotalDrop on its page</comment>
+  </data>
+  <data name="metainfoOnePackage" xml:space="preserve">
+    <value>Use one Linux package at a time. The Flatpak and the .pkg, .deb or .rpm package share one name, so while one of them is open, starting the other brings the open window forward instead of opening a second one.</value>
+    <comment>Linux software centres: last paragraph of the description; the Flatpak and the distribution package (.pkg, .deb, .rpm) cannot run at the same time (#351). Keep .pkg, .deb, .rpm and Flatpak as they are</comment>
+  </data>
+  <data name="metainfoSummary" xml:space="preserve">
+    <value>Send files straight to another device</value>
+    <comment>Linux software centres (Discover, GNOME Software, Flathub): one-line summary under the app's name. No full stop at the end</comment>
+  </data>
+  <data name="metainfoTheme" xml:space="preserve">
+    <value>Follows your desktop's theme: Plasma, Hyprland, Omarchy, GNOME</value>
+    <comment>Linux software centres: feature list item; keep the desktop names Plasma, Hyprland, Omarchy and GNOME as they are</comment>
+  </data>
+  <data name="metainfoVerified" xml:space="preserve">
+    <value>Every file is verified on arrival; damaged files are discarded</value>
+    <comment>Linux software centres: feature list item about every received file being checked</comment>
+  </data>
+  <data name="metainfoWords" xml:space="preserve">
+    <value>Four verification words show that nobody is in the middle</value>
+    <comment>Linux software centres: feature list item about the four verification words that show no one is intercepting the transfer</comment>
+  </data>
+  <data name="moreInfo" xml:space="preserve">
+    <value>Details</value>
+  </data>
+  <data name="openFolder" xml:space="preserve">
+    <value>Open folder</value>
+  </data>
+  <data name="otherPackageFlatpak" xml:space="preserve">
+    <value>TotalDrop is already open from the Flatpak, so that window was brought forward. Use one package at a time: quit that window to open this one.</value>
+    <comment>Linux desktop notification when TotalDrop is started from the distribution package while the Flatpak window is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="otherPackageSystem" xml:space="preserve">
+    <value>TotalDrop is already open from the .pkg, .deb or .rpm package, so that window was brought forward. Use one package at a time: quit that window to open this one.</value>
+    <comment>Linux desktop notification when TotalDrop is started from the Flatpak while the window of the .pkg, .deb or .rpm package is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="pickImageTitle" xml:space="preserve">
+    <value>Choose an image with a QR code</value>
+  </data>
+  <data name="pickTitle" xml:space="preserve">
+    <value>Choose files to send</value>
+  </data>
+  <data name="privacyMode" xml:space="preserve">
+    <value>Hide my address from the other device</value>
+  </data>
+  <data name="privacyModeConfirmBody" xml:space="preserve">
+    <value>Transfers will be slower, because nothing goes directly between the devices. The rendezvous server and the relay still see your IP address; they never see your files or keys.</value>
+  </data>
+  <data name="privacyModeConfirmTitle" xml:space="preserve">
+    <value>Turn on privacy mode?</value>
+  </data>
+  <data name="privacyModeHint" xml:space="preserve">
+    <value>Privacy mode: everything goes through the relay, so the other device never learns your IP address. Slower, and the other device must use the same relay (the default one does).</value>
+  </data>
+  <data name="privacyModeTurnOn" xml:space="preserve">
+    <value>Turn on</value>
+  </data>
+  <data name="progressPercent" xml:space="preserve">
+    <value>{percent}%</value>
+    <comment>Transfer progress; use your language's percent style</comment>
+  </data>
+  <data name="receiveAccept" xml:space="preserve">
+    <value>Accept</value>
+  </data>
+  <data name="receiveAndMore" xml:space="preserve">
+    <value>and {count} more</value>
+  </data>
+  <data name="receiveCodeHelp" xml:space="preserve">
+    <value>Ask the sender for their code.</value>
+  </data>
+  <data name="receiveCodeHint" xml:space="preserve">
+    <value>7-harbor-rocket</value>
+  </data>
+  <data name="receiveCodeInvalid" xml:space="preserve">
+    <value>That does not look like a code. It starts with a number, then two or three words.</value>
+  </data>
+  <data name="receiveCodeLabel" xml:space="preserve">
+    <value>Code</value>
+  </data>
+  <data name="receiveConnect" xml:space="preserve">
+    <value>Connect</value>
+  </data>
+  <data name="receiveConnecting" xml:space="preserve">
+    <value>Connecting securely…</value>
+  </data>
+  <data name="receiveDecline" xml:space="preserve">
+    <value>Decline</value>
+  </data>
+  <data name="receiveDeclined" xml:space="preserve">
+    <value>You declined the files.</value>
+  </data>
+  <data name="receiveDone" xml:space="preserve">
+    <value>Received and verified</value>
+  </data>
+  <data name="receiveFromImage" xml:space="preserve">
+    <value>Read QR from image</value>
+  </data>
+  <data name="receiveOffer" xml:space="preserve">
+    <value>Incoming files</value>
+  </data>
+  <data name="receiveOfferSummary" xml:space="preserve">
+    <value>{files, plural, one{{files} file} other{{files} files}} · {size}</value>
+  </data>
+  <data name="receiveOfferText" xml:space="preserve">
+    <value>Incoming text</value>
+    <comment>Receive screen: title when the other side wants to send a text, not files</comment>
+  </data>
+  <data name="receiveOfferTextNote" xml:space="preserve">
+    <value>The text is shown here, not saved.</value>
+    <comment>Receive screen: under an incoming text, in place of the folder files are saved to</comment>
+  </data>
+  <data name="receivePaste" xml:space="preserve">
+    <value>Paste</value>
+  </data>
+  <data name="receiveQrNotFound" xml:space="preserve">
+    <value>There is no TotalDrop code in that image.</value>
+  </data>
+  <data name="receiveReceiving" xml:space="preserve">
+    <value>Receiving</value>
+  </data>
+  <data name="receiveSaveTo" xml:space="preserve">
+    <value>Saved to {folder}</value>
+  </data>
+  <data name="receiveTextDeclined" xml:space="preserve">
+    <value>You declined the text.</value>
+    <comment>Receive result: the person declined an incoming text</comment>
+  </data>
+  <data name="receiveTextDone" xml:space="preserve">
+    <value>Text received and verified</value>
+    <comment>Receive result: title when a text arrived and its check passed; the text is shown below it</comment>
+  </data>
+  <data name="receiveTextHidden" xml:space="preserve">
+    <value>The text holds hidden characters, shown as U+…. Copying gives the text exactly as it came.</value>
+    <comment>Receive result: the text holds invisible control or direction characters, shown in the text by their code, as &lt;U+202E&gt;; keep U+… as it is</comment>
+  </data>
+  <data name="receiveTextShortened" xml:space="preserve">
+    <value>Only the beginning of the text is shown. Copy text copies all of it.</value>
+    <comment>Receive result: a very long text is shown only in part; the Copy text button copies the whole text</comment>
+  </data>
+  <data name="receiveTitle" xml:space="preserve">
+    <value>Receive files</value>
+  </data>
+  <data name="sameNetworkNote" xml:space="preserve">
+    <value>Works across the internet. When the devices cannot reach each other directly, the encrypted transfer goes through the relay, which cannot read it.</value>
+  </data>
+  <data name="sendAddFailed" xml:space="preserve">
+    <value>The files could not be added. Try again. If it happens again, check that this device has enough free space, or choose the files from another place.</value>
+    <comment>Shown on the send screen when the system file picker could not hand over the chosen files (a path it cannot read, too little memory, or no space left for its copy).</comment>
+  </data>
+  <data name="sendAddFiles" xml:space="preserve">
+    <value>Add files</value>
+  </data>
+  <data name="sendClipboard" xml:space="preserve">
+    <value>Send clipboard</value>
+    <comment>Linux desktop entry action and Android shortcut: opens Send with the text on the clipboard filled in</comment>
+  </data>
+  <data name="sendClipboardEmpty" xml:space="preserve">
+    <value>The clipboard holds no text.</value>
+    <comment>Send screen: shown when Send clipboard finds no text on the clipboard</comment>
+  </data>
+  <data name="sendClipboardKept" xml:space="preserve">
+    <value>The text already typed is kept; the clipboard was not used.</value>
+    <comment>Send screen: Send clipboard was chosen while the text box already held typed text, so the clipboard was not pasted</comment>
+  </data>
+  <data name="sendCodeHint" xml:space="preserve">
+    <value>On the other device, open TotalDrop, tap Receive and enter this code.</value>
+  </data>
+  <data name="sendCopied" xml:space="preserve">
+    <value>Code copied</value>
+  </data>
+  <data name="sendCopy" xml:space="preserve">
+    <value>Copy</value>
+  </data>
+  <data name="sendCounting" xml:space="preserve">
+    <value>Counting…</value>
+  </data>
+  <data name="sendCreateCode" xml:space="preserve">
+    <value>Create code</value>
+  </data>
+  <data name="sendDone" xml:space="preserve">
+    <value>Sent and verified</value>
+  </data>
+  <data name="sendDoneBody" xml:space="preserve">
+    <value>{count, plural, =1{The file arrived intact.} other{All {count} files arrived intact.}}</value>
+  </data>
+  <data name="sendDropHere" xml:space="preserve">
+    <value>Drop files here</value>
+  </data>
+  <data name="sendDropHint" xml:space="preserve">
+    <value>You can also drag files onto this window.</value>
+  </data>
+  <data name="sendEmpty" xml:space="preserve">
+    <value>Nothing selected yet</value>
+  </data>
+  <data name="sendEmptyHint" xml:space="preserve">
+    <value>Add the files you want to send. The receiver gets exactly these, nothing else.</value>
+  </data>
+  <data name="sendPreparing" xml:space="preserve">
+    <value>Preparing your files…</value>
+  </data>
+  <data name="sendQrHint" xml:space="preserve">
+    <value>Or scan this code with the other device's camera.</value>
+  </data>
+  <data name="sendRemove" xml:space="preserve">
+    <value>Remove</value>
+  </data>
+  <data name="sendSending" xml:space="preserve">
+    <value>Sending</value>
+  </data>
+  <data name="sendShare" xml:space="preserve">
+    <value>Share</value>
+  </data>
+  <data name="sendShareText" xml:space="preserve">
+    <value>Get my files with TotalDrop. Code: {code}</value>
+  </data>
+  <data name="sendSomeFailed" xml:space="preserve">
+    <value>{count, plural, =1{One file did not arrive intact and was discarded.} other{{count} files did not arrive intact and were discarded.}}</value>
+  </data>
+  <data name="sendStrongCode" xml:space="preserve">
+    <value>Stronger code</value>
+  </data>
+  <data name="sendStrongCodeHint" xml:space="preserve">
+    <value>Three words instead of two: much harder to guess</value>
+  </data>
+  <data name="sendText" xml:space="preserve">
+    <value>Send text</value>
+    <comment>Send screen: button and screen title for sending a piece of text instead of files</comment>
+  </data>
+  <data name="sendTextDone" xml:space="preserve">
+    <value>The text arrived intact.</value>
+    <comment>Send result: the text reached the receiver and its check passed</comment>
+  </data>
+  <data name="sendTextHidden" xml:space="preserve">
+    <value>The text holds hidden characters, such as direction marks. They are sent with it.</value>
+    <comment>Send screen: the text to send holds invisible control or direction characters; they are sent as they are</comment>
+  </data>
+  <data name="sendTextHint" xml:space="preserve">
+    <value>Type or paste the text to send</value>
+    <comment>Send screen: placeholder in the box where the person types or pastes the text to send</comment>
+  </data>
+  <data name="sendTextShortened" xml:space="preserve">
+    <value>Only the beginning of the text is shown; all of it is sent.</value>
+    <comment>Send screen: a very long pasted text is shown only in part; the whole text is still sent</comment>
+  </data>
+  <data name="sendTextTooLong" xml:space="preserve">
+    <value>A text can be at most {size}. Send a longer one as a file.</value>
+    <comment>Send screen: the text is over the limit; {size} is the limit, such as 1 MB</comment>
+  </data>
+  <data name="sendTitle" xml:space="preserve">
+    <value>Send files</value>
+  </data>
+  <data name="sendWaiting" xml:space="preserve">
+    <value>Waiting for the receiver…</value>
+  </data>
+  <data name="sendWaitingAccept" xml:space="preserve">
+    <value>Check the words, then wait for the receiver to accept.</value>
+  </data>
+  <data name="sendYourCode" xml:space="preserve">
+    <value>Your code</value>
+  </data>
+  <data name="settings" xml:space="preserve">
+    <value>Settings</value>
+  </data>
+  <data name="settingsAbout" xml:space="preserve">
+    <value>About</value>
+  </data>
+  <data name="settingsAboutBody" xml:space="preserve">
+    <value>TotalDrop is free and open source, funded by donations. Licensed GPL-3.0-or-later.</value>
+  </data>
+  <data name="settingsBackground" xml:space="preserve">
+    <value>Background transfers</value>
+    <comment>Settings: heading of the section about background transfers</comment>
+  </data>
+  <data name="settingsBackgroundOpen" xml:space="preserve">
+    <value>Battery settings</value>
+    <comment>Settings: button that opens the background transfers page</comment>
+  </data>
+  <data name="settingsPrivacy" xml:space="preserve">
+    <value>Privacy</value>
+  </data>
+  <data name="settingsPrivacyBody" xml:space="preserve">
+    <value>The rendezvous server, the relay and Cloudflare's STUN server see your IP address, and so does the other device when you connect directly (unless privacy mode is on). None of them sees file names, contents or keys, and our servers keep no logs. Files go directly between the devices when they can, otherwise through the relay; they are encrypted end to end either way.</value>
+  </data>
+  <data name="settingsSave" xml:space="preserve">
+    <value>Save</value>
+  </data>
+  <data name="settingsServer" xml:space="preserve">
+    <value>Rendezvous server</value>
+  </data>
+  <data name="settingsServerHelp" xml:space="preserve">
+    <value>Helps two devices with the same code find each other. It never sees your files or keys.</value>
+  </data>
+  <data name="settingsServerInvalid" xml:space="preserve">
+    <value>Must start with wss://</value>
+  </data>
+  <data name="settingsServerReset" xml:space="preserve">
+    <value>Use the default</value>
+  </data>
+  <data name="settingsVersion" xml:space="preserve">
+    <value>Version {version}</value>
+  </data>
+  <data name="settingsWordsEnglish" xml:space="preserve">
+    <value>Codes and verification words are in English in every language, so two devices set to different languages show the same words.</value>
+    <comment>Shown in Settings under About. Explains why the transfer code and the verification words stay in English: they come from one English word list so that both devices show the same ones</comment>
+  </data>
+  <data name="setupBackgroundAllowed" xml:space="preserve">
+    <value>Android's battery optimisation is off for TotalDrop.</value>
+    <comment>The same page: status when Android's battery optimisation is already off for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundAutostart" xml:space="preserve">
+    <value>Open Autostart</value>
+    <comment>The same page: button that opens the maker's Autostart page (Xiaomi)</comment>
+  </data>
+  <data name="setupBackgroundBattery" xml:space="preserve">
+    <value>Open battery settings</value>
+    <comment>The same page: button that opens TotalDrop's app info, where its battery use is set</comment>
+  </data>
+  <data name="setupBackgroundBatteryHint" xml:space="preserve">
+    <value>On TotalDrop's app info page, open Battery and allow unrestricted use. The names of these settings differ from phone to phone.</value>
+    <comment>The same page: under the first button, which opens TotalDrop's app info; what to do there</comment>
+  </data>
+  <data name="setupBackgroundBody" xml:space="preserve">
+    <value>So that a transfer keeps going when you switch apps or lock the screen, let TotalDrop run without battery restrictions. TotalDrop works in the background only while a transfer you started is running.</value>
+    <comment>The same page: why TotalDrop asks to run without battery restrictions</comment>
+  </data>
+  <data name="setupBackgroundMaker" xml:space="preserve">
+    <value>{maker} phones have a battery saver of their own</value>
+    <comment>The same page: heading of the second step on Xiaomi, Redmi and POCO phones, which add a battery saver of their own</comment>
+  </data>
+  <data name="setupBackgroundMakerBody" xml:space="preserve">
+    <value>Open TotalDrop's battery saver too and choose "No restrictions". If the phone has Autostart, turn it on for TotalDrop.</value>
+    <comment>The same page: what to choose in the maker's battery saver; "No restrictions" is the label on Xiaomi phones, use the label those phones show in your language</comment>
+  </data>
+  <data name="setupBackgroundMakerOpen" xml:space="preserve">
+    <value>Open TotalDrop's battery saver</value>
+    <comment>The same page: button that opens the maker's battery saver for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundRestricted" xml:space="preserve">
+    <value>Android's battery optimisation is on for TotalDrop: a transfer may stop when you switch apps.</value>
+    <comment>The same page: status when Android's battery optimisation is still on for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundSkip" xml:space="preserve">
+    <value>Not now</value>
+    <comment>The same page at first start: skip it for now</comment>
+  </data>
+  <data name="setupBackgroundTitle" xml:space="preserve">
+    <value>Keep transfers going in the background</value>
+    <comment>First-run and Settings page about background transfers (#338): heading</comment>
+  </data>
+  <data name="shareBusy" xml:space="preserve">
+    <value>A transfer is still running. Wait for it to finish or stop it, then share again.</value>
+    <comment>Android: shown when files are shared to TotalDrop while a send or receive is still running; the shared files are not added</comment>
+  </data>
+  <data name="shareSkipped" xml:space="preserve">
+    <value>{count, plural, =1{One shared item could not be read and was left out.} other{{count} shared items could not be read and were left out.}}</value>
+    <comment>Android: shown when some of the items another app shared to TotalDrop could not be read (no read permission, or the app's own files) and were left out; the rest were added</comment>
+  </data>
+  <data name="sizeBytes" xml:space="preserve">
+    <value>{value} B</value>
+    <comment>A size in bytes. value is already formatted for the region</comment>
+  </data>
+  <data name="sizeGB" xml:space="preserve">
+    <value>{value} GB</value>
+    <comment>Gigabytes</comment>
+  </data>
+  <data name="sizeKB" xml:space="preserve">
+    <value>{value} kB</value>
+    <comment>Kilobytes (1000 bytes)</comment>
+  </data>
+  <data name="sizeMB" xml:space="preserve">
+    <value>{value} MB</value>
+    <comment>Megabytes</comment>
+  </data>
+  <data name="sizePB" xml:space="preserve">
+    <value>{value} PB</value>
+    <comment>Petabytes</comment>
+  </data>
+  <data name="sizeTB" xml:space="preserve">
+    <value>{value} TB</value>
+    <comment>Terabytes</comment>
+  </data>
+  <data name="stop" xml:space="preserve">
+    <value>Stop</value>
+  </data>
+  <data name="technicalDetail" xml:space="preserve">
+    <value>Technical message in English, to include when you report a problem:</value>
+    <comment>Under Details, above the error's technical text, which stays in English so it can be searched and reported</comment>
+  </data>
+  <data name="textCopied" xml:space="preserve">
+    <value>Text copied</value>
+    <comment>Tooltip after the received text was copied</comment>
+  </data>
+  <data name="transferNoticeBody" xml:space="preserve">
+    <value>Keeps going while you use other apps.</value>
+    <comment>Text of the ongoing transfer notification: the transfer continues while the person uses other apps</comment>
+  </data>
+  <data name="transferNoticeChannel" xml:space="preserve">
+    <value>Transfers</value>
+    <comment>Android notification channel name for running transfers (shown in system settings)</comment>
+  </data>
+  <data name="transferNoticeReceiving" xml:space="preserve">
+    <value>Receiving with TotalDrop</value>
+    <comment>Title of the ongoing notification while a receive runs in the background</comment>
+  </data>
+  <data name="transferNoticeSending" xml:space="preserve">
+    <value>Sending with TotalDrop</value>
+    <comment>Title of the ongoing notification while a send runs in the background</comment>
+  </data>
+  <data name="tryAgain" xml:space="preserve">
+    <value>Try again</value>
+  </data>
+  <data name="verificationHint" xml:space="preserve">
+    <value>The other person sees the same four words. If they differ, stop.</value>
+  </data>
+  <data name="verificationTitle" xml:space="preserve">
+    <value>Verification words</value>
+  </data>
+</root>

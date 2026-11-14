@@ -1,0 +1,628 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 The TotalDrop Contributors -->
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="appTagline" xml:space="preserve">
+    <value>هر فایلی، برای هر کسی، در هر جایی.</value>
+    <comment>Short slogan under the app name on the home screen</comment>
+  </data>
+  <data name="back" xml:space="preserve">
+    <value>برگشت</value>
+  </data>
+  <data name="cancel" xml:space="preserve">
+    <value>لغو</value>
+  </data>
+  <data name="cancelTransferBody" xml:space="preserve">
+    <value>به طرف مقابل اطلاع داده می‌شود که انتقال متوقف شد.</value>
+  </data>
+  <data name="cancelTransferTitle" xml:space="preserve">
+    <value>این انتقال متوقف شود؟</value>
+  </data>
+  <data name="causeConnectionLost" xml:space="preserve">
+    <value>اتصال با دستگاه دیگر قطع شد.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeDiskFull" xml:space="preserve">
+    <value>فضای خالی کافی در این دستگاه نیست.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeFileChanged" xml:space="preserve">
+    <value>یک فایل هنگام ارسال تغییر کرد. پس از ذخیره شدن، دوباره آن را بفرستید.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoPermission" xml:space="preserve">
+    <value>TotalDrop اجازه خواندن یا نوشتن فایل یا پوشه‌ای را که لازم دارد ندارد.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoRoute" xml:space="preserve">
+    <value>هیچ راهی برای رسیدن به دستگاه دیگر جواب نداد، نه مستقیم و نه از طریق سرور رله.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNotFound" xml:space="preserve">
+    <value>یک فایل یا پوشه پیدا نشد. شاید جابه‌جا یا حذف شده باشد.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeProtocol" xml:space="preserve">
+    <value>دستگاه دیگر چیزی فرستاد که این نسخه آن را نمی‌فهمد. به‌روزرسانی TotalDrop در هر دو دستگاه ممکن است کمک کند.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeReadOnly" xml:space="preserve">
+    <value>پوشه روی دیسکی است که نمی‌توان روی آن نوشت.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeRelay" xml:space="preserve">
+    <value>دسترسی به سرور رله ممکن نشد یا سرور رله تنظیم نشده است، یا دو دستگاه از یک سرور رله استفاده نمی‌کنند.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeTimedOut" xml:space="preserve">
+    <value>اتصال دیگر پاسخ نمی‌دهد. شاید یکی از دستگاه‌ها شبکه را از دست داده یا به حالت خواب رفته باشد.</value>
+    <comment>Under Details of a failed transfer: why it failed. The connection went silent (QUIC idle timeout), or the sender stopped sending.</comment>
+  </data>
+  <data name="codeSuggestions" xml:space="preserve">
+    <value>پیشنهادها</value>
+  </data>
+  <data name="copyText" xml:space="preserve">
+    <value>کپی متن</value>
+    <comment>Receive result: button that copies the received text to the clipboard</comment>
+  </data>
+  <data name="desktopComment" xml:space="preserve">
+    <value>فایل‌ها را مستقیم به دستگاهی دیگر بفرستید، با رمزگذاری سرتاسری</value>
+    <comment>Linux desktop entry: one-line description shown as a tooltip in app menus</comment>
+  </data>
+  <data name="desktopGenericName" xml:space="preserve">
+    <value>انتقال فایل</value>
+    <comment>Linux desktop entry: what kind of app TotalDrop is, shown under its name in app menus and launchers</comment>
+  </data>
+  <data name="desktopKeywords" xml:space="preserve">
+    <value>ارسال;دریافت;اشتراک;انتقال;فایل;</value>
+    <comment>Linux desktop entry: search words for app launchers, separated by semicolons and ending with one. Words people type to find a file-sending app; no spaces around the semicolons</comment>
+  </data>
+  <data name="desktopSendWith" xml:space="preserve">
+    <value>ارسال با TotalDrop</value>
+    <comment>Linux file managers (Dolphin, Files, Nemo): right-click menu item that sends the selected files and folders with TotalDrop. Also Android: the item in the menu of text selected in any app, which sends that text</comment>
+  </data>
+  <data name="done" xml:space="preserve">
+    <value>تمام</value>
+  </data>
+  <data name="draftTranslation" xml:space="preserve">
+    <value>این ترجمه در حال بازبینی است. در GitHub به بهتر شدن آن کمک کنید.</value>
+    <comment>Shown in Settings when some of the text in this language is an unreviewed draft</comment>
+  </data>
+  <data name="editCopy" xml:space="preserve">
+    <value>کپی</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editCut" xml:space="preserve">
+    <value>برش</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editDelete" xml:space="preserve">
+    <value>حذف</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editPaste" xml:space="preserve">
+    <value>چسباندن</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editRedo" xml:space="preserve">
+    <value>ازنو</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editSelectAll" xml:space="preserve">
+    <value>انتخاب همه</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editUndo" xml:space="preserve">
+    <value>واگرد</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="errorBadServer" xml:space="preserve">
+    <value>نشانی سرور معتبر نیست. باید با wss:// شروع شود.</value>
+    <comment>The rendezvous server address in the settings is not valid. Same text as cliErrBadServer</comment>
+  </data>
+  <data name="errorCancelled" xml:space="preserve">
+    <value>طرف مقابل انتقال را متوقف کرد.</value>
+  </data>
+  <data name="errorCodeExpired" xml:space="preserve">
+    <value>کد پیش از آنکه کسی از آن استفاده کند منقضی شد. برای گرفتن کد جدید دوباره ارسال کنید.</value>
+    <comment>Shown to the sender: nobody came for the code before the server let it expire (15 minutes). Same text as cliErrCodeExpired</comment>
+  </data>
+  <data name="errorCodeNotInUse" xml:space="preserve">
+    <value>این کد در حال استفاده نیست: اشتباه تایپ شده، منقضی شده یا قبلا استفاده شده است. از فرستنده یک کد جدید بخواهید.</value>
+    <comment>The server says no sender is using this code's number. Same text as cliErrCodeNotInUse</comment>
+  </data>
+  <data name="errorConnect" xml:space="preserve">
+    <value>اتصال به دستگاه دیگر ممکن نشد. مطمئن شوید هر دو دستگاه آنلاین هستند و دوباره تلاش کنید.</value>
+  </data>
+  <data name="errorDeclined" xml:space="preserve">
+    <value>گیرنده فایل‌ها را رد کرد.</value>
+  </data>
+  <data name="errorInvalidCode" xml:space="preserve">
+    <value>این کد معتبر نیست.</value>
+  </data>
+  <data name="errorInvalidOffer" xml:space="preserve">
+    <value>The offer broke a safety rule, so it was refused.</value>
+  </data>
+  <data name="errorOther" xml:space="preserve">
+    <value>مشکلی پیش آمد.</value>
+  </data>
+  <data name="errorPeerLeft" xml:space="preserve">
+    <value>طرف مقابل پیش از پایان انتقال خارج شد.</value>
+  </data>
+  <data name="errorServer" xml:space="preserve">
+    <value>دسترسی به سرور TotalDrop ممکن نشد. اتصال اینترنت خود را بررسی کنید.</value>
+  </data>
+  <data name="errorStopped" xml:space="preserve">
+    <value>در این دستگاه متوقف شد.</value>
+  </data>
+  <data name="errorStorage" xml:space="preserve">
+    <value>یک فایل خوانده یا ذخیره نشد.</value>
+  </data>
+  <data name="errorTextDamaged" xml:space="preserve">
+    <value>متن سالم نرسید، برای همین نمایش داده نمی‌شود.</value>
+    <comment>Receive result: the text failed its integrity check or is not valid text, so it is not shown</comment>
+  </data>
+  <data name="errorWrongCode" xml:space="preserve">
+    <value>The code did not match. It was mistyped, or someone tried to intercept the transfer. Nothing was sent. Start again with a new code.</value>
+  </data>
+  <data name="homeFooter" xml:space="preserve">
+    <value>رمزگذاری سرتاسری. بدون حساب، بدون ایمیل، بدون شماره تلفن.</value>
+  </data>
+  <data name="homeReceiveBody" xml:space="preserve">
+    <value>کد را وارد کنید و فایل‌ها را ذخیره کنید</value>
+  </data>
+  <data name="homeReceiveTitle" xml:space="preserve">
+    <value>دریافت</value>
+  </data>
+  <data name="homeSendBody" xml:space="preserve">
+    <value>فایل‌ها را انتخاب کنید و یک کد کوتاه هم‌رسانی کنید</value>
+  </data>
+  <data name="homeSendTitle" xml:space="preserve">
+    <value>ارسال</value>
+  </data>
+  <data name="itemsAndSize" xml:space="preserve">
+    <value>{count, plural, other{{count} مورد}} · {size}</value>
+  </data>
+  <data name="keepAwakeReason" xml:space="preserve">
+    <value>TotalDrop در حال ارسال یا دریافت فایل است</value>
+    <comment>Linux: why the computer is kept from sleeping while a transfer runs; the desktop may show it in its power settings or battery menu</comment>
+  </data>
+  <data name="keepGoing" xml:space="preserve">
+    <value>ادامه</value>
+  </data>
+  <data name="linkBusy" xml:space="preserve">
+    <value>کاری را که روی صفحه است تمام یا متوقف کنید، سپس پیوند را دوباره باز کنید.</value>
+    <comment>Android: shown when a TotalDrop link (totaldrop://r/… or https://totaldrop.app/r#…) opens the app while Receive cannot take a new code: a send or receive is running, an offer waits for an answer, or a received text is shown. The screen it refers to is shown; the link's code is not filled in</comment>
+  </data>
+  <data name="metainfoAbout" xml:space="preserve">
+    <value>TotalDrop فایل‌ها و پوشه‌ها را با رمزگذاری سرتاسری از یک دستگاه به دستگاه دیگر می‌فرستد. فایل‌ها را انتخاب کنید، یک کد کوتاه یا کد QR را به اشتراک بگذارید تا دستگاه دیگر آن‌ها را دریافت کند. بدون حساب کاربری، ایمیل یا شماره تلفن.</value>
+    <comment>Linux software centres: the paragraph that introduces TotalDrop on its page</comment>
+  </data>
+  <data name="metainfoOnePackage" xml:space="preserve">
+    <value>هر بار فقط از یک بسته Linux استفاده کنید. Flatpak و بسته .pkg، .deb یا .rpm یک نام مشترک دارند، پس وقتی یکی باز است، اجرای دیگری به‌جای باز کردن پنجره دوم، پنجره باز را جلو می‌آورد.</value>
+    <comment>Linux software centres: last paragraph of the description; the Flatpak and the distribution package (.pkg, .deb, .rpm) cannot run at the same time (#351). Keep .pkg, .deb, .rpm and Flatpak as they are</comment>
+  </data>
+  <data name="metainfoSummary" xml:space="preserve">
+    <value>فایل‌ها را مستقیم به دستگاهی دیگر بفرستید</value>
+    <comment>Linux software centres (Discover, GNOME Software, Flathub): one-line summary under the app's name. No full stop at the end</comment>
+  </data>
+  <data name="metainfoTheme" xml:space="preserve">
+    <value>از پوستهٔ میزکار شما پیروی می‌کند: Plasma، Hyprland، Omarchy، GNOME</value>
+    <comment>Linux software centres: feature list item; keep the desktop names Plasma, Hyprland, Omarchy and GNOME as they are</comment>
+  </data>
+  <data name="metainfoVerified" xml:space="preserve">
+    <value>هر فایل هنگام رسیدن بررسی می‌شود؛ فایل‌های آسیب‌دیده کنار گذاشته می‌شوند</value>
+    <comment>Linux software centres: feature list item about every received file being checked</comment>
+  </data>
+  <data name="metainfoWords" xml:space="preserve">
+    <value>چهار کلمهٔ تأیید نشان می‌دهد که کسی در میانه نیست</value>
+    <comment>Linux software centres: feature list item about the four verification words that show no one is intercepting the transfer</comment>
+  </data>
+  <data name="moreInfo" xml:space="preserve">
+    <value>جزئیات</value>
+  </data>
+  <data name="openFolder" xml:space="preserve">
+    <value>باز کردن پوشه</value>
+  </data>
+  <data name="otherPackageFlatpak" xml:space="preserve">
+    <value>TotalDrop از قبل از Flatpak باز است، پس همان پنجره جلو آورده شد. هر بار فقط از یک بسته استفاده کنید: برای باز کردن این یکی، از آن پنجره خارج شوید.</value>
+    <comment>Linux desktop notification when TotalDrop is started from the distribution package while the Flatpak window is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="otherPackageSystem" xml:space="preserve">
+    <value>TotalDrop از قبل از بسته .pkg، .deb یا .rpm باز است، پس همان پنجره جلو آورده شد. هر بار فقط از یک بسته استفاده کنید: برای باز کردن این یکی، از آن پنجره خارج شوید.</value>
+    <comment>Linux desktop notification when TotalDrop is started from the Flatpak while the window of the .pkg, .deb or .rpm package is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="pickImageTitle" xml:space="preserve">
+    <value>تصویری با کد QR انتخاب کنید</value>
+  </data>
+  <data name="pickTitle" xml:space="preserve">
+    <value>فایل‌های مورد نظر برای ارسال را انتخاب کنید</value>
+  </data>
+  <data name="privacyMode" xml:space="preserve">
+    <value>پنهان کردن نشانی من از دستگاه دیگر</value>
+  </data>
+  <data name="privacyModeConfirmBody" xml:space="preserve">
+    <value>انتقال‌ها کندتر می‌شوند، چون هیچ چیز مستقیما بین دستگاه‌ها جابجا نمی‌شود. سرور هماهنگی و سرور رله همچنان نشانی IP شما را می‌بینند؛ ولی هرگز فایل‌ها یا کلیدهای شما را نمی‌بینند.</value>
+  </data>
+  <data name="privacyModeConfirmTitle" xml:space="preserve">
+    <value>حالت حریم خصوصی روشن شود؟</value>
+  </data>
+  <data name="privacyModeHint" xml:space="preserve">
+    <value>حالت حریم خصوصی: همه چیز از سرور رله می‌گذرد، بنابراین دستگاه دیگر هرگز نشانی IP شما را نمی‌فهمد. کندتر است و دستگاه دیگر باید از همان سرور رله استفاده کند (سرور پیش‌فرض همین است).</value>
+  </data>
+  <data name="privacyModeTurnOn" xml:space="preserve">
+    <value>روشن کردن</value>
+  </data>
+  <data name="progressPercent" xml:space="preserve">
+    <value>{percent}٪</value>
+    <comment>Transfer progress; use your language's percent style</comment>
+  </data>
+  <data name="receiveAccept" xml:space="preserve">
+    <value>Accept</value>
+  </data>
+  <data name="receiveAndMore" xml:space="preserve">
+    <value>و {count} مورد دیگر</value>
+  </data>
+  <data name="receiveCodeHelp" xml:space="preserve">
+    <value>کد را از فرستنده بخواهید.</value>
+  </data>
+  <data name="receiveCodeHint" xml:space="preserve">
+    <value>7-harbor-rocket</value>
+  </data>
+  <data name="receiveCodeInvalid" xml:space="preserve">
+    <value>این شبیه کد نیست. کد با یک عدد شروع می‌شود و پس از آن دو یا سه کلمه می‌آید.</value>
+  </data>
+  <data name="receiveCodeLabel" xml:space="preserve">
+    <value>کد</value>
+  </data>
+  <data name="receiveConnect" xml:space="preserve">
+    <value>اتصال</value>
+  </data>
+  <data name="receiveConnecting" xml:space="preserve">
+    <value>در حال اتصال امن…</value>
+  </data>
+  <data name="receiveDecline" xml:space="preserve">
+    <value>Decline</value>
+  </data>
+  <data name="receiveDeclined" xml:space="preserve">
+    <value>فایل‌ها را رد کردید.</value>
+  </data>
+  <data name="receiveDone" xml:space="preserve">
+    <value>دریافت و تأیید شد</value>
+  </data>
+  <data name="receiveFromImage" xml:space="preserve">
+    <value>خواندن QR از تصویر</value>
+  </data>
+  <data name="receiveOffer" xml:space="preserve">
+    <value>فایل‌های ورودی</value>
+  </data>
+  <data name="receiveOfferSummary" xml:space="preserve">
+    <value>{files, plural, other{{files} فایل}} · {size}</value>
+  </data>
+  <data name="receiveOfferText" xml:space="preserve">
+    <value>متن ورودی</value>
+    <comment>Receive screen: title when the other side wants to send a text, not files</comment>
+  </data>
+  <data name="receiveOfferTextNote" xml:space="preserve">
+    <value>متن اینجا نمایش داده می‌شود و ذخیره نمی‌شود.</value>
+    <comment>Receive screen: under an incoming text, in place of the folder files are saved to</comment>
+  </data>
+  <data name="receivePaste" xml:space="preserve">
+    <value>جای‌گذاری</value>
+  </data>
+  <data name="receiveQrNotFound" xml:space="preserve">
+    <value>در این تصویر کد TotalDrop وجود ندارد.</value>
+  </data>
+  <data name="receiveReceiving" xml:space="preserve">
+    <value>در حال دریافت</value>
+  </data>
+  <data name="receiveSaveTo" xml:space="preserve">
+    <value>در {folder} ذخیره شد</value>
+  </data>
+  <data name="receiveTextDeclined" xml:space="preserve">
+    <value>متن را رد کردید.</value>
+    <comment>Receive result: the person declined an incoming text</comment>
+  </data>
+  <data name="receiveTextDone" xml:space="preserve">
+    <value>متن دریافت و تأیید شد</value>
+    <comment>Receive result: title when a text arrived and its check passed; the text is shown below it</comment>
+  </data>
+  <data name="receiveTextHidden" xml:space="preserve">
+    <value>متن نویسه‌های پنهان دارد که به‌صورت U+… نمایش داده می‌شوند. با کپی کردن، متن دقیقاً همان‌طور که رسیده کپی می‌شود.</value>
+    <comment>Receive result: the text holds invisible control or direction characters, shown in the text by their code, as &lt;U+202E&gt;; keep U+… as it is</comment>
+  </data>
+  <data name="receiveTextShortened" xml:space="preserve">
+    <value>فقط ابتدای متن نشان داده می‌شود. «کپی متن» همهٔ آن را کپی می‌کند.</value>
+    <comment>Receive result: a very long text is shown only in part; the Copy text button copies the whole text</comment>
+  </data>
+  <data name="receiveTitle" xml:space="preserve">
+    <value>دریافت فایل</value>
+  </data>
+  <data name="sameNetworkNote" xml:space="preserve">
+    <value>از طریق اینترنت کار می‌کند. وقتی دستگاه‌ها نتوانند مستقیما به هم برسند، انتقال رمزگذاری‌شده از سرور رله می‌گذرد که نمی‌تواند آن را بخواند.</value>
+  </data>
+  <data name="sendAddFailed" xml:space="preserve">
+    <value>افزودن فایل‌ها ممکن نشد. دوباره امتحان کنید. اگر باز هم پیش آمد، بررسی کنید که روی این دستگاه فضای خالی کافی هست، یا فایل‌ها را از جای دیگری انتخاب کنید.</value>
+    <comment>Shown on the send screen when the system file picker could not hand over the chosen files (a path it cannot read, too little memory, or no space left for its copy).</comment>
+  </data>
+  <data name="sendAddFiles" xml:space="preserve">
+    <value>افزودن فایل</value>
+  </data>
+  <data name="sendClipboard" xml:space="preserve">
+    <value>ارسال محتوای کلیپ‌بورد</value>
+    <comment>Linux desktop entry action and Android shortcut: opens Send with the text on the clipboard filled in</comment>
+  </data>
+  <data name="sendClipboardEmpty" xml:space="preserve">
+    <value>در کلیپ‌بورد متنی نیست.</value>
+    <comment>Send screen: shown when Send clipboard finds no text on the clipboard</comment>
+  </data>
+  <data name="sendClipboardKept" xml:space="preserve">
+    <value>متن نوشته‌شده حفظ شد و از کلیپ‌بورد استفاده نشد.</value>
+    <comment>Send screen: Send clipboard was chosen while the text box already held typed text, so the clipboard was not pasted</comment>
+  </data>
+  <data name="sendCodeHint" xml:space="preserve">
+    <value>در دستگاه دیگر، TotalDrop را باز کنید، روی دریافت بزنید و این کد را وارد کنید.</value>
+  </data>
+  <data name="sendCopied" xml:space="preserve">
+    <value>کد کپی شد</value>
+  </data>
+  <data name="sendCopy" xml:space="preserve">
+    <value>کپی</value>
+  </data>
+  <data name="sendCounting" xml:space="preserve">
+    <value>در حال شمارش…</value>
+  </data>
+  <data name="sendCreateCode" xml:space="preserve">
+    <value>ساخت کد</value>
+  </data>
+  <data name="sendDone" xml:space="preserve">
+    <value>ارسال و تأیید شد</value>
+  </data>
+  <data name="sendDoneBody" xml:space="preserve">
+    <value>{count, plural, one{فایل سالم رسید.} other{هر {count} فایل سالم رسیدند.}}</value>
+  </data>
+  <data name="sendDropHere" xml:space="preserve">
+    <value>فایل‌ها را اینجا رها کنید</value>
+  </data>
+  <data name="sendDropHint" xml:space="preserve">
+    <value>می‌توانید فایل‌ها را به این پنجره هم بکشید.</value>
+  </data>
+  <data name="sendEmpty" xml:space="preserve">
+    <value>هنوز چیزی انتخاب نشده است</value>
+  </data>
+  <data name="sendEmptyHint" xml:space="preserve">
+    <value>فایل‌هایی را که می‌خواهید بفرستید اضافه کنید. گیرنده دقیقا همین‌ها را دریافت می‌کند، نه چیز دیگری.</value>
+  </data>
+  <data name="sendPreparing" xml:space="preserve">
+    <value>در حال آماده‌سازی فایل‌ها…</value>
+  </data>
+  <data name="sendQrHint" xml:space="preserve">
+    <value>یا این کد را با دوربین دستگاه دیگر اسکن کنید.</value>
+  </data>
+  <data name="sendRemove" xml:space="preserve">
+    <value>حذف</value>
+  </data>
+  <data name="sendSending" xml:space="preserve">
+    <value>در حال ارسال</value>
+  </data>
+  <data name="sendShare" xml:space="preserve">
+    <value>هم‌رسانی</value>
+  </data>
+  <data name="sendShareText" xml:space="preserve">
+    <value>فایل‌های من را با TotalDrop دریافت کن. کد: {code}</value>
+  </data>
+  <data name="sendSomeFailed" xml:space="preserve">
+    <value>{count, plural, one{یک فایل سالم نرسید و دور ریخته شد.} other{{count} فایل سالم نرسیدند و دور ریخته شدند.}}</value>
+  </data>
+  <data name="sendStrongCode" xml:space="preserve">
+    <value>کد قوی‌تر</value>
+  </data>
+  <data name="sendStrongCodeHint" xml:space="preserve">
+    <value>سه کلمه به جای دو کلمه: حدس زدن آن بسیار سخت‌تر است</value>
+  </data>
+  <data name="sendText" xml:space="preserve">
+    <value>ارسال متن</value>
+    <comment>Send screen: button and screen title for sending a piece of text instead of files</comment>
+  </data>
+  <data name="sendTextDone" xml:space="preserve">
+    <value>متن سالم رسید.</value>
+    <comment>Send result: the text reached the receiver and its check passed</comment>
+  </data>
+  <data name="sendTextHidden" xml:space="preserve">
+    <value>متن نویسه‌های پنهانی مانند نشانه‌های جهت دارد. این نویسه‌ها هم همراه متن فرستاده می‌شوند.</value>
+    <comment>Send screen: the text to send holds invisible control or direction characters; they are sent as they are</comment>
+  </data>
+  <data name="sendTextHint" xml:space="preserve">
+    <value>متنی را که می‌خواهید بفرستید بنویسید یا جای‌گذاری کنید</value>
+    <comment>Send screen: placeholder in the box where the person types or pastes the text to send</comment>
+  </data>
+  <data name="sendTextShortened" xml:space="preserve">
+    <value>فقط ابتدای متن نشان داده می‌شود؛ همهٔ آن فرستاده می‌شود.</value>
+    <comment>Send screen: a very long pasted text is shown only in part; the whole text is still sent</comment>
+  </data>
+  <data name="sendTextTooLong" xml:space="preserve">
+    <value>متن حداکثر می‌تواند {size} باشد. متن بلندتر را به‌صورت فایل بفرستید.</value>
+    <comment>Send screen: the text is over the limit; {size} is the limit, such as 1 MB</comment>
+  </data>
+  <data name="sendTitle" xml:space="preserve">
+    <value>ارسال فایل</value>
+  </data>
+  <data name="sendWaiting" xml:space="preserve">
+    <value>در انتظار گیرنده…</value>
+  </data>
+  <data name="sendWaitingAccept" xml:space="preserve">
+    <value>کلمات را بررسی کنید، سپس منتظر بمانید تا گیرنده بپذیرد.</value>
+  </data>
+  <data name="sendYourCode" xml:space="preserve">
+    <value>کد شما</value>
+  </data>
+  <data name="settings" xml:space="preserve">
+    <value>تنظیمات</value>
+  </data>
+  <data name="settingsAbout" xml:space="preserve">
+    <value>درباره</value>
+  </data>
+  <data name="settingsAboutBody" xml:space="preserve">
+    <value>TotalDrop رایگان و متن‌باز است و با کمک‌های مالی اداره می‌شود. مجوز GPL-3.0-or-later.</value>
+  </data>
+  <data name="settingsBackground" xml:space="preserve">
+    <value>انتقال در پس‌زمینه</value>
+    <comment>Settings: heading of the section about background transfers</comment>
+  </data>
+  <data name="settingsBackgroundOpen" xml:space="preserve">
+    <value>تنظیمات باتری</value>
+    <comment>Settings: button that opens the background transfers page</comment>
+  </data>
+  <data name="settingsPrivacy" xml:space="preserve">
+    <value>حریم خصوصی</value>
+  </data>
+  <data name="settingsPrivacyBody" xml:space="preserve">
+    <value>سرور هماهنگی، سرور رله و سرور STUN شرکت Cloudflare نشانی IP شما را می‌بینند، و وقتی مستقیم وصل می‌شوید دستگاه دیگر هم آن را می‌بیند (مگر اینکه حالت حریم خصوصی روشن باشد). هیچ‌کدام نام فایلها، محتوا یا کلیدها را نمی‌بینند و سرورهای ما هیچ گزارشی نگه نمی‌دارند. فایل‌ها هر وقت ممکن باشد مستقیما بین دستگاه‌ها جابجا می‌شوند و در غیر این صورت از سرور رله می‌گذرند؛ در هر دو حالت رمزگذاری سرتاسری دارند.</value>
+  </data>
+  <data name="settingsSave" xml:space="preserve">
+    <value>ذخیره</value>
+  </data>
+  <data name="settingsServer" xml:space="preserve">
+    <value>سرور هماهنگی</value>
+  </data>
+  <data name="settingsServerHelp" xml:space="preserve">
+    <value>به دو دستگاه با کد یکسان کمک می‌کند یکدیگر را پیدا کنند. هرگز فایل‌ها یا کلیدهای شما را نمی‌بیند.</value>
+  </data>
+  <data name="settingsServerInvalid" xml:space="preserve">
+    <value>باید با wss:// شروع شود</value>
+  </data>
+  <data name="settingsServerReset" xml:space="preserve">
+    <value>استفاده از پیش‌فرض</value>
+  </data>
+  <data name="settingsVersion" xml:space="preserve">
+    <value>نسخه {version}</value>
+  </data>
+  <data name="settingsWordsEnglish" xml:space="preserve">
+    <value>کدها و کلمات تأیید در همه زبان‌ها انگلیسی می‌مانند تا دو دستگاه با زبان‌های متفاوت همان کلمات را نشان دهند.</value>
+    <comment>Shown in Settings under About. Explains why the transfer code and the verification words stay in English: they come from one English word list so that both devices show the same ones</comment>
+  </data>
+  <data name="setupBackgroundAllowed" xml:space="preserve">
+    <value>بهینه‌سازی باتری Android برای TotalDrop خاموش است.</value>
+    <comment>The same page: status when Android's battery optimisation is already off for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundAutostart" xml:space="preserve">
+    <value>باز کردن شروع خودکار</value>
+    <comment>The same page: button that opens the maker's Autostart page (Xiaomi)</comment>
+  </data>
+  <data name="setupBackgroundBattery" xml:space="preserve">
+    <value>باز کردن تنظیمات باتری</value>
+    <comment>The same page: button that opens TotalDrop's app info, where its battery use is set</comment>
+  </data>
+  <data name="setupBackgroundBatteryHint" xml:space="preserve">
+    <value>در صفحهٔ اطلاعات برنامهٔ TotalDrop، «باتری» را باز کنید و استفادهٔ بدون محدودیت را مجاز کنید. نام این تنظیمات از گوشی به گوشی فرق دارد.</value>
+    <comment>The same page: under the first button, which opens TotalDrop's app info; what to do there</comment>
+  </data>
+  <data name="setupBackgroundBody" xml:space="preserve">
+    <value>برای اینکه انتقال هنگام رفتن به برنامه دیگر یا قفل کردن صفحه ادامه پیدا کند، اجازه دهید TotalDrop بدون محدودیت باتری اجرا شود. TotalDrop فقط هنگامی در پس‌زمینه کار می‌کند که انتقالی که خودتان شروع کرده‌اید در جریان باشد.</value>
+    <comment>The same page: why TotalDrop asks to run without battery restrictions</comment>
+  </data>
+  <data name="setupBackgroundMaker" xml:space="preserve">
+    <value>گوشی‌های {maker} صرفه‌جوی باتری خودشان را دارند</value>
+    <comment>The same page: heading of the second step on Xiaomi, Redmi and POCO phones, which add a battery saver of their own</comment>
+  </data>
+  <data name="setupBackgroundMakerBody" xml:space="preserve">
+    <value>صرفه‌جوی باتری TotalDrop را هم باز کنید و «بدون محدودیت» را انتخاب کنید. اگر گوشی شروع خودکار دارد، آن را برای TotalDrop روشن کنید.</value>
+    <comment>The same page: what to choose in the maker's battery saver; "No restrictions" is the label on Xiaomi phones, use the label those phones show in your language</comment>
+  </data>
+  <data name="setupBackgroundMakerOpen" xml:space="preserve">
+    <value>باز کردن صرفه‌جوی باتری TotalDrop</value>
+    <comment>The same page: button that opens the maker's battery saver for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundRestricted" xml:space="preserve">
+    <value>بهینه‌سازی باتری Android برای TotalDrop روشن است: ممکن است انتقال هنگام رفتن به برنامه دیگر متوقف شود.</value>
+    <comment>The same page: status when Android's battery optimisation is still on for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundSkip" xml:space="preserve">
+    <value>اکنون نه</value>
+    <comment>The same page at first start: skip it for now</comment>
+  </data>
+  <data name="setupBackgroundTitle" xml:space="preserve">
+    <value>ادامه انتقال‌ها در پس‌زمینه</value>
+    <comment>First-run and Settings page about background transfers (#338): heading</comment>
+  </data>
+  <data name="shareBusy" xml:space="preserve">
+    <value>یک انتقال هنوز در جریان است. صبر کنید تمام شود یا آن را متوقف کنید، سپس دوباره هم‌رسانی کنید.</value>
+    <comment>Android: shown when files are shared to TotalDrop while a send or receive is still running; the shared files are not added</comment>
+  </data>
+  <data name="shareSkipped" xml:space="preserve">
+    <value>{count, plural, one{یک مورد هم‌رسانی‌شده خوانده نشد و کنار گذاشته شد.} other{{count} مورد هم‌رسانی‌شده خوانده نشدند و کنار گذاشته شدند.}}</value>
+    <comment>Android: shown when some of the items another app shared to TotalDrop could not be read (no read permission, or the app's own files) and were left out; the rest were added</comment>
+  </data>
+  <data name="sizeBytes" xml:space="preserve">
+    <value>{value} B</value>
+    <comment>A size in bytes. value is already formatted for the region</comment>
+  </data>
+  <data name="sizeGB" xml:space="preserve">
+    <value>{value} GB</value>
+    <comment>Gigabytes</comment>
+  </data>
+  <data name="sizeKB" xml:space="preserve">
+    <value>{value} kB</value>
+    <comment>Kilobytes (1000 bytes)</comment>
+  </data>
+  <data name="sizeMB" xml:space="preserve">
+    <value>{value} MB</value>
+    <comment>Megabytes</comment>
+  </data>
+  <data name="sizePB" xml:space="preserve">
+    <value>{value} PB</value>
+    <comment>Petabytes</comment>
+  </data>
+  <data name="sizeTB" xml:space="preserve">
+    <value>{value} TB</value>
+    <comment>Terabytes</comment>
+  </data>
+  <data name="stop" xml:space="preserve">
+    <value>توقف</value>
+  </data>
+  <data name="technicalDetail" xml:space="preserve">
+    <value>پیام فنی به انگلیسی، برای افزودن هنگام گزارش مشکل:</value>
+    <comment>Under Details, above the error's technical text, which stays in English so it can be searched and reported</comment>
+  </data>
+  <data name="textCopied" xml:space="preserve">
+    <value>متن کپی شد</value>
+    <comment>Tooltip after the received text was copied</comment>
+  </data>
+  <data name="transferNoticeBody" xml:space="preserve">
+    <value>هنگام استفاده از برنامه‌های دیگر ادامه می‌یابد.</value>
+    <comment>Text of the ongoing transfer notification: the transfer continues while the person uses other apps</comment>
+  </data>
+  <data name="transferNoticeChannel" xml:space="preserve">
+    <value>انتقال‌ها</value>
+    <comment>Android notification channel name for running transfers (shown in system settings)</comment>
+  </data>
+  <data name="transferNoticeReceiving" xml:space="preserve">
+    <value>در حال دریافت با TotalDrop</value>
+    <comment>Title of the ongoing notification while a receive runs in the background</comment>
+  </data>
+  <data name="transferNoticeSending" xml:space="preserve">
+    <value>در حال ارسال با TotalDrop</value>
+    <comment>Title of the ongoing notification while a send runs in the background</comment>
+  </data>
+  <data name="tryAgain" xml:space="preserve">
+    <value>تلاش دوباره</value>
+  </data>
+  <data name="verificationHint" xml:space="preserve">
+    <value>The other person sees the same four words. If they differ, stop.</value>
+  </data>
+  <data name="verificationTitle" xml:space="preserve">
+    <value>Verification words</value>
+  </data>
+</root>

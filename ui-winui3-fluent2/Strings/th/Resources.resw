@@ -1,0 +1,628 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 The TotalDrop Contributors -->
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="appTagline" xml:space="preserve">
+    <value>ทุกไฟล์ ถึงทุกคน ทุกที่</value>
+    <comment>Short slogan under the app name on the home screen</comment>
+  </data>
+  <data name="back" xml:space="preserve">
+    <value>กลับ</value>
+  </data>
+  <data name="cancel" xml:space="preserve">
+    <value>ยกเลิก</value>
+  </data>
+  <data name="cancelTransferBody" xml:space="preserve">
+    <value>อีกฝ่ายจะได้รับแจ้งว่าการโอนหยุดแล้ว</value>
+  </data>
+  <data name="cancelTransferTitle" xml:space="preserve">
+    <value>หยุดการโอนนี้ไหม</value>
+  </data>
+  <data name="causeConnectionLost" xml:space="preserve">
+    <value>การเชื่อมต่อกับอุปกรณ์อีกเครื่องถูกตัด</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeDiskFull" xml:space="preserve">
+    <value>พื้นที่ว่างในอุปกรณ์นี้ไม่พอ</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeFileChanged" xml:space="preserve">
+    <value>ไฟล์เปลี่ยนไประหว่างที่กำลังส่ง โปรดส่งใหม่หลังบันทึกแล้ว</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoPermission" xml:space="preserve">
+    <value>TotalDrop ไม่ได้รับอนุญาตให้อ่านหรือเขียนไฟล์หรือโฟลเดอร์ที่ต้องใช้</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoRoute" xml:space="preserve">
+    <value>เข้าถึงอุปกรณ์อีกเครื่องไม่ได้ ทั้งโดยตรงและผ่านเซิร์ฟเวอร์รีเลย์</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNotFound" xml:space="preserve">
+    <value>ไม่พบไฟล์หรือโฟลเดอร์ อาจถูกย้ายหรือลบไปแล้ว</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeProtocol" xml:space="preserve">
+    <value>อุปกรณ์อีกเครื่องส่งสิ่งที่เวอร์ชันนี้ไม่เข้าใจ การอัปเดต TotalDrop บนอุปกรณ์ทั้งสองอาจช่วยได้</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeReadOnly" xml:space="preserve">
+    <value>โฟลเดอร์อยู่บนดิสก์ที่เขียนไม่ได้</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeRelay" xml:space="preserve">
+    <value>เข้าถึงเซิร์ฟเวอร์รีเลย์ไม่ได้หรือยังไม่ได้ตั้งค่า หรืออุปกรณ์ทั้งสองไม่ได้ใช้รีเลย์เดียวกัน</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeTimedOut" xml:space="preserve">
+    <value>การเชื่อมต่อหยุดตอบสนอง อุปกรณ์เครื่องหนึ่งอาจขาดการเชื่อมต่อเครือข่ายหรือเข้าสู่โหมดสลีป</value>
+    <comment>Under Details of a failed transfer: why it failed. The connection went silent (QUIC idle timeout), or the sender stopped sending.</comment>
+  </data>
+  <data name="codeSuggestions" xml:space="preserve">
+    <value>คำแนะนำ</value>
+  </data>
+  <data name="copyText" xml:space="preserve">
+    <value>คัดลอกข้อความ</value>
+    <comment>Receive result: button that copies the received text to the clipboard</comment>
+  </data>
+  <data name="desktopComment" xml:space="preserve">
+    <value>ส่งไฟล์ตรงไปยังอุปกรณ์อื่น เข้ารหัสตั้งแต่ต้นทางถึงปลายทาง</value>
+    <comment>Linux desktop entry: one-line description shown as a tooltip in app menus</comment>
+  </data>
+  <data name="desktopGenericName" xml:space="preserve">
+    <value>การโอนไฟล์</value>
+    <comment>Linux desktop entry: what kind of app TotalDrop is, shown under its name in app menus and launchers</comment>
+  </data>
+  <data name="desktopKeywords" xml:space="preserve">
+    <value>ส่ง;รับ;แชร์;โอน;ไฟล์;</value>
+    <comment>Linux desktop entry: search words for app launchers, separated by semicolons and ending with one. Words people type to find a file-sending app; no spaces around the semicolons</comment>
+  </data>
+  <data name="desktopSendWith" xml:space="preserve">
+    <value>ส่งด้วย TotalDrop</value>
+    <comment>Linux file managers (Dolphin, Files, Nemo): right-click menu item that sends the selected files and folders with TotalDrop. Also Android: the item in the menu of text selected in any app, which sends that text</comment>
+  </data>
+  <data name="done" xml:space="preserve">
+    <value>เสร็จ</value>
+  </data>
+  <data name="draftTranslation" xml:space="preserve">
+    <value>คำแปลนี้อยู่ระหว่างการตรวจทาน ช่วยปรับปรุงได้ที่ GitHub</value>
+    <comment>Shown in Settings when some of the text in this language is an unreviewed draft</comment>
+  </data>
+  <data name="editCopy" xml:space="preserve">
+    <value>คัดลอก</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editCut" xml:space="preserve">
+    <value>ตัด</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editDelete" xml:space="preserve">
+    <value>ลบ</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editPaste" xml:space="preserve">
+    <value>วาง</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editRedo" xml:space="preserve">
+    <value>ทำซ้ำ</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editSelectAll" xml:space="preserve">
+    <value>เลือกทั้งหมด</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editUndo" xml:space="preserve">
+    <value>เลิกทำ</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="errorBadServer" xml:space="preserve">
+    <value>ที่อยู่เซิร์ฟเวอร์ไม่ถูกต้อง ต้องขึ้นต้นด้วย wss://</value>
+    <comment>The rendezvous server address in the settings is not valid. Same text as cliErrBadServer</comment>
+  </data>
+  <data name="errorCancelled" xml:space="preserve">
+    <value>อีกฝ่ายหยุดการโอน</value>
+  </data>
+  <data name="errorCodeExpired" xml:space="preserve">
+    <value>รหัสหมดอายุก่อนที่จะมีคนใช้ ส่งอีกครั้งเพื่อรับรหัสใหม่</value>
+    <comment>Shown to the sender: nobody came for the code before the server let it expire (15 minutes). Same text as cliErrCodeExpired</comment>
+  </data>
+  <data name="errorCodeNotInUse" xml:space="preserve">
+    <value>รหัสนี้ไม่ได้ใช้งานอยู่ อาจพิมพ์ผิด หมดอายุ หรือถูกใช้ไปแล้ว ขอรหัสใหม่จากผู้ส่ง</value>
+    <comment>The server says no sender is using this code's number. Same text as cliErrCodeNotInUse</comment>
+  </data>
+  <data name="errorConnect" xml:space="preserve">
+    <value>เชื่อมต่อกับอุปกรณ์อีกเครื่องไม่ได้ ตรวจสอบว่าอุปกรณ์ทั้งสองออนไลน์อยู่ แล้วลองอีกครั้ง</value>
+  </data>
+  <data name="errorDeclined" xml:space="preserve">
+    <value>ผู้รับปฏิเสธไฟล์</value>
+  </data>
+  <data name="errorInvalidCode" xml:space="preserve">
+    <value>รหัสนี้ไม่ถูกต้อง</value>
+  </data>
+  <data name="errorInvalidOffer" xml:space="preserve">
+    <value>The offer broke a safety rule, so it was refused.</value>
+  </data>
+  <data name="errorOther" xml:space="preserve">
+    <value>เกิดข้อผิดพลาด</value>
+  </data>
+  <data name="errorPeerLeft" xml:space="preserve">
+    <value>อีกฝ่ายออกไปก่อนการโอนจะเสร็จ</value>
+  </data>
+  <data name="errorServer" xml:space="preserve">
+    <value>เชื่อมต่อเซิร์ฟเวอร์ TotalDrop ไม่ได้ ตรวจสอบการเชื่อมต่ออินเทอร์เน็ตของคุณ</value>
+  </data>
+  <data name="errorStopped" xml:space="preserve">
+    <value>หยุดบนอุปกรณ์นี้แล้ว</value>
+  </data>
+  <data name="errorStorage" xml:space="preserve">
+    <value>อ่านหรือบันทึกไฟล์ไม่ได้</value>
+  </data>
+  <data name="errorTextDamaged" xml:space="preserve">
+    <value>ข้อความมาไม่ครบถ้วน จึงไม่แสดง</value>
+    <comment>Receive result: the text failed its integrity check or is not valid text, so it is not shown</comment>
+  </data>
+  <data name="errorWrongCode" xml:space="preserve">
+    <value>The code did not match. It was mistyped, or someone tried to intercept the transfer. Nothing was sent. Start again with a new code.</value>
+  </data>
+  <data name="homeFooter" xml:space="preserve">
+    <value>เข้ารหัสตั้งแต่ต้นทางถึงปลายทาง ไม่ต้องมีบัญชี อีเมล หรือเบอร์โทรศัพท์</value>
+  </data>
+  <data name="homeReceiveBody" xml:space="preserve">
+    <value>ป้อนรหัสแล้วบันทึกไฟล์</value>
+  </data>
+  <data name="homeReceiveTitle" xml:space="preserve">
+    <value>รับ</value>
+  </data>
+  <data name="homeSendBody" xml:space="preserve">
+    <value>เลือกไฟล์แล้วแชร์รหัสสั้นๆ</value>
+  </data>
+  <data name="homeSendTitle" xml:space="preserve">
+    <value>ส่ง</value>
+  </data>
+  <data name="itemsAndSize" xml:space="preserve">
+    <value>{count} รายการ · {size}</value>
+  </data>
+  <data name="keepAwakeReason" xml:space="preserve">
+    <value>TotalDrop กำลังส่งหรือรับไฟล์</value>
+    <comment>Linux: why the computer is kept from sleeping while a transfer runs; the desktop may show it in its power settings or battery menu</comment>
+  </data>
+  <data name="keepGoing" xml:space="preserve">
+    <value>ทำต่อ</value>
+  </data>
+  <data name="linkBusy" xml:space="preserve">
+    <value>ทำสิ่งที่อยู่บนหน้าจอให้เสร็จหรือหยุดก่อน แล้วเปิดลิงก์อีกครั้ง</value>
+    <comment>Android: shown when a TotalDrop link (totaldrop://r/… or https://totaldrop.app/r#…) opens the app while Receive cannot take a new code: a send or receive is running, an offer waits for an answer, or a received text is shown. The screen it refers to is shown; the link's code is not filled in</comment>
+  </data>
+  <data name="metainfoAbout" xml:space="preserve">
+    <value>TotalDrop ส่งไฟล์และโฟลเดอร์จากอุปกรณ์หนึ่งไปยังอีกอุปกรณ์ เข้ารหัสตั้งแต่ต้นทางถึงปลายทาง เลือกไฟล์ แชร์รหัสสั้นหรือรหัส QR แล้วอุปกรณ์อีกเครื่องจะได้รับไฟล์ ไม่ต้องมีบัญชี อีเมล หรือหมายเลขโทรศัพท์</value>
+    <comment>Linux software centres: the paragraph that introduces TotalDrop on its page</comment>
+  </data>
+  <data name="metainfoOnePackage" xml:space="preserve">
+    <value>ใช้แพ็กเกจ Linux ครั้งละหนึ่งแพ็กเกจ Flatpak กับแพ็กเกจ .pkg, .deb หรือ .rpm ใช้ชื่อเดียวกัน ขณะที่อันหนึ่งเปิดอยู่ การเปิดอีกอันจะนำหน้าต่างที่เปิดอยู่ขึ้นมาด้านหน้าแทนการเปิดหน้าต่างที่สอง</value>
+    <comment>Linux software centres: last paragraph of the description; the Flatpak and the distribution package (.pkg, .deb, .rpm) cannot run at the same time (#351). Keep .pkg, .deb, .rpm and Flatpak as they are</comment>
+  </data>
+  <data name="metainfoSummary" xml:space="preserve">
+    <value>ส่งไฟล์ตรงไปยังอุปกรณ์อื่น</value>
+    <comment>Linux software centres (Discover, GNOME Software, Flathub): one-line summary under the app's name. No full stop at the end</comment>
+  </data>
+  <data name="metainfoTheme" xml:space="preserve">
+    <value>ใช้ธีมตามเดสก์ท็อปของคุณ: Plasma, Hyprland, Omarchy, GNOME</value>
+    <comment>Linux software centres: feature list item; keep the desktop names Plasma, Hyprland, Omarchy and GNOME as they are</comment>
+  </data>
+  <data name="metainfoVerified" xml:space="preserve">
+    <value>ไฟล์ทุกไฟล์จะถูกตรวจสอบเมื่อมาถึง ไฟล์ที่เสียหายจะถูกทิ้ง</value>
+    <comment>Linux software centres: feature list item about every received file being checked</comment>
+  </data>
+  <data name="metainfoWords" xml:space="preserve">
+    <value>คำยืนยันสี่คำแสดงว่าไม่มีใครแทรกอยู่ตรงกลาง</value>
+    <comment>Linux software centres: feature list item about the four verification words that show no one is intercepting the transfer</comment>
+  </data>
+  <data name="moreInfo" xml:space="preserve">
+    <value>รายละเอียด</value>
+  </data>
+  <data name="openFolder" xml:space="preserve">
+    <value>เปิดโฟลเดอร์</value>
+  </data>
+  <data name="otherPackageFlatpak" xml:space="preserve">
+    <value>TotalDrop เปิดอยู่แล้วจาก Flatpak จึงนำหน้าต่างนั้นขึ้นมาด้านหน้า ใช้แพ็กเกจครั้งละหนึ่งแพ็กเกจ: ปิดหน้าต่างนั้นเพื่อเปิดอันนี้</value>
+    <comment>Linux desktop notification when TotalDrop is started from the distribution package while the Flatpak window is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="otherPackageSystem" xml:space="preserve">
+    <value>TotalDrop เปิดอยู่แล้วจากแพ็กเกจ .pkg, .deb หรือ .rpm จึงนำหน้าต่างนั้นขึ้นมาด้านหน้า ใช้แพ็กเกจครั้งละหนึ่งแพ็กเกจ: ปิดหน้าต่างนั้นเพื่อเปิดอันนี้</value>
+    <comment>Linux desktop notification when TotalDrop is started from the Flatpak while the window of the .pkg, .deb or .rpm package is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="pickImageTitle" xml:space="preserve">
+    <value>เลือกรูปภาพที่มีคิวอาร์โค้ด</value>
+  </data>
+  <data name="pickTitle" xml:space="preserve">
+    <value>เลือกไฟล์ที่จะส่ง</value>
+  </data>
+  <data name="privacyMode" xml:space="preserve">
+    <value>ซ่อนที่อยู่ของฉันจากอุปกรณ์อีกเครื่อง</value>
+  </data>
+  <data name="privacyModeConfirmBody" xml:space="preserve">
+    <value>การโอนจะช้าลง เพราะไม่มีอะไรส่งระหว่างอุปกรณ์โดยตรง เซิร์ฟเวอร์นัดพบและเซิร์ฟเวอร์รีเลย์ยังคงเห็นที่อยู่ IP ของคุณ แต่ไม่เคยเห็นไฟล์หรือคีย์ของคุณ</value>
+  </data>
+  <data name="privacyModeConfirmTitle" xml:space="preserve">
+    <value>เปิดโหมดความเป็นส่วนตัวไหม</value>
+  </data>
+  <data name="privacyModeHint" xml:space="preserve">
+    <value>โหมดความเป็นส่วนตัว: ทุกอย่างผ่านเซิร์ฟเวอร์รีเลย์ อุปกรณ์อีกเครื่องจึงไม่มีทางรู้ที่อยู่ IP ของคุณ ช้ากว่า และอุปกรณ์อีกเครื่องต้องใช้รีเลย์เดียวกัน (รีเลย์เริ่มต้นใช้ได้)</value>
+  </data>
+  <data name="privacyModeTurnOn" xml:space="preserve">
+    <value>เปิด</value>
+  </data>
+  <data name="progressPercent" xml:space="preserve">
+    <value>{percent}%</value>
+    <comment>Transfer progress; use your language's percent style</comment>
+  </data>
+  <data name="receiveAccept" xml:space="preserve">
+    <value>Accept</value>
+  </data>
+  <data name="receiveAndMore" xml:space="preserve">
+    <value>และอีก {count} รายการ</value>
+  </data>
+  <data name="receiveCodeHelp" xml:space="preserve">
+    <value>ขอรหัสจากผู้ส่ง</value>
+  </data>
+  <data name="receiveCodeHint" xml:space="preserve">
+    <value>7-harbor-rocket</value>
+  </data>
+  <data name="receiveCodeInvalid" xml:space="preserve">
+    <value>ดูไม่เหมือนรหัส รหัสขึ้นต้นด้วยตัวเลข ตามด้วยคำสองหรือสามคำ</value>
+  </data>
+  <data name="receiveCodeLabel" xml:space="preserve">
+    <value>รหัส</value>
+  </data>
+  <data name="receiveConnect" xml:space="preserve">
+    <value>เชื่อมต่อ</value>
+  </data>
+  <data name="receiveConnecting" xml:space="preserve">
+    <value>กำลังเชื่อมต่ออย่างปลอดภัย…</value>
+  </data>
+  <data name="receiveDecline" xml:space="preserve">
+    <value>Decline</value>
+  </data>
+  <data name="receiveDeclined" xml:space="preserve">
+    <value>คุณปฏิเสธไฟล์แล้ว</value>
+  </data>
+  <data name="receiveDone" xml:space="preserve">
+    <value>รับและตรวจสอบแล้ว</value>
+  </data>
+  <data name="receiveFromImage" xml:space="preserve">
+    <value>อ่าน QR จากรูปภาพ</value>
+  </data>
+  <data name="receiveOffer" xml:space="preserve">
+    <value>ไฟล์ขาเข้า</value>
+  </data>
+  <data name="receiveOfferSummary" xml:space="preserve">
+    <value>{files} ไฟล์ · {size}</value>
+  </data>
+  <data name="receiveOfferText" xml:space="preserve">
+    <value>ข้อความขาเข้า</value>
+    <comment>Receive screen: title when the other side wants to send a text, not files</comment>
+  </data>
+  <data name="receiveOfferTextNote" xml:space="preserve">
+    <value>ข้อความจะแสดงที่นี่ ไม่ได้บันทึกไว้</value>
+    <comment>Receive screen: under an incoming text, in place of the folder files are saved to</comment>
+  </data>
+  <data name="receivePaste" xml:space="preserve">
+    <value>วาง</value>
+  </data>
+  <data name="receiveQrNotFound" xml:space="preserve">
+    <value>ไม่มีรหัส TotalDrop ในรูปภาพนั้น</value>
+  </data>
+  <data name="receiveReceiving" xml:space="preserve">
+    <value>กำลังรับ</value>
+  </data>
+  <data name="receiveSaveTo" xml:space="preserve">
+    <value>บันทึกไว้ที่ {folder}</value>
+  </data>
+  <data name="receiveTextDeclined" xml:space="preserve">
+    <value>คุณปฏิเสธข้อความแล้ว</value>
+    <comment>Receive result: the person declined an incoming text</comment>
+  </data>
+  <data name="receiveTextDone" xml:space="preserve">
+    <value>รับข้อความและตรวจสอบแล้ว</value>
+    <comment>Receive result: title when a text arrived and its check passed; the text is shown below it</comment>
+  </data>
+  <data name="receiveTextHidden" xml:space="preserve">
+    <value>ข้อความมีอักขระที่ซ่อนอยู่ ซึ่งแสดงเป็น U+… เมื่อคัดลอกจะได้ข้อความตรงตามที่ได้รับมา</value>
+    <comment>Receive result: the text holds invisible control or direction characters, shown in the text by their code, as &lt;U+202E&gt;; keep U+… as it is</comment>
+  </data>
+  <data name="receiveTextShortened" xml:space="preserve">
+    <value>แสดงเฉพาะตอนต้นของข้อความ คัดลอกข้อความจะคัดลอกทั้งหมด</value>
+    <comment>Receive result: a very long text is shown only in part; the Copy text button copies the whole text</comment>
+  </data>
+  <data name="receiveTitle" xml:space="preserve">
+    <value>รับไฟล์</value>
+  </data>
+  <data name="sameNetworkNote" xml:space="preserve">
+    <value>ทำงานผ่านอินเทอร์เน็ต เมื่ออุปกรณ์เชื่อมต่อกันโดยตรงไม่ได้ การโอนที่เข้ารหัสจะผ่านเซิร์ฟเวอร์รีเลย์ ซึ่งอ่านข้อมูลนั้นไม่ได้</value>
+  </data>
+  <data name="sendAddFailed" xml:space="preserve">
+    <value>เพิ่มไฟล์ไม่ได้ โปรดลองอีกครั้ง หากยังเกิดขึ้นอีก ให้ตรวจสอบว่าอุปกรณ์นี้มีพื้นที่ว่างเพียงพอ หรือเลือกไฟล์จากที่อื่น</value>
+    <comment>Shown on the send screen when the system file picker could not hand over the chosen files (a path it cannot read, too little memory, or no space left for its copy).</comment>
+  </data>
+  <data name="sendAddFiles" xml:space="preserve">
+    <value>เพิ่มไฟล์</value>
+  </data>
+  <data name="sendClipboard" xml:space="preserve">
+    <value>ส่งคลิปบอร์ด</value>
+    <comment>Linux desktop entry action and Android shortcut: opens Send with the text on the clipboard filled in</comment>
+  </data>
+  <data name="sendClipboardEmpty" xml:space="preserve">
+    <value>ไม่มีข้อความในคลิปบอร์ด</value>
+    <comment>Send screen: shown when Send clipboard finds no text on the clipboard</comment>
+  </data>
+  <data name="sendClipboardKept" xml:space="preserve">
+    <value>ข้อความที่พิมพ์ไว้ยังอยู่ และไม่ได้ใช้คลิปบอร์ด</value>
+    <comment>Send screen: Send clipboard was chosen while the text box already held typed text, so the clipboard was not pasted</comment>
+  </data>
+  <data name="sendCodeHint" xml:space="preserve">
+    <value>บนอุปกรณ์อีกเครื่อง ให้เปิด TotalDrop แตะ รับ แล้วป้อนรหัสนี้</value>
+  </data>
+  <data name="sendCopied" xml:space="preserve">
+    <value>คัดลอกรหัสแล้ว</value>
+  </data>
+  <data name="sendCopy" xml:space="preserve">
+    <value>คัดลอก</value>
+  </data>
+  <data name="sendCounting" xml:space="preserve">
+    <value>กำลังนับ…</value>
+  </data>
+  <data name="sendCreateCode" xml:space="preserve">
+    <value>สร้างรหัส</value>
+  </data>
+  <data name="sendDone" xml:space="preserve">
+    <value>ส่งและตรวจสอบแล้ว</value>
+  </data>
+  <data name="sendDoneBody" xml:space="preserve">
+    <value>{count, plural, =1{ไฟล์มาถึงครบถ้วน} other{ไฟล์ทั้ง {count} ไฟล์มาถึงครบถ้วน}}</value>
+  </data>
+  <data name="sendDropHere" xml:space="preserve">
+    <value>วางไฟล์ที่นี่</value>
+  </data>
+  <data name="sendDropHint" xml:space="preserve">
+    <value>คุณลากไฟล์มาวางบนหน้าต่างนี้ได้ด้วย</value>
+  </data>
+  <data name="sendEmpty" xml:space="preserve">
+    <value>ยังไม่ได้เลือกอะไร</value>
+  </data>
+  <data name="sendEmptyHint" xml:space="preserve">
+    <value>เพิ่มไฟล์ที่ต้องการส่ง ผู้รับจะได้รับเฉพาะไฟล์เหล่านี้ ไม่มีอย่างอื่น</value>
+  </data>
+  <data name="sendPreparing" xml:space="preserve">
+    <value>กำลังเตรียมไฟล์ของคุณ…</value>
+  </data>
+  <data name="sendQrHint" xml:space="preserve">
+    <value>หรือสแกนรหัสนี้ด้วยกล้องของอุปกรณ์อีกเครื่อง</value>
+  </data>
+  <data name="sendRemove" xml:space="preserve">
+    <value>นำออก</value>
+  </data>
+  <data name="sendSending" xml:space="preserve">
+    <value>กำลังส่ง</value>
+  </data>
+  <data name="sendShare" xml:space="preserve">
+    <value>แชร์</value>
+  </data>
+  <data name="sendShareText" xml:space="preserve">
+    <value>รับไฟล์ของฉันด้วย TotalDrop รหัส: {code}</value>
+  </data>
+  <data name="sendSomeFailed" xml:space="preserve">
+    <value>{count, plural, =1{มีหนึ่งไฟล์ที่มาถึงไม่ครบถ้วนและถูกทิ้งไป} other{มี {count} ไฟล์ที่มาถึงไม่ครบถ้วนและถูกทิ้งไป}}</value>
+  </data>
+  <data name="sendStrongCode" xml:space="preserve">
+    <value>รหัสที่รัดกุมขึ้น</value>
+  </data>
+  <data name="sendStrongCodeHint" xml:space="preserve">
+    <value>ใช้สามคำแทนสองคำ ทำให้เดายากขึ้นมาก</value>
+  </data>
+  <data name="sendText" xml:space="preserve">
+    <value>ส่งข้อความ</value>
+    <comment>Send screen: button and screen title for sending a piece of text instead of files</comment>
+  </data>
+  <data name="sendTextDone" xml:space="preserve">
+    <value>ข้อความมาถึงครบถ้วน</value>
+    <comment>Send result: the text reached the receiver and its check passed</comment>
+  </data>
+  <data name="sendTextHidden" xml:space="preserve">
+    <value>ข้อความมีอักขระที่ซ่อนอยู่ เช่น เครื่องหมายทิศทาง ซึ่งจะถูกส่งไปพร้อมกับข้อความด้วย</value>
+    <comment>Send screen: the text to send holds invisible control or direction characters; they are sent as they are</comment>
+  </data>
+  <data name="sendTextHint" xml:space="preserve">
+    <value>พิมพ์หรือวางข้อความที่ต้องการส่ง</value>
+    <comment>Send screen: placeholder in the box where the person types or pastes the text to send</comment>
+  </data>
+  <data name="sendTextShortened" xml:space="preserve">
+    <value>แสดงเฉพาะตอนต้นของข้อความ แต่จะส่งทั้งหมด</value>
+    <comment>Send screen: a very long pasted text is shown only in part; the whole text is still sent</comment>
+  </data>
+  <data name="sendTextTooLong" xml:space="preserve">
+    <value>ข้อความมีขนาดได้สูงสุด {size} หากยาวกว่านี้ให้ส่งเป็นไฟล์</value>
+    <comment>Send screen: the text is over the limit; {size} is the limit, such as 1 MB</comment>
+  </data>
+  <data name="sendTitle" xml:space="preserve">
+    <value>ส่งไฟล์</value>
+  </data>
+  <data name="sendWaiting" xml:space="preserve">
+    <value>กำลังรอผู้รับ…</value>
+  </data>
+  <data name="sendWaitingAccept" xml:space="preserve">
+    <value>ตรวจสอบคำ แล้วรอให้ผู้รับยอมรับ</value>
+  </data>
+  <data name="sendYourCode" xml:space="preserve">
+    <value>รหัสของคุณ</value>
+  </data>
+  <data name="settings" xml:space="preserve">
+    <value>การตั้งค่า</value>
+  </data>
+  <data name="settingsAbout" xml:space="preserve">
+    <value>เกี่ยวกับ</value>
+  </data>
+  <data name="settingsAboutBody" xml:space="preserve">
+    <value>TotalDrop ใช้ฟรีและเป็นโอเพนซอร์ส ดำเนินงานด้วยเงินบริจาค สัญญาอนุญาต GPL-3.0-or-later</value>
+  </data>
+  <data name="settingsBackground" xml:space="preserve">
+    <value>การโอนในเบื้องหลัง</value>
+    <comment>Settings: heading of the section about background transfers</comment>
+  </data>
+  <data name="settingsBackgroundOpen" xml:space="preserve">
+    <value>การตั้งค่าแบตเตอรี่</value>
+    <comment>Settings: button that opens the background transfers page</comment>
+  </data>
+  <data name="settingsPrivacy" xml:space="preserve">
+    <value>ความเป็นส่วนตัว</value>
+  </data>
+  <data name="settingsPrivacyBody" xml:space="preserve">
+    <value>เซิร์ฟเวอร์นัดพบ เซิร์ฟเวอร์รีเลย์ และเซิร์ฟเวอร์ STUN ของ Cloudflare จะเห็นที่อยู่ IP ของคุณ และอุปกรณ์อีกเครื่องก็เห็นด้วยเมื่อเชื่อมต่อโดยตรง (เว้นแต่จะเปิดโหมดความเป็นส่วนตัว) ไม่มีฝ่ายใดเห็นชื่อไฟล์ เนื้อหา หรือคีย์ และเซิร์ฟเวอร์ของเราไม่เก็บบันทึก ไฟล์จะส่งระหว่างอุปกรณ์โดยตรงเมื่อทำได้ ไม่เช่นนั้นจะผ่านเซิร์ฟเวอร์รีเลย์ ไม่ว่าทางใดก็เข้ารหัสตั้งแต่ต้นทางถึงปลายทาง</value>
+  </data>
+  <data name="settingsSave" xml:space="preserve">
+    <value>บันทึก</value>
+  </data>
+  <data name="settingsServer" xml:space="preserve">
+    <value>เซิร์ฟเวอร์นัดพบ</value>
+  </data>
+  <data name="settingsServerHelp" xml:space="preserve">
+    <value>ช่วยให้อุปกรณ์สองเครื่องที่ใช้รหัสเดียวกันหากันเจอ เซิร์ฟเวอร์นี้ไม่เคยเห็นไฟล์หรือคีย์ของคุณ</value>
+  </data>
+  <data name="settingsServerInvalid" xml:space="preserve">
+    <value>ต้องขึ้นต้นด้วย wss://</value>
+  </data>
+  <data name="settingsServerReset" xml:space="preserve">
+    <value>ใช้ค่าเริ่มต้น</value>
+  </data>
+  <data name="settingsVersion" xml:space="preserve">
+    <value>เวอร์ชัน {version}</value>
+  </data>
+  <data name="settingsWordsEnglish" xml:space="preserve">
+    <value>รหัสและคำยืนยันเป็นภาษาอังกฤษในทุกภาษา เพื่อให้อุปกรณ์สองเครื่องที่ใช้ภาษาต่างกันแสดงคำเดียวกัน</value>
+    <comment>Shown in Settings under About. Explains why the transfer code and the verification words stay in English: they come from one English word list so that both devices show the same ones</comment>
+  </data>
+  <data name="setupBackgroundAllowed" xml:space="preserve">
+    <value>การเพิ่มประสิทธิภาพแบตเตอรี่ของ Android ปิดอยู่สำหรับ TotalDrop</value>
+    <comment>The same page: status when Android's battery optimisation is already off for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundAutostart" xml:space="preserve">
+    <value>เปิดการเริ่มอัตโนมัติ</value>
+    <comment>The same page: button that opens the maker's Autostart page (Xiaomi)</comment>
+  </data>
+  <data name="setupBackgroundBattery" xml:space="preserve">
+    <value>เปิดการตั้งค่าแบตเตอรี่</value>
+    <comment>The same page: button that opens TotalDrop's app info, where its battery use is set</comment>
+  </data>
+  <data name="setupBackgroundBatteryHint" xml:space="preserve">
+    <value>ในหน้าข้อมูลแอปของ TotalDrop ให้เปิด "แบตเตอรี่" แล้วอนุญาตให้ใช้งานแบบไม่จำกัด ชื่อการตั้งค่าเหล่านี้ต่างกันไปในแต่ละโทรศัพท์</value>
+    <comment>The same page: under the first button, which opens TotalDrop's app info; what to do there</comment>
+  </data>
+  <data name="setupBackgroundBody" xml:space="preserve">
+    <value>เพื่อให้การโอนทำงานต่อเมื่อคุณสลับแอปหรือล็อกหน้าจอ ให้ TotalDrop ทำงานได้โดยไม่มีข้อจำกัดด้านแบตเตอรี่ TotalDrop ทำงานในเบื้องหลังเฉพาะขณะที่การโอนที่คุณเริ่มเองกำลังดำเนินอยู่เท่านั้น</value>
+    <comment>The same page: why TotalDrop asks to run without battery restrictions</comment>
+  </data>
+  <data name="setupBackgroundMaker" xml:space="preserve">
+    <value>โทรศัพท์ {maker} มีโหมดประหยัดแบตเตอรี่ของตัวเอง</value>
+    <comment>The same page: heading of the second step on Xiaomi, Redmi and POCO phones, which add a battery saver of their own</comment>
+  </data>
+  <data name="setupBackgroundMakerBody" xml:space="preserve">
+    <value>เปิดโหมดประหยัดแบตเตอรี่ของ TotalDrop ด้วยแล้วเลือก "ไม่จำกัด" หากโทรศัพท์มีการเริ่มอัตโนมัติ ให้เปิดสำหรับ TotalDrop</value>
+    <comment>The same page: what to choose in the maker's battery saver; "No restrictions" is the label on Xiaomi phones, use the label those phones show in your language</comment>
+  </data>
+  <data name="setupBackgroundMakerOpen" xml:space="preserve">
+    <value>เปิดโหมดประหยัดแบตเตอรี่ของ TotalDrop</value>
+    <comment>The same page: button that opens the maker's battery saver for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundRestricted" xml:space="preserve">
+    <value>การเพิ่มประสิทธิภาพแบตเตอรี่ของ Android เปิดอยู่สำหรับ TotalDrop การโอนอาจหยุดเมื่อคุณสลับแอป</value>
+    <comment>The same page: status when Android's battery optimisation is still on for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundSkip" xml:space="preserve">
+    <value>ไว้ทีหลัง</value>
+    <comment>The same page at first start: skip it for now</comment>
+  </data>
+  <data name="setupBackgroundTitle" xml:space="preserve">
+    <value>ให้การโอนทำงานต่อในเบื้องหลัง</value>
+    <comment>First-run and Settings page about background transfers (#338): heading</comment>
+  </data>
+  <data name="shareBusy" xml:space="preserve">
+    <value>ยังมีการโอนที่กำลังดำเนินอยู่ รอให้เสร็จหรือหยุดก่อน แล้วแชร์อีกครั้ง</value>
+    <comment>Android: shown when files are shared to TotalDrop while a send or receive is still running; the shared files are not added</comment>
+  </data>
+  <data name="shareSkipped" xml:space="preserve">
+    <value>{count, plural, =1{อ่านรายการที่แชร์มาหนึ่งรายการไม่ได้ จึงไม่ได้รวมไว้} other{อ่านรายการที่แชร์มา {count} รายการไม่ได้ จึงไม่ได้รวมไว้}}</value>
+    <comment>Android: shown when some of the items another app shared to TotalDrop could not be read (no read permission, or the app's own files) and were left out; the rest were added</comment>
+  </data>
+  <data name="sizeBytes" xml:space="preserve">
+    <value>{value} B</value>
+    <comment>A size in bytes. value is already formatted for the region</comment>
+  </data>
+  <data name="sizeGB" xml:space="preserve">
+    <value>{value} GB</value>
+    <comment>Gigabytes</comment>
+  </data>
+  <data name="sizeKB" xml:space="preserve">
+    <value>{value} kB</value>
+    <comment>Kilobytes (1000 bytes)</comment>
+  </data>
+  <data name="sizeMB" xml:space="preserve">
+    <value>{value} MB</value>
+    <comment>Megabytes</comment>
+  </data>
+  <data name="sizePB" xml:space="preserve">
+    <value>{value} PB</value>
+    <comment>Petabytes</comment>
+  </data>
+  <data name="sizeTB" xml:space="preserve">
+    <value>{value} TB</value>
+    <comment>Terabytes</comment>
+  </data>
+  <data name="stop" xml:space="preserve">
+    <value>หยุด</value>
+  </data>
+  <data name="technicalDetail" xml:space="preserve">
+    <value>ข้อความทางเทคนิคเป็นภาษาอังกฤษ สำหรับแนบเมื่อรายงานปัญหา:</value>
+    <comment>Under Details, above the error's technical text, which stays in English so it can be searched and reported</comment>
+  </data>
+  <data name="textCopied" xml:space="preserve">
+    <value>คัดลอกข้อความแล้ว</value>
+    <comment>Tooltip after the received text was copied</comment>
+  </data>
+  <data name="transferNoticeBody" xml:space="preserve">
+    <value>ทำงานต่อไปขณะที่คุณใช้แอปอื่น</value>
+    <comment>Text of the ongoing transfer notification: the transfer continues while the person uses other apps</comment>
+  </data>
+  <data name="transferNoticeChannel" xml:space="preserve">
+    <value>การโอน</value>
+    <comment>Android notification channel name for running transfers (shown in system settings)</comment>
+  </data>
+  <data name="transferNoticeReceiving" xml:space="preserve">
+    <value>กำลังรับด้วย TotalDrop</value>
+    <comment>Title of the ongoing notification while a receive runs in the background</comment>
+  </data>
+  <data name="transferNoticeSending" xml:space="preserve">
+    <value>กำลังส่งด้วย TotalDrop</value>
+    <comment>Title of the ongoing notification while a send runs in the background</comment>
+  </data>
+  <data name="tryAgain" xml:space="preserve">
+    <value>ลองอีกครั้ง</value>
+  </data>
+  <data name="verificationHint" xml:space="preserve">
+    <value>The other person sees the same four words. If they differ, stop.</value>
+  </data>
+  <data name="verificationTitle" xml:space="preserve">
+    <value>Verification words</value>
+  </data>
+</root>

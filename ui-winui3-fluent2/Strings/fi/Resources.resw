@@ -1,0 +1,628 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 The TotalDrop Contributors -->
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="appTagline" xml:space="preserve">
+    <value>Mikä tahansa tiedosto, kenelle tahansa, minne tahansa.</value>
+    <comment>Short slogan under the app name on the home screen</comment>
+  </data>
+  <data name="back" xml:space="preserve">
+    <value>Takaisin</value>
+  </data>
+  <data name="cancel" xml:space="preserve">
+    <value>Peruuta</value>
+  </data>
+  <data name="cancelTransferBody" xml:space="preserve">
+    <value>Toiselle osapuolelle kerrotaan, että siirto lopetettiin.</value>
+  </data>
+  <data name="cancelTransferTitle" xml:space="preserve">
+    <value>Lopetetaanko siirto?</value>
+  </data>
+  <data name="causeConnectionLost" xml:space="preserve">
+    <value>Yhteys toiseen laitteeseen katkesi.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeDiskFull" xml:space="preserve">
+    <value>Tässä laitteessa ei ole tarpeeksi vapaata tilaa.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeFileChanged" xml:space="preserve">
+    <value>Tiedosto muuttui lähetyksen aikana. Lähetä se uudelleen, kun se on tallennettu.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoPermission" xml:space="preserve">
+    <value>TotalDropilla ei ole lupaa lukea tai kirjoittaa tarvitsemaansa tiedostoa tai kansiota.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoRoute" xml:space="preserve">
+    <value>Toista laitetta ei tavoitettu suoraan eikä välityspalvelimen kautta.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNotFound" xml:space="preserve">
+    <value>Tiedostoa tai kansiota ei löytynyt. Se on ehkä siirretty tai poistettu.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeProtocol" xml:space="preserve">
+    <value>Toinen laite lähetti jotain, mitä tämä versio ei ymmärrä. TotalDropin päivittäminen molemmissa laitteissa voi auttaa.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeReadOnly" xml:space="preserve">
+    <value>Kansio on levyllä, jolle ei voi kirjoittaa.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeRelay" xml:space="preserve">
+    <value>Välityspalvelinta ei tavoitettu tai sitä ei ole määritetty, tai laitteet eivät käytä samaa välityspalvelinta.</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeTimedOut" xml:space="preserve">
+    <value>Yhteys lakkasi vastaamasta. Toinen laitteista on ehkä menettänyt verkon tai mennyt lepotilaan.</value>
+    <comment>Under Details of a failed transfer: why it failed. The connection went silent (QUIC idle timeout), or the sender stopped sending.</comment>
+  </data>
+  <data name="codeSuggestions" xml:space="preserve">
+    <value>Ehdotukset</value>
+  </data>
+  <data name="copyText" xml:space="preserve">
+    <value>Kopioi teksti</value>
+    <comment>Receive result: button that copies the received text to the clipboard</comment>
+  </data>
+  <data name="desktopComment" xml:space="preserve">
+    <value>Lähetä tiedostot suoraan toiseen laitteeseen päästä päähän salattuina</value>
+    <comment>Linux desktop entry: one-line description shown as a tooltip in app menus</comment>
+  </data>
+  <data name="desktopGenericName" xml:space="preserve">
+    <value>Tiedostonsiirto</value>
+    <comment>Linux desktop entry: what kind of app TotalDrop is, shown under its name in app menus and launchers</comment>
+  </data>
+  <data name="desktopKeywords" xml:space="preserve">
+    <value>lähetä;vastaanota;jaa;siirrä;tiedostot;</value>
+    <comment>Linux desktop entry: search words for app launchers, separated by semicolons and ending with one. Words people type to find a file-sending app; no spaces around the semicolons</comment>
+  </data>
+  <data name="desktopSendWith" xml:space="preserve">
+    <value>Lähetä TotalDropilla</value>
+    <comment>Linux file managers (Dolphin, Files, Nemo): right-click menu item that sends the selected files and folders with TotalDrop. Also Android: the item in the menu of text selected in any app, which sends that text</comment>
+  </data>
+  <data name="done" xml:space="preserve">
+    <value>Valmis</value>
+  </data>
+  <data name="draftTranslation" xml:space="preserve">
+    <value>Tätä käännöstä tarkistetaan. Auta parantamaan sitä GitHubissa.</value>
+    <comment>Shown in Settings when some of the text in this language is an unreviewed draft</comment>
+  </data>
+  <data name="editCopy" xml:space="preserve">
+    <value>Kopioi</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editCut" xml:space="preserve">
+    <value>Leikkaa</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editDelete" xml:space="preserve">
+    <value>Poista</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editPaste" xml:space="preserve">
+    <value>Liitä</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editRedo" xml:space="preserve">
+    <value>Tee uudelleen</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editSelectAll" xml:space="preserve">
+    <value>Valitse kaikki</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editUndo" xml:space="preserve">
+    <value>Kumoa</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="errorBadServer" xml:space="preserve">
+    <value>Palvelimen osoite ei ole kelvollinen. Sen on alettava wss://.</value>
+    <comment>The rendezvous server address in the settings is not valid. Same text as cliErrBadServer</comment>
+  </data>
+  <data name="errorCancelled" xml:space="preserve">
+    <value>Toinen osapuoli lopetti siirron.</value>
+  </data>
+  <data name="errorCodeExpired" xml:space="preserve">
+    <value>Koodi vanheni ennen kuin kukaan käytti sitä. Lähetä uudelleen saadaksesi uuden koodin.</value>
+    <comment>Shown to the sender: nobody came for the code before the server let it expire (15 minutes). Same text as cliErrCodeExpired</comment>
+  </data>
+  <data name="errorCodeNotInUse" xml:space="preserve">
+    <value>Koodi ei ole käytössä: se kirjoitettiin väärin, on vanhentunut tai on jo käytetty. Pyydä lähettäjältä uusi.</value>
+    <comment>The server says no sender is using this code's number. Same text as cliErrCodeNotInUse</comment>
+  </data>
+  <data name="errorConnect" xml:space="preserve">
+    <value>Toiseen laitteeseen ei saatu yhteyttä. Varmista, että molemmat laitteet ovat verkossa, ja yritä uudelleen.</value>
+  </data>
+  <data name="errorDeclined" xml:space="preserve">
+    <value>Vastaanottaja hylkäsi tiedostot.</value>
+  </data>
+  <data name="errorInvalidCode" xml:space="preserve">
+    <value>Koodi ei ole kelvollinen.</value>
+  </data>
+  <data name="errorInvalidOffer" xml:space="preserve">
+    <value>The offer broke a safety rule, so it was refused.</value>
+  </data>
+  <data name="errorOther" xml:space="preserve">
+    <value>Jokin meni vikaan.</value>
+  </data>
+  <data name="errorPeerLeft" xml:space="preserve">
+    <value>Toinen osapuoli poistui ennen kuin siirto valmistui.</value>
+  </data>
+  <data name="errorServer" xml:space="preserve">
+    <value>TotalDrop-palvelimeen ei saatu yhteyttä. Tarkista internetyhteys.</value>
+  </data>
+  <data name="errorStopped" xml:space="preserve">
+    <value>Lopetettu tällä laitteella.</value>
+  </data>
+  <data name="errorStorage" xml:space="preserve">
+    <value>Tiedostoa ei voitu lukea tai tallentaa.</value>
+  </data>
+  <data name="errorTextDamaged" xml:space="preserve">
+    <value>Teksti ei saapunut ehjänä, joten sitä ei näytetä.</value>
+    <comment>Receive result: the text failed its integrity check or is not valid text, so it is not shown</comment>
+  </data>
+  <data name="errorWrongCode" xml:space="preserve">
+    <value>The code did not match. It was mistyped, or someone tried to intercept the transfer. Nothing was sent. Start again with a new code.</value>
+  </data>
+  <data name="homeFooter" xml:space="preserve">
+    <value>Päästä päähän salattu. Ei tiliä, ei sähköpostia, ei puhelinnumeroa.</value>
+  </data>
+  <data name="homeReceiveBody" xml:space="preserve">
+    <value>Anna koodi ja tallenna tiedostot</value>
+  </data>
+  <data name="homeReceiveTitle" xml:space="preserve">
+    <value>Vastaanota</value>
+  </data>
+  <data name="homeSendBody" xml:space="preserve">
+    <value>Valitse tiedostot ja jaa lyhyt koodi</value>
+  </data>
+  <data name="homeSendTitle" xml:space="preserve">
+    <value>Lähetä</value>
+  </data>
+  <data name="itemsAndSize" xml:space="preserve">
+    <value>{count, plural, one{{count} kohde} other{{count} kohdetta}} · {size}</value>
+  </data>
+  <data name="keepAwakeReason" xml:space="preserve">
+    <value>TotalDrop lähettää tai vastaanottaa tiedostoja</value>
+    <comment>Linux: why the computer is kept from sleeping while a transfer runs; the desktop may show it in its power settings or battery menu</comment>
+  </data>
+  <data name="keepGoing" xml:space="preserve">
+    <value>Jatka</value>
+  </data>
+  <data name="linkBusy" xml:space="preserve">
+    <value>Vie loppuun tai pysäytä se, mikä on näytöllä, ja avaa linkki sitten uudelleen.</value>
+    <comment>Android: shown when a TotalDrop link (totaldrop://r/… or https://totaldrop.app/r#…) opens the app while Receive cannot take a new code: a send or receive is running, an offer waits for an answer, or a received text is shown. The screen it refers to is shown; the link's code is not filled in</comment>
+  </data>
+  <data name="metainfoAbout" xml:space="preserve">
+    <value>TotalDrop lähettää tiedostoja ja kansioita laitteesta toiseen päästä päähän salattuina. Valitse tiedostot, jaa lyhyt koodi tai QR-koodi, ja toinen laite vastaanottaa ne. Ei tiliä, ei sähköpostia, ei puhelinnumeroa.</value>
+    <comment>Linux software centres: the paragraph that introduces TotalDrop on its page</comment>
+  </data>
+  <data name="metainfoOnePackage" xml:space="preserve">
+    <value>Käytä vain yhtä Linux-pakettia kerrallaan. Flatpakilla ja .pkg-, .deb- tai .rpm-paketilla on sama nimi, joten kun toinen on auki, toisen käynnistäminen tuo avoimen ikkunan eteen eikä avaa toista.</value>
+    <comment>Linux software centres: last paragraph of the description; the Flatpak and the distribution package (.pkg, .deb, .rpm) cannot run at the same time (#351). Keep .pkg, .deb, .rpm and Flatpak as they are</comment>
+  </data>
+  <data name="metainfoSummary" xml:space="preserve">
+    <value>Lähetä tiedostot suoraan toiseen laitteeseen</value>
+    <comment>Linux software centres (Discover, GNOME Software, Flathub): one-line summary under the app's name. No full stop at the end</comment>
+  </data>
+  <data name="metainfoTheme" xml:space="preserve">
+    <value>Seuraa työpöytäsi teemaa: Plasma, Hyprland, Omarchy, GNOME</value>
+    <comment>Linux software centres: feature list item; keep the desktop names Plasma, Hyprland, Omarchy and GNOME as they are</comment>
+  </data>
+  <data name="metainfoVerified" xml:space="preserve">
+    <value>Jokainen tiedosto tarkistetaan perillä; vioittuneet tiedostot hylätään</value>
+    <comment>Linux software centres: feature list item about every received file being checked</comment>
+  </data>
+  <data name="metainfoWords" xml:space="preserve">
+    <value>Neljä tarkistussanaa osoittaa, ettei välissä ole ketään</value>
+    <comment>Linux software centres: feature list item about the four verification words that show no one is intercepting the transfer</comment>
+  </data>
+  <data name="moreInfo" xml:space="preserve">
+    <value>Lisätiedot</value>
+  </data>
+  <data name="openFolder" xml:space="preserve">
+    <value>Avaa kansio</value>
+  </data>
+  <data name="otherPackageFlatpak" xml:space="preserve">
+    <value>TotalDrop on jo auki Flatpakista, joten sen ikkuna tuotiin eteen. Käytä vain yhtä pakettia kerrallaan: sulje se ikkuna avataksesi tämän.</value>
+    <comment>Linux desktop notification when TotalDrop is started from the distribution package while the Flatpak window is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="otherPackageSystem" xml:space="preserve">
+    <value>TotalDrop on jo auki .pkg-, .deb- tai .rpm-paketista, joten sen ikkuna tuotiin eteen. Käytä vain yhtä pakettia kerrallaan: sulje se ikkuna avataksesi tämän.</value>
+    <comment>Linux desktop notification when TotalDrop is started from the Flatpak while the window of the .pkg, .deb or .rpm package is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="pickImageTitle" xml:space="preserve">
+    <value>Valitse kuva, jossa on QR-koodi</value>
+  </data>
+  <data name="pickTitle" xml:space="preserve">
+    <value>Valitse lähetettävät tiedostot</value>
+  </data>
+  <data name="privacyMode" xml:space="preserve">
+    <value>Piilota osoitteeni toiselta laitteelta</value>
+  </data>
+  <data name="privacyModeConfirmBody" xml:space="preserve">
+    <value>Siirrot hidastuvat, koska mikään ei kulje suoraan laitteiden välillä. Kohtauspalvelin ja välityspalvelin näkevät edelleen IP-osoitteesi; ne eivät koskaan näe tiedostojasi tai avaimiasi.</value>
+  </data>
+  <data name="privacyModeConfirmTitle" xml:space="preserve">
+    <value>Otetaanko yksityisyystila käyttöön?</value>
+  </data>
+  <data name="privacyModeHint" xml:space="preserve">
+    <value>Yksityisyystila: kaikki kulkee välityspalvelimen kautta, joten toinen laite ei koskaan saa tietää IP-osoitettasi. Hitaampi, ja toisen laitteen on käytettävä samaa välityspalvelinta (oletuspalvelin käyttää).</value>
+  </data>
+  <data name="privacyModeTurnOn" xml:space="preserve">
+    <value>Ota käyttöön</value>
+  </data>
+  <data name="progressPercent" xml:space="preserve">
+    <value>{percent} %</value>
+    <comment>Transfer progress; use your language's percent style</comment>
+  </data>
+  <data name="receiveAccept" xml:space="preserve">
+    <value>Accept</value>
+  </data>
+  <data name="receiveAndMore" xml:space="preserve">
+    <value>ja {count} muuta</value>
+  </data>
+  <data name="receiveCodeHelp" xml:space="preserve">
+    <value>Pyydä koodi lähettäjältä.</value>
+  </data>
+  <data name="receiveCodeHint" xml:space="preserve">
+    <value>7-harbor-rocket</value>
+  </data>
+  <data name="receiveCodeInvalid" xml:space="preserve">
+    <value>Tämä ei näytä koodilta. Koodi alkaa numerolla, jota seuraa kaksi tai kolme sanaa.</value>
+  </data>
+  <data name="receiveCodeLabel" xml:space="preserve">
+    <value>Koodi</value>
+  </data>
+  <data name="receiveConnect" xml:space="preserve">
+    <value>Yhdistä</value>
+  </data>
+  <data name="receiveConnecting" xml:space="preserve">
+    <value>Muodostetaan suojattua yhteyttä…</value>
+  </data>
+  <data name="receiveDecline" xml:space="preserve">
+    <value>Decline</value>
+  </data>
+  <data name="receiveDeclined" xml:space="preserve">
+    <value>Hylkäsit tiedostot.</value>
+  </data>
+  <data name="receiveDone" xml:space="preserve">
+    <value>Vastaanotettu ja tarkistettu</value>
+  </data>
+  <data name="receiveFromImage" xml:space="preserve">
+    <value>Lue QR-koodi kuvasta</value>
+  </data>
+  <data name="receiveOffer" xml:space="preserve">
+    <value>Saapuvat tiedostot</value>
+  </data>
+  <data name="receiveOfferSummary" xml:space="preserve">
+    <value>{files, plural, one{{files} tiedosto} other{{files} tiedostoa}} · {size}</value>
+  </data>
+  <data name="receiveOfferText" xml:space="preserve">
+    <value>Saapuva teksti</value>
+    <comment>Receive screen: title when the other side wants to send a text, not files</comment>
+  </data>
+  <data name="receiveOfferTextNote" xml:space="preserve">
+    <value>Teksti näytetään tässä, sitä ei tallenneta.</value>
+    <comment>Receive screen: under an incoming text, in place of the folder files are saved to</comment>
+  </data>
+  <data name="receivePaste" xml:space="preserve">
+    <value>Liitä</value>
+  </data>
+  <data name="receiveQrNotFound" xml:space="preserve">
+    <value>Kuvassa ei ole TotalDrop-koodia.</value>
+  </data>
+  <data name="receiveReceiving" xml:space="preserve">
+    <value>Vastaanotetaan</value>
+  </data>
+  <data name="receiveSaveTo" xml:space="preserve">
+    <value>Tallennetaan kansioon {folder}</value>
+  </data>
+  <data name="receiveTextDeclined" xml:space="preserve">
+    <value>Hylkäsit tekstin.</value>
+    <comment>Receive result: the person declined an incoming text</comment>
+  </data>
+  <data name="receiveTextDone" xml:space="preserve">
+    <value>Teksti vastaanotettu ja tarkistettu</value>
+    <comment>Receive result: title when a text arrived and its check passed; the text is shown below it</comment>
+  </data>
+  <data name="receiveTextHidden" xml:space="preserve">
+    <value>Tekstissä on piilomerkkejä, jotka näytetään muodossa U+…. Kopioitaessa saat tekstin täsmälleen sellaisena kuin se saapui.</value>
+    <comment>Receive result: the text holds invisible control or direction characters, shown in the text by their code, as &lt;U+202E&gt;; keep U+… as it is</comment>
+  </data>
+  <data name="receiveTextShortened" xml:space="preserve">
+    <value>Tekstistä näytetään vain alku. Kopioi teksti kopioi sen kokonaan.</value>
+    <comment>Receive result: a very long text is shown only in part; the Copy text button copies the whole text</comment>
+  </data>
+  <data name="receiveTitle" xml:space="preserve">
+    <value>Vastaanota tiedostoja</value>
+  </data>
+  <data name="sameNetworkNote" xml:space="preserve">
+    <value>Toimii internetin yli. Kun laitteet eivät tavoita toisiaan suoraan, salattu siirto kulkee välityspalvelimen kautta, joka ei voi lukea sitä.</value>
+  </data>
+  <data name="sendAddFailed" xml:space="preserve">
+    <value>Tiedostoja ei voitu lisätä. Yritä uudelleen. Jos näin käy taas, tarkista, että tällä laitteella on tarpeeksi vapaata tilaa, tai valitse tiedostot toisesta paikasta.</value>
+    <comment>Shown on the send screen when the system file picker could not hand over the chosen files (a path it cannot read, too little memory, or no space left for its copy).</comment>
+  </data>
+  <data name="sendAddFiles" xml:space="preserve">
+    <value>Lisää tiedostoja</value>
+  </data>
+  <data name="sendClipboard" xml:space="preserve">
+    <value>Lähetä leikepöytä</value>
+    <comment>Linux desktop entry action and Android shortcut: opens Send with the text on the clipboard filled in</comment>
+  </data>
+  <data name="sendClipboardEmpty" xml:space="preserve">
+    <value>Leikepöydällä ei ole tekstiä.</value>
+    <comment>Send screen: shown when Send clipboard finds no text on the clipboard</comment>
+  </data>
+  <data name="sendClipboardKept" xml:space="preserve">
+    <value>Jo kirjoitettu teksti säilytettiin, leikepöytää ei käytetty.</value>
+    <comment>Send screen: Send clipboard was chosen while the text box already held typed text, so the clipboard was not pasted</comment>
+  </data>
+  <data name="sendCodeHint" xml:space="preserve">
+    <value>Avaa toisella laitteella TotalDrop, napauta Vastaanota ja anna tämä koodi.</value>
+  </data>
+  <data name="sendCopied" xml:space="preserve">
+    <value>Koodi kopioitu</value>
+  </data>
+  <data name="sendCopy" xml:space="preserve">
+    <value>Kopioi</value>
+  </data>
+  <data name="sendCounting" xml:space="preserve">
+    <value>Lasketaan…</value>
+  </data>
+  <data name="sendCreateCode" xml:space="preserve">
+    <value>Luo koodi</value>
+  </data>
+  <data name="sendDone" xml:space="preserve">
+    <value>Lähetetty ja tarkistettu</value>
+  </data>
+  <data name="sendDoneBody" xml:space="preserve">
+    <value>{count, plural, =1{Tiedosto saapui ehjänä.} other{Kaikki {count} tiedostoa saapuivat ehjinä.}}</value>
+  </data>
+  <data name="sendDropHere" xml:space="preserve">
+    <value>Pudota tiedostot tähän</value>
+  </data>
+  <data name="sendDropHint" xml:space="preserve">
+    <value>Voit myös vetää tiedostoja tähän ikkunaan.</value>
+  </data>
+  <data name="sendEmpty" xml:space="preserve">
+    <value>Mitään ei ole vielä valittu</value>
+  </data>
+  <data name="sendEmptyHint" xml:space="preserve">
+    <value>Lisää tiedostot, jotka haluat lähettää. Vastaanottaja saa juuri nämä, ei mitään muuta.</value>
+  </data>
+  <data name="sendPreparing" xml:space="preserve">
+    <value>Valmistellaan tiedostoja…</value>
+  </data>
+  <data name="sendQrHint" xml:space="preserve">
+    <value>Tai skannaa koodi toisen laitteen kameralla.</value>
+  </data>
+  <data name="sendRemove" xml:space="preserve">
+    <value>Poista</value>
+  </data>
+  <data name="sendSending" xml:space="preserve">
+    <value>Lähetetään</value>
+  </data>
+  <data name="sendShare" xml:space="preserve">
+    <value>Jaa</value>
+  </data>
+  <data name="sendShareText" xml:space="preserve">
+    <value>Hae tiedostoni TotalDropilla. Koodi: {code}</value>
+  </data>
+  <data name="sendSomeFailed" xml:space="preserve">
+    <value>{count, plural, =1{Yksi tiedosto ei saapunut ehjänä, ja se hylättiin.} other{{count} tiedostoa ei saapunut ehjinä, ja ne hylättiin.}}</value>
+  </data>
+  <data name="sendStrongCode" xml:space="preserve">
+    <value>Vahvempi koodi</value>
+  </data>
+  <data name="sendStrongCodeHint" xml:space="preserve">
+    <value>Kolme sanaa kahden sijaan: paljon vaikeampi arvata</value>
+  </data>
+  <data name="sendText" xml:space="preserve">
+    <value>Lähetä tekstiä</value>
+    <comment>Send screen: button and screen title for sending a piece of text instead of files</comment>
+  </data>
+  <data name="sendTextDone" xml:space="preserve">
+    <value>Teksti saapui ehjänä.</value>
+    <comment>Send result: the text reached the receiver and its check passed</comment>
+  </data>
+  <data name="sendTextHidden" xml:space="preserve">
+    <value>Tekstissä on piilomerkkejä, kuten suuntamerkkejä. Ne lähetetään tekstin mukana.</value>
+    <comment>Send screen: the text to send holds invisible control or direction characters; they are sent as they are</comment>
+  </data>
+  <data name="sendTextHint" xml:space="preserve">
+    <value>Kirjoita tai liitä lähetettävä teksti</value>
+    <comment>Send screen: placeholder in the box where the person types or pastes the text to send</comment>
+  </data>
+  <data name="sendTextShortened" xml:space="preserve">
+    <value>Tekstistä näytetään vain alku, koko teksti lähetetään.</value>
+    <comment>Send screen: a very long pasted text is shown only in part; the whole text is still sent</comment>
+  </data>
+  <data name="sendTextTooLong" xml:space="preserve">
+    <value>Teksti saa olla enintään {size}. Lähetä pidempi teksti tiedostona.</value>
+    <comment>Send screen: the text is over the limit; {size} is the limit, such as 1 MB</comment>
+  </data>
+  <data name="sendTitle" xml:space="preserve">
+    <value>Lähetä tiedostoja</value>
+  </data>
+  <data name="sendWaiting" xml:space="preserve">
+    <value>Odotetaan vastaanottajaa…</value>
+  </data>
+  <data name="sendWaitingAccept" xml:space="preserve">
+    <value>Tarkista sanat ja odota, että vastaanottaja hyväksyy.</value>
+  </data>
+  <data name="sendYourCode" xml:space="preserve">
+    <value>Koodisi</value>
+  </data>
+  <data name="settings" xml:space="preserve">
+    <value>Asetukset</value>
+  </data>
+  <data name="settingsAbout" xml:space="preserve">
+    <value>Tietoja</value>
+  </data>
+  <data name="settingsAboutBody" xml:space="preserve">
+    <value>TotalDrop on ilmainen ja avointa lähdekoodia, ja se rahoitetaan lahjoituksilla. Lisenssi: GPL-3.0-or-later.</value>
+  </data>
+  <data name="settingsBackground" xml:space="preserve">
+    <value>Siirrot taustalla</value>
+    <comment>Settings: heading of the section about background transfers</comment>
+  </data>
+  <data name="settingsBackgroundOpen" xml:space="preserve">
+    <value>Akkuasetukset</value>
+    <comment>Settings: button that opens the background transfers page</comment>
+  </data>
+  <data name="settingsPrivacy" xml:space="preserve">
+    <value>Yksityisyys</value>
+  </data>
+  <data name="settingsPrivacyBody" xml:space="preserve">
+    <value>Kohtauspalvelin, välityspalvelin ja Cloudflaren STUN-palvelin näkevät IP-osoitteesi, ja niin näkee myös toinen laite, kun yhdistätte suoraan (ellei yksityisyystila ole käytössä). Mikään niistä ei näe tiedostojen nimiä, sisältöä tai avaimia, eivätkä palvelimemme tallenna lokeja. Tiedostot kulkevat suoraan laitteiden välillä aina kun mahdollista, muuten välityspalvelimen kautta; ne ovat päästä päähän salattuja kummassakin tapauksessa.</value>
+  </data>
+  <data name="settingsSave" xml:space="preserve">
+    <value>Tallenna</value>
+  </data>
+  <data name="settingsServer" xml:space="preserve">
+    <value>Kohtauspalvelin</value>
+  </data>
+  <data name="settingsServerHelp" xml:space="preserve">
+    <value>Auttaa kahta saman koodin laitetta löytämään toisensa. Se ei koskaan näe tiedostojasi tai avaimiasi.</value>
+  </data>
+  <data name="settingsServerInvalid" xml:space="preserve">
+    <value>Alun on oltava wss://</value>
+  </data>
+  <data name="settingsServerReset" xml:space="preserve">
+    <value>Käytä oletusta</value>
+  </data>
+  <data name="settingsVersion" xml:space="preserve">
+    <value>Versio {version}</value>
+  </data>
+  <data name="settingsWordsEnglish" xml:space="preserve">
+    <value>Koodit ja tarkistussanat ovat aina englanniksi, jotta eri kielille asetetut laitteet näyttävät samat sanat.</value>
+    <comment>Shown in Settings under About. Explains why the transfer code and the verification words stay in English: they come from one English word list so that both devices show the same ones</comment>
+  </data>
+  <data name="setupBackgroundAllowed" xml:space="preserve">
+    <value>Androidin akun optimointi on pois päältä TotalDropilta.</value>
+    <comment>The same page: status when Android's battery optimisation is already off for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundAutostart" xml:space="preserve">
+    <value>Avaa Automaattinen käynnistys</value>
+    <comment>The same page: button that opens the maker's Autostart page (Xiaomi)</comment>
+  </data>
+  <data name="setupBackgroundBattery" xml:space="preserve">
+    <value>Avaa akkuasetukset</value>
+    <comment>The same page: button that opens TotalDrop's app info, where its battery use is set</comment>
+  </data>
+  <data name="setupBackgroundBatteryHint" xml:space="preserve">
+    <value>Avaa TotalDropin sovellustiedoista Akku ja salli rajoittamaton käyttö. Näiden asetusten nimet vaihtelevat puhelimittain.</value>
+    <comment>The same page: under the first button, which opens TotalDrop's app info; what to do there</comment>
+  </data>
+  <data name="setupBackgroundBody" xml:space="preserve">
+    <value>Jotta siirto jatkuu, kun vaihdat sovellusta tai lukitset näytön, salli TotalDropin toimia ilman akkurajoituksia. TotalDrop toimii taustalla vain, kun itse aloittamasi siirto on käynnissä.</value>
+    <comment>The same page: why TotalDrop asks to run without battery restrictions</comment>
+  </data>
+  <data name="setupBackgroundMaker" xml:space="preserve">
+    <value>{maker}-puhelimissa on oma virransäästö</value>
+    <comment>The same page: heading of the second step on Xiaomi, Redmi and POCO phones, which add a battery saver of their own</comment>
+  </data>
+  <data name="setupBackgroundMakerBody" xml:space="preserve">
+    <value>Avaa myös TotalDropin virransäästö ja valitse ”Ei rajoituksia”. Jos puhelimessa on Automaattinen käynnistys, ota se käyttöön TotalDropille.</value>
+    <comment>The same page: what to choose in the maker's battery saver; "No restrictions" is the label on Xiaomi phones, use the label those phones show in your language</comment>
+  </data>
+  <data name="setupBackgroundMakerOpen" xml:space="preserve">
+    <value>Avaa TotalDropin virransäästö</value>
+    <comment>The same page: button that opens the maker's battery saver for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundRestricted" xml:space="preserve">
+    <value>Androidin akun optimointi on päällä TotalDropilla: siirto voi pysähtyä, kun vaihdat sovellusta.</value>
+    <comment>The same page: status when Android's battery optimisation is still on for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundSkip" xml:space="preserve">
+    <value>Ei nyt</value>
+    <comment>The same page at first start: skip it for now</comment>
+  </data>
+  <data name="setupBackgroundTitle" xml:space="preserve">
+    <value>Siirrot jatkuvat taustalla</value>
+    <comment>First-run and Settings page about background transfers (#338): heading</comment>
+  </data>
+  <data name="shareBusy" xml:space="preserve">
+    <value>Siirto on yhä käynnissä. Odota, että se valmistuu, tai pysäytä se ja jaa sitten uudelleen.</value>
+    <comment>Android: shown when files are shared to TotalDrop while a send or receive is still running; the shared files are not added</comment>
+  </data>
+  <data name="shareSkipped" xml:space="preserve">
+    <value>{count, plural, =1{Yhtä jaettua kohdetta ei voitu lukea, joten se jätettiin pois.} other{{count} jaettua kohdetta ei voitu lukea, joten ne jätettiin pois.}}</value>
+    <comment>Android: shown when some of the items another app shared to TotalDrop could not be read (no read permission, or the app's own files) and were left out; the rest were added</comment>
+  </data>
+  <data name="sizeBytes" xml:space="preserve">
+    <value>{value} t</value>
+    <comment>A size in bytes. value is already formatted for the region</comment>
+  </data>
+  <data name="sizeGB" xml:space="preserve">
+    <value>{value} Gt</value>
+    <comment>Gigabytes</comment>
+  </data>
+  <data name="sizeKB" xml:space="preserve">
+    <value>{value} kt</value>
+    <comment>Kilobytes (1000 bytes)</comment>
+  </data>
+  <data name="sizeMB" xml:space="preserve">
+    <value>{value} Mt</value>
+    <comment>Megabytes</comment>
+  </data>
+  <data name="sizePB" xml:space="preserve">
+    <value>{value} Pt</value>
+    <comment>Petabytes</comment>
+  </data>
+  <data name="sizeTB" xml:space="preserve">
+    <value>{value} Tt</value>
+    <comment>Terabytes</comment>
+  </data>
+  <data name="stop" xml:space="preserve">
+    <value>Lopeta</value>
+  </data>
+  <data name="technicalDetail" xml:space="preserve">
+    <value>Tekninen viesti englanniksi, liitettäväksi ongelmasta ilmoittaessa:</value>
+    <comment>Under Details, above the error's technical text, which stays in English so it can be searched and reported</comment>
+  </data>
+  <data name="textCopied" xml:space="preserve">
+    <value>Teksti kopioitu</value>
+    <comment>Tooltip after the received text was copied</comment>
+  </data>
+  <data name="transferNoticeBody" xml:space="preserve">
+    <value>Jatkuu, kun käytät muita sovelluksia.</value>
+    <comment>Text of the ongoing transfer notification: the transfer continues while the person uses other apps</comment>
+  </data>
+  <data name="transferNoticeChannel" xml:space="preserve">
+    <value>Siirrot</value>
+    <comment>Android notification channel name for running transfers (shown in system settings)</comment>
+  </data>
+  <data name="transferNoticeReceiving" xml:space="preserve">
+    <value>Vastaanotetaan TotalDropilla</value>
+    <comment>Title of the ongoing notification while a receive runs in the background</comment>
+  </data>
+  <data name="transferNoticeSending" xml:space="preserve">
+    <value>Lähetetään TotalDropilla</value>
+    <comment>Title of the ongoing notification while a send runs in the background</comment>
+  </data>
+  <data name="tryAgain" xml:space="preserve">
+    <value>Yritä uudelleen</value>
+  </data>
+  <data name="verificationHint" xml:space="preserve">
+    <value>The other person sees the same four words. If they differ, stop.</value>
+  </data>
+  <data name="verificationTitle" xml:space="preserve">
+    <value>Verification words</value>
+  </data>
+</root>

@@ -20,6 +20,7 @@ path = [
   "crates/totaldrop-core/**",
   "crates/totaldrop-l10n/**",
   "l10n/**",
+  "ui-winui3-fluent2/Strings/**",
 ]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 The TotalDrop Contributors"

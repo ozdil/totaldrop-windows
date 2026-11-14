@@ -1,0 +1,628 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 The TotalDrop Contributors -->
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="appTagline" xml:space="preserve">
+    <value>任何檔案，傳給任何人，送到任何地方。</value>
+    <comment>Short slogan under the app name on the home screen</comment>
+  </data>
+  <data name="back" xml:space="preserve">
+    <value>返回</value>
+  </data>
+  <data name="cancel" xml:space="preserve">
+    <value>取消</value>
+  </data>
+  <data name="cancelTransferBody" xml:space="preserve">
+    <value>對方會收到傳輸已停止的通知。</value>
+  </data>
+  <data name="cancelTransferTitle" xml:space="preserve">
+    <value>要停止這次傳輸嗎？</value>
+  </data>
+  <data name="causeConnectionLost" xml:space="preserve">
+    <value>與另一台裝置的連線已中斷。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeDiskFull" xml:space="preserve">
+    <value>此裝置的可用空間不足。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeFileChanged" xml:space="preserve">
+    <value>檔案在傳送過程中發生了變化。儲存後請重新傳送。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoPermission" xml:space="preserve">
+    <value>TotalDrop 沒有讀取或寫入所需檔案或資料夾的權限。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNoRoute" xml:space="preserve">
+    <value>無論直接連線或經過中繼伺服器，都無法連到另一台裝置。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeNotFound" xml:space="preserve">
+    <value>找不到某個檔案或資料夾。它可能已被移動或刪除。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeProtocol" xml:space="preserve">
+    <value>另一台裝置傳送了此版本無法理解的內容。在兩台裝置上更新 TotalDrop 可能會有幫助。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeReadOnly" xml:space="preserve">
+    <value>該資料夾位於無法寫入的磁碟上。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeRelay" xml:space="preserve">
+    <value>無法連到中繼伺服器或尚未設定中繼伺服器，或兩台裝置使用的不是同一個中繼伺服器。</value>
+    <comment>Under Details of a failed transfer: why it failed, in plain words</comment>
+  </data>
+  <data name="causeTimedOut" xml:space="preserve">
+    <value>連線已停止回應。其中一台裝置可能中斷了網路或進入了睡眠。</value>
+    <comment>Under Details of a failed transfer: why it failed. The connection went silent (QUIC idle timeout), or the sender stopped sending.</comment>
+  </data>
+  <data name="codeSuggestions" xml:space="preserve">
+    <value>建議</value>
+  </data>
+  <data name="copyText" xml:space="preserve">
+    <value>複製文字</value>
+    <comment>Receive result: button that copies the received text to the clipboard</comment>
+  </data>
+  <data name="desktopComment" xml:space="preserve">
+    <value>將檔案直接傳送到另一台裝置，端對端加密</value>
+    <comment>Linux desktop entry: one-line description shown as a tooltip in app menus</comment>
+  </data>
+  <data name="desktopGenericName" xml:space="preserve">
+    <value>檔案傳輸</value>
+    <comment>Linux desktop entry: what kind of app TotalDrop is, shown under its name in app menus and launchers</comment>
+  </data>
+  <data name="desktopKeywords" xml:space="preserve">
+    <value>傳送;接收;分享;傳輸;檔案;</value>
+    <comment>Linux desktop entry: search words for app launchers, separated by semicolons and ending with one. Words people type to find a file-sending app; no spaces around the semicolons</comment>
+  </data>
+  <data name="desktopSendWith" xml:space="preserve">
+    <value>用 TotalDrop 傳送</value>
+    <comment>Linux file managers (Dolphin, Files, Nemo): right-click menu item that sends the selected files and folders with TotalDrop. Also Android: the item in the menu of text selected in any app, which sends that text</comment>
+  </data>
+  <data name="done" xml:space="preserve">
+    <value>完成</value>
+  </data>
+  <data name="draftTranslation" xml:space="preserve">
+    <value>這份翻譯正在審閱中。歡迎到 GitHub 協助改進。</value>
+    <comment>Shown in Settings when some of the text in this language is an unreviewed draft</comment>
+  </data>
+  <data name="editCopy" xml:space="preserve">
+    <value>複製</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editCut" xml:space="preserve">
+    <value>剪下</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editDelete" xml:space="preserve">
+    <value>刪除</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editPaste" xml:space="preserve">
+    <value>貼上</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editRedo" xml:space="preserve">
+    <value>重做</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editSelectAll" xml:space="preserve">
+    <value>全選</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="editUndo" xml:space="preserve">
+    <value>復原</value>
+    <comment>Linux: in the right-click menu of text fields, which Qt draws; the system's usual word for the command</comment>
+  </data>
+  <data name="errorBadServer" xml:space="preserve">
+    <value>伺服器位址無效。必須以 wss:// 開頭。</value>
+    <comment>The rendezvous server address in the settings is not valid. Same text as cliErrBadServer</comment>
+  </data>
+  <data name="errorCancelled" xml:space="preserve">
+    <value>對方停止了傳輸。</value>
+  </data>
+  <data name="errorCodeExpired" xml:space="preserve">
+    <value>代碼在有人使用之前就已過期。請重新傳送以取得新的代碼。</value>
+    <comment>Shown to the sender: nobody came for the code before the server let it expire (15 minutes). Same text as cliErrCodeExpired</comment>
+  </data>
+  <data name="errorCodeNotInUse" xml:space="preserve">
+    <value>這組代碼目前未使用：可能輸入錯誤、已過期或已被使用。請向傳送者索取新的代碼。</value>
+    <comment>The server says no sender is using this code's number. Same text as cliErrCodeNotInUse</comment>
+  </data>
+  <data name="errorConnect" xml:space="preserve">
+    <value>無法連線到另一部裝置。請確認兩部裝置都已連上網路，然後再試一次。</value>
+  </data>
+  <data name="errorDeclined" xml:space="preserve">
+    <value>接收者拒絕了這些檔案。</value>
+  </data>
+  <data name="errorInvalidCode" xml:space="preserve">
+    <value>這組代碼無效。</value>
+  </data>
+  <data name="errorInvalidOffer" xml:space="preserve">
+    <value>The offer broke a safety rule, so it was refused.</value>
+  </data>
+  <data name="errorOther" xml:space="preserve">
+    <value>發生錯誤。</value>
+  </data>
+  <data name="errorPeerLeft" xml:space="preserve">
+    <value>對方在傳輸完成前離開了。</value>
+  </data>
+  <data name="errorServer" xml:space="preserve">
+    <value>無法連線到 TotalDrop 伺服器。請檢查網路連線。</value>
+  </data>
+  <data name="errorStopped" xml:space="preserve">
+    <value>已在這部裝置上停止。</value>
+  </data>
+  <data name="errorStorage" xml:space="preserve">
+    <value>無法讀取或儲存某個檔案。</value>
+  </data>
+  <data name="errorTextDamaged" xml:space="preserve">
+    <value>文字未完整送達，因此不顯示。</value>
+    <comment>Receive result: the text failed its integrity check or is not valid text, so it is not shown</comment>
+  </data>
+  <data name="errorWrongCode" xml:space="preserve">
+    <value>The code did not match. It was mistyped, or someone tried to intercept the transfer. Nothing was sent. Start again with a new code.</value>
+  </data>
+  <data name="homeFooter" xml:space="preserve">
+    <value>端對端加密。不需要帳號、電子郵件或手機號碼。</value>
+  </data>
+  <data name="homeReceiveBody" xml:space="preserve">
+    <value>輸入代碼，儲存檔案</value>
+  </data>
+  <data name="homeReceiveTitle" xml:space="preserve">
+    <value>接收</value>
+  </data>
+  <data name="homeSendBody" xml:space="preserve">
+    <value>選擇檔案，分享一組簡短的代碼</value>
+  </data>
+  <data name="homeSendTitle" xml:space="preserve">
+    <value>傳送</value>
+  </data>
+  <data name="itemsAndSize" xml:space="preserve">
+    <value>{count} 個項目 · {size}</value>
+  </data>
+  <data name="keepAwakeReason" xml:space="preserve">
+    <value>TotalDrop 正在傳送或接收檔案</value>
+    <comment>Linux: why the computer is kept from sleeping while a transfer runs; the desktop may show it in its power settings or battery menu</comment>
+  </data>
+  <data name="keepGoing" xml:space="preserve">
+    <value>繼續</value>
+  </data>
+  <data name="linkBusy" xml:space="preserve">
+    <value>請先完成或停止螢幕上的操作，然後再次開啟連結。</value>
+    <comment>Android: shown when a TotalDrop link (totaldrop://r/… or https://totaldrop.app/r#…) opens the app while Receive cannot take a new code: a send or receive is running, an offer waits for an answer, or a received text is shown. The screen it refers to is shown; the link's code is not filled in</comment>
+  </data>
+  <data name="metainfoAbout" xml:space="preserve">
+    <value>TotalDrop 將檔案和資料夾從一台裝置傳送到另一台裝置，端對端加密。選擇檔案，分享一組短代碼或 QR 碼，另一台裝置就會收到。不需要帳號、電子郵件或電話號碼。</value>
+    <comment>Linux software centres: the paragraph that introduces TotalDrop on its page</comment>
+  </data>
+  <data name="metainfoOnePackage" xml:space="preserve">
+    <value>請一次只使用一個 Linux 套件。Flatpak 與 .pkg、.deb 或 .rpm 套件使用同一個名稱，因此當其中一個已開啟時，啟動另一個只會把已開啟的視窗帶到前景，而不會再開啟一個視窗。</value>
+    <comment>Linux software centres: last paragraph of the description; the Flatpak and the distribution package (.pkg, .deb, .rpm) cannot run at the same time (#351). Keep .pkg, .deb, .rpm and Flatpak as they are</comment>
+  </data>
+  <data name="metainfoSummary" xml:space="preserve">
+    <value>將檔案直接傳送到另一台裝置</value>
+    <comment>Linux software centres (Discover, GNOME Software, Flathub): one-line summary under the app's name. No full stop at the end</comment>
+  </data>
+  <data name="metainfoTheme" xml:space="preserve">
+    <value>跟隨桌面主題：Plasma、Hyprland、Omarchy、GNOME</value>
+    <comment>Linux software centres: feature list item; keep the desktop names Plasma, Hyprland, Omarchy and GNOME as they are</comment>
+  </data>
+  <data name="metainfoVerified" xml:space="preserve">
+    <value>每個檔案抵達時都會驗證，損壞的檔案會被捨棄</value>
+    <comment>Linux software centres: feature list item about every received file being checked</comment>
+  </data>
+  <data name="metainfoWords" xml:space="preserve">
+    <value>四個驗證單字表示中間沒有其他人</value>
+    <comment>Linux software centres: feature list item about the four verification words that show no one is intercepting the transfer</comment>
+  </data>
+  <data name="moreInfo" xml:space="preserve">
+    <value>詳細資訊</value>
+  </data>
+  <data name="openFolder" xml:space="preserve">
+    <value>開啟資料夾</value>
+  </data>
+  <data name="otherPackageFlatpak" xml:space="preserve">
+    <value>TotalDrop 已從 Flatpak 開啟，因此已將該視窗帶到前景。請一次只使用一個套件：要開啟這個，請先結束那個視窗。</value>
+    <comment>Linux desktop notification when TotalDrop is started from the distribution package while the Flatpak window is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="otherPackageSystem" xml:space="preserve">
+    <value>TotalDrop 已從 .pkg、.deb 或 .rpm 套件開啟，因此已將該視窗帶到前景。請一次只使用一個套件：要開啟這個，請先結束那個視窗。</value>
+    <comment>Linux desktop notification when TotalDrop is started from the Flatpak while the window of the .pkg, .deb or .rpm package is already open; that window comes forward instead (#351)</comment>
+  </data>
+  <data name="pickImageTitle" xml:space="preserve">
+    <value>選擇含有 QR 碼的圖片</value>
+  </data>
+  <data name="pickTitle" xml:space="preserve">
+    <value>選擇要傳送的檔案</value>
+  </data>
+  <data name="privacyMode" xml:space="preserve">
+    <value>對另一部裝置隱藏我的位址</value>
+  </data>
+  <data name="privacyModeConfirmBody" xml:space="preserve">
+    <value>由於裝置之間不再直接傳輸，傳輸會變慢。中介伺服器和中繼伺服器仍會看到你的 IP 位址，但絕對看不到你的檔案或金鑰。</value>
+  </data>
+  <data name="privacyModeConfirmTitle" xml:space="preserve">
+    <value>要開啟隱私模式嗎？</value>
+  </data>
+  <data name="privacyModeHint" xml:space="preserve">
+    <value>隱私模式：所有資料都經由中繼伺服器，對方裝置永遠不會知道你的 IP 位址。速度較慢，且對方裝置必須使用同一個中繼伺服器（預設的中繼伺服器即可）。</value>
+  </data>
+  <data name="privacyModeTurnOn" xml:space="preserve">
+    <value>開啟</value>
+  </data>
+  <data name="progressPercent" xml:space="preserve">
+    <value>{percent}%</value>
+    <comment>Transfer progress; use your language's percent style</comment>
+  </data>
+  <data name="receiveAccept" xml:space="preserve">
+    <value>Accept</value>
+  </data>
+  <data name="receiveAndMore" xml:space="preserve">
+    <value>以及另外 {count} 項</value>
+  </data>
+  <data name="receiveCodeHelp" xml:space="preserve">
+    <value>請向傳送者索取代碼。</value>
+  </data>
+  <data name="receiveCodeHint" xml:space="preserve">
+    <value>7-harbor-rocket</value>
+  </data>
+  <data name="receiveCodeInvalid" xml:space="preserve">
+    <value>這看起來不像代碼。代碼以數字開頭，後面接兩個或三個單字。</value>
+  </data>
+  <data name="receiveCodeLabel" xml:space="preserve">
+    <value>代碼</value>
+  </data>
+  <data name="receiveConnect" xml:space="preserve">
+    <value>連線</value>
+  </data>
+  <data name="receiveConnecting" xml:space="preserve">
+    <value>正在建立安全連線…</value>
+  </data>
+  <data name="receiveDecline" xml:space="preserve">
+    <value>Decline</value>
+  </data>
+  <data name="receiveDeclined" xml:space="preserve">
+    <value>你已拒絕這些檔案。</value>
+  </data>
+  <data name="receiveDone" xml:space="preserve">
+    <value>已接收並驗證</value>
+  </data>
+  <data name="receiveFromImage" xml:space="preserve">
+    <value>從圖片讀取 QR 碼</value>
+  </data>
+  <data name="receiveOffer" xml:space="preserve">
+    <value>待接收的檔案</value>
+  </data>
+  <data name="receiveOfferSummary" xml:space="preserve">
+    <value>{files} 個檔案 · {size}</value>
+  </data>
+  <data name="receiveOfferText" xml:space="preserve">
+    <value>待接收的文字</value>
+    <comment>Receive screen: title when the other side wants to send a text, not files</comment>
+  </data>
+  <data name="receiveOfferTextNote" xml:space="preserve">
+    <value>文字只在此顯示，不會儲存。</value>
+    <comment>Receive screen: under an incoming text, in place of the folder files are saved to</comment>
+  </data>
+  <data name="receivePaste" xml:space="preserve">
+    <value>貼上</value>
+  </data>
+  <data name="receiveQrNotFound" xml:space="preserve">
+    <value>這張圖片中沒有 TotalDrop 代碼。</value>
+  </data>
+  <data name="receiveReceiving" xml:space="preserve">
+    <value>正在接收</value>
+  </data>
+  <data name="receiveSaveTo" xml:space="preserve">
+    <value>儲存至 {folder}</value>
+  </data>
+  <data name="receiveTextDeclined" xml:space="preserve">
+    <value>你已拒絕這段文字。</value>
+    <comment>Receive result: the person declined an incoming text</comment>
+  </data>
+  <data name="receiveTextDone" xml:space="preserve">
+    <value>文字已接收並驗證</value>
+    <comment>Receive result: title when a text arrived and its check passed; the text is shown below it</comment>
+  </data>
+  <data name="receiveTextHidden" xml:space="preserve">
+    <value>文字中含有隱藏字元，顯示為 U+…。複製時得到的是與收到時完全相同的文字。</value>
+    <comment>Receive result: the text holds invisible control or direction characters, shown in the text by their code, as &lt;U+202E&gt;; keep U+… as it is</comment>
+  </data>
+  <data name="receiveTextShortened" xml:space="preserve">
+    <value>只顯示文字的開頭。「複製文字」會複製全文。</value>
+    <comment>Receive result: a very long text is shown only in part; the Copy text button copies the whole text</comment>
+  </data>
+  <data name="receiveTitle" xml:space="preserve">
+    <value>接收檔案</value>
+  </data>
+  <data name="sameNetworkNote" xml:space="preserve">
+    <value>可透過網際網路使用。裝置之間無法直接連線時，加密傳輸會經過中繼伺服器，中繼伺服器無法讀取內容。</value>
+  </data>
+  <data name="sendAddFailed" xml:space="preserve">
+    <value>無法新增檔案。請再試一次。如果仍然發生，請確認這部裝置有足夠的可用空間，或從其他位置選擇檔案。</value>
+    <comment>Shown on the send screen when the system file picker could not hand over the chosen files (a path it cannot read, too little memory, or no space left for its copy).</comment>
+  </data>
+  <data name="sendAddFiles" xml:space="preserve">
+    <value>新增檔案</value>
+  </data>
+  <data name="sendClipboard" xml:space="preserve">
+    <value>傳送剪貼簿</value>
+    <comment>Linux desktop entry action and Android shortcut: opens Send with the text on the clipboard filled in</comment>
+  </data>
+  <data name="sendClipboardEmpty" xml:space="preserve">
+    <value>剪貼簿中沒有文字。</value>
+    <comment>Send screen: shown when Send clipboard finds no text on the clipboard</comment>
+  </data>
+  <data name="sendClipboardKept" xml:space="preserve">
+    <value>已輸入的文字保持不變，未使用剪貼簿。</value>
+    <comment>Send screen: Send clipboard was chosen while the text box already held typed text, so the clipboard was not pasted</comment>
+  </data>
+  <data name="sendCodeHint" xml:space="preserve">
+    <value>在另一部裝置上開啟 TotalDrop，輕觸「接收」，然後輸入這組代碼。</value>
+  </data>
+  <data name="sendCopied" xml:space="preserve">
+    <value>已複製代碼</value>
+  </data>
+  <data name="sendCopy" xml:space="preserve">
+    <value>複製</value>
+  </data>
+  <data name="sendCounting" xml:space="preserve">
+    <value>正在計算…</value>
+  </data>
+  <data name="sendCreateCode" xml:space="preserve">
+    <value>產生代碼</value>
+  </data>
+  <data name="sendDone" xml:space="preserve">
+    <value>已傳送並驗證</value>
+  </data>
+  <data name="sendDoneBody" xml:space="preserve">
+    <value>{count, plural, =1{檔案已完整送達。} other{全部 {count} 個檔案均已完整送達。}}</value>
+  </data>
+  <data name="sendDropHere" xml:space="preserve">
+    <value>將檔案拖放到這裡</value>
+  </data>
+  <data name="sendDropHint" xml:space="preserve">
+    <value>也可以將檔案拖曳到這個視窗中。</value>
+  </data>
+  <data name="sendEmpty" xml:space="preserve">
+    <value>尚未選取任何項目</value>
+  </data>
+  <data name="sendEmptyHint" xml:space="preserve">
+    <value>新增要傳送的檔案。接收者只會收到這些檔案，不會收到其他任何內容。</value>
+  </data>
+  <data name="sendPreparing" xml:space="preserve">
+    <value>正在準備檔案…</value>
+  </data>
+  <data name="sendQrHint" xml:space="preserve">
+    <value>或者用另一部裝置的相機掃描這個 QR 碼。</value>
+  </data>
+  <data name="sendRemove" xml:space="preserve">
+    <value>移除</value>
+  </data>
+  <data name="sendSending" xml:space="preserve">
+    <value>正在傳送</value>
+  </data>
+  <data name="sendShare" xml:space="preserve">
+    <value>分享</value>
+  </data>
+  <data name="sendShareText" xml:space="preserve">
+    <value>用 TotalDrop 接收我的檔案。代碼：{code}</value>
+  </data>
+  <data name="sendSomeFailed" xml:space="preserve">
+    <value>{count, plural, =1{有 1 個檔案未能完整送達，已被捨棄。} other{有 {count} 個檔案未能完整送達，已被捨棄。}}</value>
+  </data>
+  <data name="sendStrongCode" xml:space="preserve">
+    <value>更強的代碼</value>
+  </data>
+  <data name="sendStrongCodeHint" xml:space="preserve">
+    <value>用三個單字取代兩個：更難被猜中</value>
+  </data>
+  <data name="sendText" xml:space="preserve">
+    <value>傳送文字</value>
+    <comment>Send screen: button and screen title for sending a piece of text instead of files</comment>
+  </data>
+  <data name="sendTextDone" xml:space="preserve">
+    <value>文字已完整送達。</value>
+    <comment>Send result: the text reached the receiver and its check passed</comment>
+  </data>
+  <data name="sendTextHidden" xml:space="preserve">
+    <value>文字中含有隱藏字元，例如方向標記。它們會隨文字一起傳送。</value>
+    <comment>Send screen: the text to send holds invisible control or direction characters; they are sent as they are</comment>
+  </data>
+  <data name="sendTextHint" xml:space="preserve">
+    <value>輸入或貼上要傳送的文字</value>
+    <comment>Send screen: placeholder in the box where the person types or pastes the text to send</comment>
+  </data>
+  <data name="sendTextShortened" xml:space="preserve">
+    <value>只顯示文字的開頭，傳送的是全文。</value>
+    <comment>Send screen: a very long pasted text is shown only in part; the whole text is still sent</comment>
+  </data>
+  <data name="sendTextTooLong" xml:space="preserve">
+    <value>文字最多 {size}。較長的文字請以檔案傳送。</value>
+    <comment>Send screen: the text is over the limit; {size} is the limit, such as 1 MB</comment>
+  </data>
+  <data name="sendTitle" xml:space="preserve">
+    <value>傳送檔案</value>
+  </data>
+  <data name="sendWaiting" xml:space="preserve">
+    <value>正在等待接收者…</value>
+  </data>
+  <data name="sendWaitingAccept" xml:space="preserve">
+    <value>核對單字，然後等待接收者接受。</value>
+  </data>
+  <data name="sendYourCode" xml:space="preserve">
+    <value>你的代碼</value>
+  </data>
+  <data name="settings" xml:space="preserve">
+    <value>設定</value>
+  </data>
+  <data name="settingsAbout" xml:space="preserve">
+    <value>關於</value>
+  </data>
+  <data name="settingsAboutBody" xml:space="preserve">
+    <value>TotalDrop 免費且開放原始碼，依靠捐款營運。採用 GPL-3.0-or-later 授權。</value>
+  </data>
+  <data name="settingsBackground" xml:space="preserve">
+    <value>背景傳輸</value>
+    <comment>Settings: heading of the section about background transfers</comment>
+  </data>
+  <data name="settingsBackgroundOpen" xml:space="preserve">
+    <value>電池設定</value>
+    <comment>Settings: button that opens the background transfers page</comment>
+  </data>
+  <data name="settingsPrivacy" xml:space="preserve">
+    <value>隱私權</value>
+  </data>
+  <data name="settingsPrivacyBody" xml:space="preserve">
+    <value>中介伺服器、中繼伺服器和 Cloudflare 的 STUN 伺服器會看到你的 IP 位址；直接連線時，對方裝置也會看到（除非開啟了隱私模式）。它們都看不到檔案名稱、檔案內容或金鑰，我們的伺服器也不保留記錄。檔案會盡可能在裝置之間直接傳輸，否則經由中繼伺服器；無論哪種方式都是端對端加密。</value>
+  </data>
+  <data name="settingsSave" xml:space="preserve">
+    <value>儲存</value>
+  </data>
+  <data name="settingsServer" xml:space="preserve">
+    <value>中介伺服器</value>
+  </data>
+  <data name="settingsServerHelp" xml:space="preserve">
+    <value>協助持有相同代碼的兩部裝置找到彼此。它絕對看不到你的檔案或金鑰。</value>
+  </data>
+  <data name="settingsServerInvalid" xml:space="preserve">
+    <value>必須以 wss:// 開頭</value>
+  </data>
+  <data name="settingsServerReset" xml:space="preserve">
+    <value>使用預設值</value>
+  </data>
+  <data name="settingsVersion" xml:space="preserve">
+    <value>版本 {version}</value>
+  </data>
+  <data name="settingsWordsEnglish" xml:space="preserve">
+    <value>代碼和驗證單字在任何語言下都使用英文，這樣兩部語言不同的裝置會顯示相同的單字。</value>
+    <comment>Shown in Settings under About. Explains why the transfer code and the verification words stay in English: they come from one English word list so that both devices show the same ones</comment>
+  </data>
+  <data name="setupBackgroundAllowed" xml:space="preserve">
+    <value>TotalDrop 的 Android 電池最佳化已關閉。</value>
+    <comment>The same page: status when Android's battery optimisation is already off for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundAutostart" xml:space="preserve">
+    <value>開啟自動啟動</value>
+    <comment>The same page: button that opens the maker's Autostart page (Xiaomi)</comment>
+  </data>
+  <data name="setupBackgroundBattery" xml:space="preserve">
+    <value>開啟電池設定</value>
+    <comment>The same page: button that opens TotalDrop's app info, where its battery use is set</comment>
+  </data>
+  <data name="setupBackgroundBatteryHint" xml:space="preserve">
+    <value>在 TotalDrop 的應用程式資訊頁面中開啟「電池」，並允許無限制使用。這些設定的名稱因手機而異。</value>
+    <comment>The same page: under the first button, which opens TotalDrop's app info; what to do there</comment>
+  </data>
+  <data name="setupBackgroundBody" xml:space="preserve">
+    <value>為了在切換應用程式或鎖定螢幕時傳輸仍能繼續，請允許 TotalDrop 不受電池限制地執行。TotalDrop 只在您發起的傳輸進行時才在背景運作。</value>
+    <comment>The same page: why TotalDrop asks to run without battery restrictions</comment>
+  </data>
+  <data name="setupBackgroundMaker" xml:space="preserve">
+    <value>{maker} 手機有自己的省電功能</value>
+    <comment>The same page: heading of the second step on Xiaomi, Redmi and POCO phones, which add a battery saver of their own</comment>
+  </data>
+  <data name="setupBackgroundMakerBody" xml:space="preserve">
+    <value>請同時開啟 TotalDrop 的省電設定並選擇「無限制」。如果手機有自動啟動，請為 TotalDrop 開啟。</value>
+    <comment>The same page: what to choose in the maker's battery saver; "No restrictions" is the label on Xiaomi phones, use the label those phones show in your language</comment>
+  </data>
+  <data name="setupBackgroundMakerOpen" xml:space="preserve">
+    <value>開啟 TotalDrop 的省電設定</value>
+    <comment>The same page: button that opens the maker's battery saver for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundRestricted" xml:space="preserve">
+    <value>TotalDrop 的 Android 電池最佳化已開啟：切換應用程式時傳輸可能會停止。</value>
+    <comment>The same page: status when Android's battery optimisation is still on for TotalDrop</comment>
+  </data>
+  <data name="setupBackgroundSkip" xml:space="preserve">
+    <value>以後再說</value>
+    <comment>The same page at first start: skip it for now</comment>
+  </data>
+  <data name="setupBackgroundTitle" xml:space="preserve">
+    <value>讓傳輸在背景繼續</value>
+    <comment>First-run and Settings page about background transfers (#338): heading</comment>
+  </data>
+  <data name="shareBusy" xml:space="preserve">
+    <value>仍有傳輸正在進行。請等待其完成或將其停止，然後再分享。</value>
+    <comment>Android: shown when files are shared to TotalDrop while a send or receive is still running; the shared files are not added</comment>
+  </data>
+  <data name="shareSkipped" xml:space="preserve">
+    <value>{count, plural, =1{有 1 個分享的項目無法讀取，已略過。} other{有 {count} 個分享的項目無法讀取，已略過。}}</value>
+    <comment>Android: shown when some of the items another app shared to TotalDrop could not be read (no read permission, or the app's own files) and were left out; the rest were added</comment>
+  </data>
+  <data name="sizeBytes" xml:space="preserve">
+    <value>{value} B</value>
+    <comment>A size in bytes. value is already formatted for the region</comment>
+  </data>
+  <data name="sizeGB" xml:space="preserve">
+    <value>{value} GB</value>
+    <comment>Gigabytes</comment>
+  </data>
+  <data name="sizeKB" xml:space="preserve">
+    <value>{value} kB</value>
+    <comment>Kilobytes (1000 bytes)</comment>
+  </data>
+  <data name="sizeMB" xml:space="preserve">
+    <value>{value} MB</value>
+    <comment>Megabytes</comment>
+  </data>
+  <data name="sizePB" xml:space="preserve">
+    <value>{value} PB</value>
+    <comment>Petabytes</comment>
+  </data>
+  <data name="sizeTB" xml:space="preserve">
+    <value>{value} TB</value>
+    <comment>Terabytes</comment>
+  </data>
+  <data name="stop" xml:space="preserve">
+    <value>停止</value>
+  </data>
+  <data name="technicalDetail" xml:space="preserve">
+    <value>英文技術訊息，回報問題時可附上：</value>
+    <comment>Under Details, above the error's technical text, which stays in English so it can be searched and reported</comment>
+  </data>
+  <data name="textCopied" xml:space="preserve">
+    <value>文字已複製</value>
+    <comment>Tooltip after the received text was copied</comment>
+  </data>
+  <data name="transferNoticeBody" xml:space="preserve">
+    <value>使用其他應用程式時仍會繼續。</value>
+    <comment>Text of the ongoing transfer notification: the transfer continues while the person uses other apps</comment>
+  </data>
+  <data name="transferNoticeChannel" xml:space="preserve">
+    <value>傳輸</value>
+    <comment>Android notification channel name for running transfers (shown in system settings)</comment>
+  </data>
+  <data name="transferNoticeReceiving" xml:space="preserve">
+    <value>正在透過 TotalDrop 接收</value>
+    <comment>Title of the ongoing notification while a receive runs in the background</comment>
+  </data>
+  <data name="transferNoticeSending" xml:space="preserve">
+    <value>正在透過 TotalDrop 傳送</value>
+    <comment>Title of the ongoing notification while a send runs in the background</comment>
+  </data>
+  <data name="tryAgain" xml:space="preserve">
+    <value>再試一次</value>
+  </data>
+  <data name="verificationHint" xml:space="preserve">
+    <value>The other person sees the same four words. If they differ, stop.</value>
+  </data>
+  <data name="verificationTitle" xml:space="preserve">
+    <value>Verification words</value>
+  </data>
+</root>
