@@ -878,12 +878,16 @@ public static partial class NativeBridge
             return false;
         }
 
-        string argsJson = SerializeMessageArgs(args);
-        if (ContainsNul(argsJson))
+        foreach (MessageArg arg in args)
         {
-            error = new BridgeErrorDto("invalid_args", "errorOther", null, "args must not contain NUL");
-            return false;
+            if (ContainsNul(arg.Name) || (arg.TextValue is not null && ContainsNul(arg.TextValue)))
+            {
+                error = new BridgeErrorDto("invalid_arg", "errorOther", null, "message arguments must not contain NUL bytes");
+                return false;
+            }
         }
+
+        string argsJson = SerializeMessageArgs(args);
 
         string? json = TakeJsonString(FormatMessageJson(key, argsJson, StripNul(langTags), StripNul(regionTag)));
         if (string.IsNullOrEmpty(json) || TryExtractError(json, out error))

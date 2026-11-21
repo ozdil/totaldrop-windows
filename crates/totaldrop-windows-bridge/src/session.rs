@@ -71,14 +71,61 @@ impl BridgeNetworkConfig {
     /// Checks that user-configured rendezvous and relay URLs are accepted by
     /// [`totaldrop_core::relay::check_url`] (`wss://` with a non-empty host, or
     /// `ws://` strictly on localhost / `127.0.0.1` / `[::1]`, rejecting control
-    /// characters and `@` userinfo).
+    /// characters and `@` userinfo) and carry a strictly well-formed authority
+    /// (non-empty host or valid bracketed IPv6 literal, optional port in
+    /// `1..=65535`, and no `#` fragment per RFC 6455 §3).
     #[must_use]
     pub fn is_valid_rendezvous_url(url: &str) -> bool {
         if url.chars().any(char::is_control) {
             return false;
         }
         let trimmed = url.trim();
-        !trimmed.is_empty() && totaldrop_core::relay::check_url(trimmed).is_ok()
+        if trimmed.is_empty() || totaldrop_core::relay::check_url(trimmed).is_err() {
+            return false;
+        }
+        if trimmed.contains('#') {
+            return false;
+        }
+
+        let Some(rest) = strip_ws_scheme(trimmed) else {
+            return false;
+        };
+        let authority = rest.split(['/', '?']).next().unwrap_or("");
+        if authority.is_empty()
+            || authority.contains('@')
+            || authority.chars().any(char::is_whitespace)
+        {
+            return false;
+        }
+
+        if authority.starts_with('[') {
+            let Some(end_bracket) = authority.find(']') else {
+                return false;
+            };
+            let Some(ipv6_str) = authority.get(1..end_bracket) else {
+                return false;
+            };
+            if ipv6_str.parse::<std::net::Ipv6Addr>().is_err() {
+                return false;
+            }
+            let after_bracket = authority.get(end_bracket.saturating_add(1)..).unwrap_or("");
+            if after_bracket.is_empty() {
+                true
+            } else if let Some(port_str) = after_bracket.strip_prefix(':') {
+                is_valid_port(port_str)
+            } else {
+                false
+            }
+        } else {
+            let (host, port_opt) = match authority.split_once(':') {
+                Some((h, p)) => (h, Some(p)),
+                None => (authority, None),
+            };
+            if host.is_empty() || host.contains('[') || host.contains(']') || host.contains(':') {
+                return false;
+            }
+            port_opt.is_none_or(is_valid_port)
+        }
     }
 
     /// Converts this configuration into [`totaldrop_core::SendOptions`].
@@ -110,6 +157,28 @@ impl BridgeNetworkConfig {
             gateway: totaldrop_core::portmap::Gateway::Auto,
         }
     }
+}
+
+fn strip_ws_scheme(url: &str) -> Option<&str> {
+    if url
+        .get(..6)
+        .is_some_and(|s| s.eq_ignore_ascii_case("wss://"))
+    {
+        url.get(6..)
+    } else if url
+        .get(..5)
+        .is_some_and(|s| s.eq_ignore_ascii_case("ws://"))
+    {
+        url.get(5..)
+    } else {
+        None
+    }
+}
+
+fn is_valid_port(port_str: &str) -> bool {
+    !port_str.is_empty()
+        && port_str.bytes().all(|b| b.is_ascii_digit())
+        && port_str.parse::<u16>().is_ok_and(|port| port >= 1)
 }
 
 /// Read-only view-model projection of a [`totaldrop_core::Event`] formatted for

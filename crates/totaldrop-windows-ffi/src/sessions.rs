@@ -289,6 +289,28 @@ fn resolve_send_paths(raw_paths: Vec<String>) -> Result<Vec<PathBuf>, String> {
     }
 }
 
+fn validate_session_server_urls(cfg: &BridgeNetworkConfig) -> Result<(), CoreError> {
+    let rdv_trimmed = cfg.rendezvous_server.trim();
+    if totaldrop_core::relay::check_url(rdv_trimmed).is_err() {
+        // Delegate inputs that core's `check_url` already rejects so
+        // `technical_english` keeps core's exact `BAD_ADDRESS` wording.
+        return Ok(());
+    }
+    if !BridgeNetworkConfig::is_valid_rendezvous_url(&cfg.rendezvous_server) {
+        return Err(CoreError::Rendezvous("invalid server address".to_owned()));
+    }
+
+    let relay_trimmed = cfg.relay_server.trim();
+    if !relay_trimmed.is_empty()
+        && totaldrop_core::relay::check_url(relay_trimmed).is_ok()
+        && !BridgeNetworkConfig::is_valid_rendezvous_url(&cfg.relay_server)
+    {
+        return Err(CoreError::Rendezvous("invalid server address".to_owned()));
+    }
+
+    Ok(())
+}
+
 /// Starts an asynchronous file/folder send session and returns a non-zero
 /// monotonic handle (`0` on internal registration failure).
 pub(crate) fn start_send_files(
@@ -315,6 +337,12 @@ pub(crate) fn start_send_files(
                 return;
             }
         };
+
+        if let Err(err) = validate_session_server_urls(&cfg) {
+            let localized = LocalizedTransferError::from_core_error(&err, &entry.localizer, true);
+            entry.finish_with(SessionEvent::from_localized_error(localized));
+            return;
+        }
 
         let prepared = match prepare_windows_send(&cfg, paths, &entry.cancel).await {
             Ok(p) => p,
@@ -385,6 +413,12 @@ pub(crate) fn start_send_text(
     TRANSFERS.spawn(&RUNTIME, async move {
         if u64::try_from(text.len()).unwrap_or(u64::MAX) > MAX_TEXT {
             let localized = LocalizedTransferError::text_too_long(&entry.localizer);
+            entry.finish_with(SessionEvent::from_localized_error(localized));
+            return;
+        }
+
+        if let Err(err) = validate_session_server_urls(&cfg) {
+            let localized = LocalizedTransferError::from_core_error(&err, &entry.localizer, true);
             entry.finish_with(SessionEvent::from_localized_error(localized));
             return;
         }
@@ -461,6 +495,12 @@ pub(crate) fn start_receive_connect(
     };
 
     TRANSFERS.spawn(&RUNTIME, async move {
+        if let Err(err) = validate_session_server_urls(&cfg) {
+            let localized = LocalizedTransferError::from_core_error(&err, &entry.localizer, false);
+            entry.finish_with(SessionEvent::from_localized_error(localized));
+            return;
+        }
+
         let offer = match connect_windows_receive(&cfg, &code_or_uri, &entry.cancel).await {
             Ok(o) => o,
             Err(err) => {
@@ -501,24 +541,34 @@ pub(crate) fn start_receive_connect(
             joined_words_ltr,
         };
 
-        let mut should_stop = None;
-        if let Ok(mut inner) = entry.state.lock() {
-            if inner.destroyed || inner.terminal || entry.cancel.is_cancelled() {
-                should_stop = Some(offer);
-            } else {
-                inner.pending_offer = Some(offer);
-                inner.events.push_back(offer_event);
-            }
-        } else {
-            should_stop = Some(offer);
-        }
-
-        if let Some(unwanted) = should_stop {
-            let _ = unwanted.stop().await;
-        }
+        commit_or_stop_offer(&entry, offer, offer_event).await;
     });
 
     sid
+}
+
+async fn commit_or_stop_offer(
+    entry: &SessionEntry,
+    offer: IncomingOffer,
+    offer_event: SessionEvent,
+) {
+    let mut should_stop = None;
+    if let Ok(mut inner) = entry.state.lock() {
+        if inner.destroyed || inner.terminal || entry.cancel.is_cancelled() {
+            should_stop = Some(offer);
+        } else {
+            inner.pending_offer = Some(offer);
+            inner.events.push_back(offer_event);
+        }
+    } else {
+        should_stop = Some(offer);
+    }
+
+    if let Some(unwanted) = should_stop {
+        let err = unwanted.stop().await;
+        let localized = LocalizedTransferError::from_core_error(&err, &entry.localizer, false);
+        entry.finish_with(SessionEvent::from_localized_error(localized));
+    }
 }
 
 /// Accepts a pending file/folder offer and writes verified files under
@@ -548,61 +598,71 @@ pub(crate) fn accept_receive_files(session_id: u64, dest_dir: String) -> i32 {
         return FFI_ERR_INVALID_STATE;
     };
 
-    TRANSFERS.spawn(&RUNTIME, async move {
-        let dest = PathBuf::from(&dest_dir);
-        if std::fs::symlink_metadata(&dest).is_err()
-            && let Err(io_err) = std::fs::create_dir_all(&dest)
-        {
+    TRANSFERS.spawn(&RUNTIME, run_accept_receive_files(entry, offer, dest_dir));
+
+    FFI_OK
+}
+
+async fn run_accept_receive_files(
+    entry: Arc<SessionEntry>,
+    offer: IncomingOffer,
+    dest_dir: String,
+) {
+    if entry.cancel.is_cancelled() || entry.is_destroyed() {
+        let err = offer.stop().await;
+        let localized = LocalizedTransferError::from_core_error(&err, &entry.localizer, false);
+        entry.finish_with(SessionEvent::from_localized_error(localized));
+        return;
+    }
+
+    let dest = PathBuf::from(&dest_dir);
+    if std::fs::symlink_metadata(&dest).is_err()
+        && let Err(io_err) = std::fs::create_dir_all(&dest)
+    {
+        let _ = offer.stop().await;
+        let core_err = CoreError::Io(io_err);
+        let localized = LocalizedTransferError::from_core_error(&core_err, &entry.localizer, false);
+        entry.finish_with(SessionEvent::from_localized_error(localized));
+        return;
+    }
+
+    let checked_dest = match check_windows_destination(&dest) {
+        Ok(canonical) => canonical,
+        Err(err) => {
             let _ = offer.stop().await;
-            let core_err = CoreError::Io(io_err);
-            let localized =
-                LocalizedTransferError::from_core_error(&core_err, &entry.localizer, false);
+            let localized = LocalizedTransferError::from_core_error(&err, &entry.localizer, false);
             entry.finish_with(SessionEvent::from_localized_error(localized));
             return;
         }
+    };
 
-        let checked_dest = match check_windows_destination(&dest) {
-            Ok(canonical) => canonical,
-            Err(err) => {
-                let _ = offer.stop().await;
-                let localized =
-                    LocalizedTransferError::from_core_error(&err, &entry.localizer, false);
-                entry.finish_with(SessionEvent::from_localized_error(localized));
-                return;
-            }
-        };
-
-        let events = entry.make_core_events();
-        let stop = entry.cancel.as_core_stop().clone();
-        match offer.accept_with(&checked_dest, events, &stop).await {
-            Ok(report) => {
-                let formatted_bytes = entry.localizer.format_bytes(report.bytes);
-                let placed = report
-                    .placed
-                    .iter()
-                    .map(|p| clean_display_path(p))
-                    .collect();
-                entry.finish_with(SessionEvent::Done {
-                    files_ok: report.files_ok,
-                    files_failed: report.files_failed,
-                    bytes: report.bytes,
-                    formatted_bytes,
-                    is_text: false,
-                    saved_to: Some(clean_display_path(&checked_dest)),
-                    placed,
-                    received_text: None,
-                    sanitized_text: None,
-                });
-            }
-            Err(err) => {
-                let localized =
-                    LocalizedTransferError::from_core_error(&err, &entry.localizer, false);
-                entry.finish_with(SessionEvent::from_localized_error(localized));
-            }
+    let events = entry.make_core_events();
+    let stop = entry.cancel.as_core_stop().clone();
+    match offer.accept_with(&checked_dest, events, &stop).await {
+        Ok(report) => {
+            let formatted_bytes = entry.localizer.format_bytes(report.bytes);
+            let placed = report
+                .placed
+                .iter()
+                .map(|p| clean_display_path(p))
+                .collect();
+            entry.finish_with(SessionEvent::Done {
+                files_ok: report.files_ok,
+                files_failed: report.files_failed,
+                bytes: report.bytes,
+                formatted_bytes,
+                is_text: false,
+                saved_to: Some(clean_display_path(&checked_dest)),
+                placed,
+                received_text: None,
+                sanitized_text: None,
+            });
         }
-    });
-
-    FFI_OK
+        Err(err) => {
+            let localized = LocalizedTransferError::from_core_error(&err, &entry.localizer, false);
+            entry.finish_with(SessionEvent::from_localized_error(localized));
+        }
+    }
 }
 
 /// Accepts a pending plain-text offer strictly in memory (zero disk writes),
@@ -840,4 +900,307 @@ pub(crate) fn shutdown_all(timeout_ms: u32) -> i32 {
     ));
 
     FFI_OK
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as StdError;
+    use std::sync::atomic::AtomicU32;
+
+    use futures_util::{SinkExt, StreamExt};
+    use tokio::net::TcpListener;
+    use tokio::sync::{Mutex as AsyncMutex, mpsc};
+    use tokio_tungstenite::tungstenite::Message;
+    use totaldrop_proto::wire::{ClientMessage, ServerMessage};
+
+    use super::*;
+
+    type TestResult = Result<(), Box<dyn StdError>>;
+
+    struct Slot {
+        mailbox_id: [u8; 16],
+        peers: Vec<mpsc::UnboundedSender<ServerMessage>>,
+        buffered: Vec<ServerMessage>,
+    }
+
+    async fn spawn_minimal_loopback_rendezvous()
+    -> Result<(String, tokio::task::AbortHandle), std::io::Error> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let local = listener.local_addr()?;
+        let url = format!("ws://{local}");
+        let next_np = Arc::new(AtomicU32::new(11));
+        let slots: Arc<AsyncMutex<HashMap<u32, Slot>>> = Arc::new(AsyncMutex::new(HashMap::new()));
+
+        let handle = tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let next_np = Arc::clone(&next_np);
+                let slots = Arc::clone(&slots);
+                tokio::spawn(async move {
+                    let Ok(mut ws) = tokio_tungstenite::accept_async(stream).await else {
+                        return;
+                    };
+                    let first = loop {
+                        match ws.next().await {
+                            Some(Ok(Message::Binary(b))) => {
+                                if let Ok(cmd) = ClientMessage::decode(&b) {
+                                    break cmd;
+                                }
+                                return;
+                            }
+                            Some(Ok(Message::Ping(p))) => {
+                                let _ = ws.send(Message::Pong(p)).await;
+                            }
+                            _ => return,
+                        }
+                    };
+                    match first {
+                        ClientMessage::Allocate => {
+                            let nameplate = next_np.fetch_add(1, Ordering::Relaxed);
+                            let token = [0x33u8; 16];
+                            let mailbox_id = [0x44u8; 16];
+                            slots.lock().await.insert(
+                                nameplate,
+                                Slot {
+                                    mailbox_id,
+                                    peers: Vec::new(),
+                                    buffered: Vec::new(),
+                                },
+                            );
+                            let reply = ServerMessage::Allocated { nameplate, token };
+                            let _ = ws.send(Message::Binary(reply.encode().into())).await;
+                            let _ = ws.close(None).await;
+                        }
+                        ClientMessage::Claim { nameplate, .. } => {
+                            let (tx, mut rx) = mpsc::unbounded_channel::<ServerMessage>();
+                            let (mailbox_id, peer_idx, replay) = {
+                                let mut map = slots.lock().await;
+                                let Some(slot) = map.get_mut(&nameplate) else {
+                                    return;
+                                };
+                                let idx = slot.peers.len();
+                                slot.peers.push(tx);
+                                let replay = if idx == 1 {
+                                    std::mem::take(&mut slot.buffered)
+                                } else {
+                                    Vec::new()
+                                };
+                                (slot.mailbox_id, idx, replay)
+                            };
+                            let claimed = ServerMessage::Claimed {
+                                mailbox: mailbox_id,
+                            };
+                            if ws
+                                .send(Message::Binary(claimed.encode().into()))
+                                .await
+                                .is_err()
+                            {
+                                return;
+                            }
+                            for msg in replay {
+                                if ws.send(Message::Binary(msg.encode().into())).await.is_err() {
+                                    return;
+                                }
+                            }
+                            loop {
+                                tokio::select! {
+                                    out = rx.recv() => {
+                                        let Some(msg) = out else { break; };
+                                        if ws.send(Message::Binary(msg.encode().into())).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                    inc = ws.next() => {
+                                        match inc {
+                                            Some(Ok(Message::Binary(b))) => {
+                                                let Ok(cmd) = ClientMessage::decode(&b) else { break; };
+                                                match cmd {
+                                                    ClientMessage::Add { phase, body } => {
+                                                        let fwd = ServerMessage::Message { phase, body };
+                                                        let mut map = slots.lock().await;
+                                                        if let Some(slot) = map.get_mut(&nameplate) {
+                                                            let other = 1usize.saturating_sub(peer_idx);
+                                                            if let Some(peer_tx) = slot.peers.get(other) {
+                                                                let _ = peer_tx.send(fwd);
+                                                            } else if peer_idx == 0 {
+                                                                slot.buffered.push(fwd);
+                                                            }
+                                                        }
+                                                    }
+                                                    ClientMessage::Close { mood } => {
+                                                        let map = slots.lock().await;
+                                                        if let Some(slot) = map.get(&nameplate) {
+                                                            let other = 1usize.saturating_sub(peer_idx);
+                                                            if let Some(peer_tx) = slot.peers.get(other) {
+                                                                let _ = peer_tx.send(ServerMessage::PeerClosed { mood });
+                                                            }
+                                                        }
+                                                        let _ = ws.close(None).await;
+                                                        break;
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+                                            Some(Ok(Message::Ping(p))) => {
+                                                let _ = ws.send(Message::Pong(p)).await;
+                                            }
+                                            _ => break,
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                });
+            }
+        });
+
+        Ok((url, handle.abort_handle()))
+    }
+
+    async fn connect_loopback_offer(
+        url: &str,
+        file_path: Option<PathBuf>,
+    ) -> Result<(IncomingOffer, tokio::task::JoinHandle<()>), Box<dyn StdError>> {
+        let cfg = BridgeNetworkConfig {
+            rendezvous_server: url.to_owned(),
+            relay_server: String::new(),
+            stun_server: String::new(),
+            privacy_relay_only: false,
+            stronger_three_word_code: false,
+        };
+        let send_cancel = WindowsCancellationToken::new();
+        let prepared = match file_path {
+            Some(path) => prepare_windows_send(&cfg, vec![path], &send_cancel).await?,
+            None => prepare_windows_text_send(&cfg, "race-test", TEXT_FILE, &send_cancel).await?,
+        };
+        let code = ValidatedCode::from_proto(prepared.code()).display_english;
+        let stop = send_cancel.as_core_stop().clone();
+        let sender_task = tokio::spawn(async move {
+            let noop_events: totaldrop_core::Events = Arc::new(|_| {});
+            let _ = prepared.run_with(noop_events, stop).await;
+        });
+
+        let recv_cancel = WindowsCancellationToken::new();
+        let offer = connect_windows_receive(&cfg, &code, &recv_cancel).await?;
+        Ok((offer, sender_task))
+    }
+
+    fn dummy_offer_event() -> SessionEvent {
+        SessionEvent::OfferReady {
+            files: 1,
+            dirs: 0,
+            total_bytes: 9,
+            formatted_total: "9 B".to_owned(),
+            is_text: true,
+            top_level: Vec::new(),
+            top_level_sanitized: Vec::new(),
+            more_count: 0,
+            verification_words: Vec::new(),
+            joined_words_ltr: String::new(),
+        }
+    }
+
+    #[test]
+    fn commit_or_stop_offer_emits_stopped_on_cancel_race_and_skips_when_destroyed() -> TestResult {
+        RUNTIME.block_on(async {
+            let (url, srv_abort) = spawn_minimal_loopback_rendezvous().await?;
+
+            // Case 1: `cancel_session` fires in the TOCTOU window after `connect_windows_receive`
+            // succeeded and before `commit_or_stop_offer` locks `entry.state`.
+            let (offer1, sender1) = connect_loopback_offer(&url, None).await?;
+            let entry = SessionEntry::new(WindowsLocalizer::new(["en-US"], Some("en-US")));
+            entry.cancel.cancel();
+
+            commit_or_stop_offer(&entry, offer1, dummy_offer_event()).await;
+            {
+                let inner = entry.state.lock().map_err(|_| "lock poisoned")?;
+                assert!(
+                    inner.terminal,
+                    "session must reach terminal state on cancel race"
+                );
+                assert!(inner.pending_offer.is_none());
+                assert_eq!(inner.events.len(), 1);
+                match inner.events.front() {
+                    Some(SessionEvent::Failed { kind, l10n_key, .. }) => {
+                        assert_eq!(kind, "stopped");
+                        assert_eq!(l10n_key, "errorStopped");
+                    }
+                    other => {
+                        return Err(format!("expected Failed(stopped), got {other:?}").into());
+                    }
+                }
+            }
+            sender1.abort();
+
+            // Case 2: session already destroyed -> `commit_or_stop_offer` stops the offer and
+            // does not enqueue events onto the destroyed entry.
+            let (offer2, sender2) = connect_loopback_offer(&url, None).await?;
+            let destroyed_entry =
+                SessionEntry::new(WindowsLocalizer::new(["en-US"], Some("en-US")));
+            {
+                let mut inner = destroyed_entry.state.lock().map_err(|_| "lock poisoned")?;
+                inner.destroyed = true;
+            }
+            commit_or_stop_offer(&destroyed_entry, offer2, dummy_offer_event()).await;
+            {
+                let inner = destroyed_entry.state.lock().map_err(|_| "lock poisoned")?;
+                assert!(inner.pending_offer.is_none());
+                assert!(inner.events.is_empty());
+            }
+            sender2.abort();
+            srv_abort.abort();
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn accept_receive_files_pre_start_cancel_skips_create_dir_all() -> TestResult {
+        RUNTIME.block_on(async {
+            let (url, srv_abort) = spawn_minimal_loopback_rendezvous().await?;
+            let base = std::env::temp_dir().join(format!(
+                "totaldrop-win-ffi-prestart-cancel-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&base);
+            std::fs::create_dir_all(&base)?;
+            let src = base.join("sample.txt");
+            std::fs::write(&src, b"hello prestart cancel")?;
+            let must_not_exist = base.join("never-create-me").join("nested");
+
+            let (offer, sender) = connect_loopback_offer(&url, Some(src)).await?;
+            let entry = SessionEntry::new(WindowsLocalizer::new(["en-US"], Some("en-US")));
+            entry.cancel.cancel();
+
+            run_accept_receive_files(
+                Arc::clone(&entry),
+                offer,
+                must_not_exist.to_string_lossy().into_owned(),
+            )
+            .await;
+
+            assert!(
+                !must_not_exist.exists(),
+                "pre-cancelled accept_receive_files must not create destination directory"
+            );
+            {
+                let inner = entry.state.lock().map_err(|_| "lock poisoned")?;
+                assert!(inner.terminal);
+                match inner.events.front() {
+                    Some(SessionEvent::Failed { kind, l10n_key, .. }) => {
+                        assert_eq!(kind, "stopped");
+                        assert_eq!(l10n_key, "errorStopped");
+                    }
+                    other => {
+                        return Err(format!("expected Failed(stopped), got {other:?}").into());
+                    }
+                }
+            }
+
+            sender.abort();
+            srv_abort.abort();
+            let _ = std::fs::remove_dir_all(&base);
+            Ok(())
+        })
+    }
 }

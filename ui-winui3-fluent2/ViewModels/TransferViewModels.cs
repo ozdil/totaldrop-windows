@@ -566,6 +566,8 @@ public sealed partial class SendViewModel : ObservableViewModel
 
     public Action<bool, bool>? BrandMarkStateChanged { get; set; }
 
+    public ulong ActiveSessionId { get; set; }
+
     public SendInputMode Mode
     {
         get => _mode;
@@ -1260,6 +1262,7 @@ public sealed partial class SendViewModel : ObservableViewModel
         ErrorCauseDetail = string.Empty;
         ErrorTechnicalEnglish = string.Empty;
         ShowErrorDetails = false;
+        ActiveSessionId = 0;
         StatusCaption = Strings.SendEmptyHint;
         Phase = SendPhase.Idle;
         NotifyModeAndActionProperties();
@@ -1338,6 +1341,8 @@ public sealed partial class ReceiveViewModel : ObservableViewModel
     public ObservableCollection<OfferFileItemModel> OfferFiles { get; } = [];
 
     public Action<bool, bool>? BrandMarkStateChanged { get; set; }
+
+    public ulong ActiveSessionId { get; set; }
 
     public ReceivePhase Phase
     {
@@ -1789,6 +1794,7 @@ public sealed partial class ReceiveViewModel : ObservableViewModel
         ErrorCauseDetail = string.Empty;
         ErrorTechnicalEnglish = string.Empty;
         ShowErrorDetails = false;
+        ActiveSessionId = 0;
         Phase = ReceivePhase.Idle;
     }
 

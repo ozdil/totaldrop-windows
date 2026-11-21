@@ -57,6 +57,9 @@ FORBIDDEN_CRT_DLLS: tuple[str, ...] = (
     "vcruntime140.dll",
     "vcruntime140_1.dll",
     "msvcp140.dll",
+    "concrt140.dll",
+    "vcomp140.dll",
+    "ucrtbased.dll",
 )
 
 

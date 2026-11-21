@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The TotalDrop Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+using System.Runtime.InteropServices;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -29,7 +30,6 @@ public sealed partial class ReceivePage : Page
 {
     private readonly UISettings _uiSettings = new();
     private DispatcherQueueTimer? _pollTimer;
-    private ulong _sessionId;
     private bool _koseAnimating;
     private ContentDialog? _activeCancelDialog;
 
@@ -49,6 +49,11 @@ public sealed partial class ReceivePage : Page
             ViewModel = vm;
             Bindings.Update();
             RefreshKoseAnimation();
+            if (ViewModel.ActiveSessionId != 0 && ViewModel.IsTransferRunning)
+            {
+                StartPolling();
+                PollSessionOnce();
+            }
         }
     }
 
@@ -56,19 +61,20 @@ public sealed partial class ReceivePage : Page
     {
         StopPolling();
         DismissActiveDialog();
-        if (_sessionId != 0)
+        ulong sid = ViewModel.ActiveSessionId;
+        if (sid != 0)
         {
             try
             {
-                _ = NativeBridge.SessionCancel(_sessionId);
-                _ = NativeBridge.SessionDestroy(_sessionId);
+                _ = NativeBridge.SessionCancel(sid);
+                _ = NativeBridge.SessionDestroy(sid);
             }
             catch (DllNotFoundException)
             {
                 // Design-time preview fallback.
             }
 
-            _sessionId = 0;
+            ViewModel.ActiveSessionId = 0;
         }
 
         RefreshKoseAnimation();
@@ -203,13 +209,23 @@ public sealed partial class ReceivePage : Page
 
     private async void OnPasteClick(object sender, RoutedEventArgs e)
     {
-        DataPackageView content = Clipboard.GetContent();
-        if (!content.Contains(StandardDataFormats.Text))
+        string pasted;
+        try
         {
+            DataPackageView content = Clipboard.GetContent();
+            if (!content.Contains(StandardDataFormats.Text))
+            {
+                return;
+            }
+
+            pasted = await content.GetTextAsync();
+        }
+        catch (COMException)
+        {
+            // Ignore transient Win32 clipboard lock (CLIPBRD_E_CANT_OPEN).
             return;
         }
 
-        string pasted = await content.GetTextAsync();
         try
         {
             if (NativeBridge.TryExtractClipboardCode(pasted, out ValidatedCodeDto? extracted, out _)
@@ -284,7 +300,7 @@ public sealed partial class ReceivePage : Page
                 return;
             }
 
-            _sessionId = sid;
+            ViewModel.ActiveSessionId = sid;
             StartPolling();
             RefreshKoseAnimation();
         }
@@ -317,7 +333,8 @@ public sealed partial class ReceivePage : Page
 
     private void OnAcceptClick(object sender, RoutedEventArgs e)
     {
-        if (_sessionId == 0 || ViewModel.Phase != ReceivePhase.Offer)
+        ulong sid = ViewModel.ActiveSessionId;
+        if (sid == 0 || ViewModel.Phase != ReceivePhase.Offer)
         {
             return;
         }
@@ -325,8 +342,8 @@ public sealed partial class ReceivePage : Page
         try
         {
             int status = ViewModel.IsTextOffer
-                ? NativeBridge.ReceiveAcceptText(_sessionId)
-                : NativeBridge.TryAcceptReceiveFiles(_sessionId, ViewModel.DestinationFolder);
+                ? NativeBridge.ReceiveAcceptText(sid)
+                : NativeBridge.TryAcceptReceiveFiles(sid, ViewModel.DestinationFolder);
             if (status == NativeBridge.FfiOk)
             {
                 ViewModel.BeginTransferring();
@@ -354,14 +371,15 @@ public sealed partial class ReceivePage : Page
 
     private void OnDeclineClick(object sender, RoutedEventArgs e)
     {
-        if (_sessionId == 0 || ViewModel.Phase != ReceivePhase.Offer)
+        ulong sid = ViewModel.ActiveSessionId;
+        if (sid == 0 || ViewModel.Phase != ReceivePhase.Offer)
         {
             return;
         }
 
         try
         {
-            _ = NativeBridge.ReceiveDecline(_sessionId);
+            _ = NativeBridge.ReceiveDecline(sid);
             StartPolling();
         }
         catch (DllNotFoundException)
@@ -372,7 +390,7 @@ public sealed partial class ReceivePage : Page
 
     private async void OnCancelReceiveClick(object sender, RoutedEventArgs e)
     {
-        if (_sessionId == 0 || !ViewModel.IsTransferRunning)
+        if (_activeCancelDialog is not null || ViewModel.ActiveSessionId == 0 || !ViewModel.IsTransferRunning)
         {
             return;
         }
@@ -434,10 +452,17 @@ public sealed partial class ReceivePage : Page
             return;
         }
 
-        DataPackage pkg = new();
-        pkg.SetText(ViewModel.RawReceivedText);
-        Clipboard.SetContent(pkg);
-        ViewModel.TextCopiedFeedbackVisible = true;
+        try
+        {
+            DataPackage pkg = new();
+            pkg.SetText(ViewModel.RawReceivedText);
+            Clipboard.SetContent(pkg);
+            ViewModel.TextCopiedFeedbackVisible = true;
+        }
+        catch (COMException)
+        {
+            // Ignore transient Win32 clipboard lock (CLIPBRD_E_CANT_OPEN).
+        }
     }
 
     private void OnToggleErrorDetailsClick(object sender, RoutedEventArgs e)
@@ -454,11 +479,12 @@ public sealed partial class ReceivePage : Page
 
     private void CancelActiveSession()
     {
-        if (_sessionId != 0)
+        ulong sid = ViewModel.ActiveSessionId;
+        if (sid != 0)
         {
             try
             {
-                _ = NativeBridge.SessionCancel(_sessionId);
+                _ = NativeBridge.SessionCancel(sid);
             }
             catch (DllNotFoundException)
             {
@@ -486,8 +512,14 @@ public sealed partial class ReceivePage : Page
 
     private void OnPollTimerTick(DispatcherQueueTimer sender, object args)
     {
+        PollSessionOnce();
+    }
+
+    private void PollSessionOnce()
+    {
         RefreshKoseAnimation();
-        if (_sessionId == 0)
+        ulong sid = ViewModel.ActiveSessionId;
+        if (sid == 0)
         {
             StopPolling();
             return;
@@ -495,7 +527,7 @@ public sealed partial class ReceivePage : Page
 
         try
         {
-            if (!NativeBridge.TryPollSessionEvents(_sessionId, out List<SessionEventDto> events, out _))
+            if (!NativeBridge.TryPollSessionEvents(sid, out List<SessionEventDto> events, out _))
             {
                 StopPolling();
                 return;
@@ -522,18 +554,19 @@ public sealed partial class ReceivePage : Page
     private void DestroyCurrentSession()
     {
         StopPolling();
-        if (_sessionId != 0)
+        ulong sid = ViewModel.ActiveSessionId;
+        if (sid != 0)
         {
             try
             {
-                _ = NativeBridge.SessionDestroy(_sessionId);
+                _ = NativeBridge.SessionDestroy(sid);
             }
             catch (DllNotFoundException)
             {
                 // Design-time preview fallback.
             }
 
-            _sessionId = 0;
+            ViewModel.ActiveSessionId = 0;
         }
     }
 

@@ -77,9 +77,9 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
         _accessibilitySettings.HighContrastChanged += OnHighContrastChanged;
         Activated += OnWindowActivated;
         RootShellGrid.ActualThemeChanged += (_, _) => UpdateTitleBarCaptionColors();
+        ShellNavigation.Loaded += OnShellNavigationLoaded;
 
-        ShellNavigation.SelectedItem = NavSendItem;
-        ContentFrame.Navigate(typeof(SendPage), SendVm);
+        NavigateToSend();
     }
 
     private void ConfigureCustomTitleBar()
@@ -146,11 +146,7 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
                     ? FlowDirection.RightToLeft
                     : FlowDirection.LeftToRight;
 
-                if (ShellNavigation.SettingsItem is NavigationViewItem settingsItem)
-                {
-                    settingsItem.Content = Strings.SettingsTitle;
-                    AutomationProperties.SetName(settingsItem, Strings.SettingsTitle);
-                }
+                ApplySettingsItemLocalization();
 
                 SendVm.RefreshLocalizedDefaults();
                 ReceiveVm.RefreshLocalizedDefaults();
@@ -163,6 +159,26 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
         catch (DllNotFoundException)
         {
             // Design-time XAML preview fallback before Rust DLL is staged.
+        }
+    }
+
+    private void OnShellNavigationLoaded(object sender, RoutedEventArgs e)
+    {
+        ApplySettingsItemLocalization();
+        if (ContentFrame.CurrentSourcePageType == typeof(SettingsPage)
+            && ShellNavigation.SettingsItem is not null)
+        {
+            ShellNavigation.SelectedItem = ShellNavigation.SettingsItem;
+        }
+    }
+
+    private void ApplySettingsItemLocalization()
+    {
+        if (ShellNavigation.SettingsItem is NavigationViewItem settingsItem
+            && !string.IsNullOrEmpty(Strings.SettingsTitle))
+        {
+            settingsItem.Content = Strings.SettingsTitle;
+            AutomationProperties.SetName(settingsItem, Strings.SettingsTitle);
         }
     }
 
@@ -207,7 +223,31 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
             receivePage.ShutdownSession();
         }
 
+        ShutdownSessionHandle(SendVm.ActiveSessionId);
+        SendVm.ActiveSessionId = 0;
+
+        ShutdownSessionHandle(ReceiveVm.ActiveSessionId);
+        ReceiveVm.ActiveSessionId = 0;
+
         UpdateBrandMarkState(isRunning: false, isDone: false);
+    }
+
+    private static void ShutdownSessionHandle(ulong sessionId)
+    {
+        if (sessionId == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            _ = NativeBridge.SessionCancel(sessionId);
+            _ = NativeBridge.SessionDestroy(sessionId);
+        }
+        catch (DllNotFoundException)
+        {
+            // Design-time preview fallback.
+        }
     }
 
     private void OnWindowActivated(object sender, WindowActivatedEventArgs args)
@@ -277,11 +317,43 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
         titleBar.ButtonPressedBackgroundColor = _uiSettings.GetColorValue(UIColorType.Accent);
     }
 
+    private void NavigateContentFrame(Type pageType, object parameter)
+    {
+        if (ContentFrame.CurrentSourcePageType != pageType)
+        {
+            ContentFrame.Navigate(pageType, parameter);
+        }
+    }
+
+    private void NavigateToSend()
+    {
+        _lastPrimaryTag = "send";
+        ShellNavigation.SelectedItem = NavSendItem;
+        NavigateContentFrame(typeof(SendPage), SendVm);
+    }
+
+    private void NavigateToReceive()
+    {
+        _lastPrimaryTag = "receive";
+        ShellNavigation.SelectedItem = NavReceiveItem;
+        NavigateContentFrame(typeof(ReceivePage), ReceiveVm);
+    }
+
+    private void NavigateToSettings()
+    {
+        if (ShellNavigation.SettingsItem is not null)
+        {
+            ShellNavigation.SelectedItem = ShellNavigation.SettingsItem;
+        }
+
+        NavigateContentFrame(typeof(SettingsPage), SettingsVm);
+    }
+
     private void OnNavigationSelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
         if (args.IsSettingsSelected)
         {
-            ContentFrame.Navigate(typeof(SettingsPage), SettingsVm);
+            NavigateContentFrame(typeof(SettingsPage), SettingsVm);
             return;
         }
 
@@ -291,10 +363,10 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
             switch (tag)
             {
                 case "send":
-                    ContentFrame.Navigate(typeof(SendPage), SendVm);
+                    NavigateContentFrame(typeof(SendPage), SendVm);
                     break;
                 case "receive":
-                    ContentFrame.Navigate(typeof(ReceivePage), ReceiveVm);
+                    NavigateContentFrame(typeof(ReceivePage), ReceiveVm);
                     break;
             }
         }
@@ -304,13 +376,11 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (_lastPrimaryTag == "receive")
         {
-            ShellNavigation.SelectedItem = NavReceiveItem;
-            ContentFrame.Navigate(typeof(ReceivePage), ReceiveVm);
+            NavigateToReceive();
         }
         else
         {
-            ShellNavigation.SelectedItem = NavSendItem;
-            ContentFrame.Navigate(typeof(SendPage), SendVm);
+            NavigateToSend();
         }
     }
 
@@ -322,16 +392,12 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
     public void EnqueueSendSelection(IEnumerable<string> rawPaths)
     {
         _ = SendVm.TryAddRawPaths(rawPaths);
-        _lastPrimaryTag = "send";
-        ShellNavigation.SelectedItem = NavSendItem;
-        ContentFrame.Navigate(typeof(SendPage), SendVm);
+        NavigateToSend();
     }
 
     public void NavigateToReceiveFromUri(string rawUri)
     {
-        _lastPrimaryTag = "receive";
-        ShellNavigation.SelectedItem = NavReceiveItem;
-        ContentFrame.Navigate(typeof(ReceivePage), ReceiveVm);
+        NavigateToReceive();
 
         try
         {
@@ -357,20 +423,23 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
 
     public void HandleSharedText(string sharedText)
     {
-        if (NativeBridge.TryValidateUri(sharedText.Trim(), out ValidatedCodeDto? validated, out _)
-            && validated is not null)
+        try
         {
-            _lastPrimaryTag = "receive";
-            ShellNavigation.SelectedItem = NavReceiveItem;
-            ContentFrame.Navigate(typeof(ReceivePage), ReceiveVm);
-            ReceiveVm.ApplyActivatedCode(validated.DisplayEnglish);
-            return;
+            if (NativeBridge.TryValidateUri(sharedText.Trim(), out ValidatedCodeDto? validated, out _)
+                && validated is not null)
+            {
+                NavigateToReceive();
+                ReceiveVm.ApplyActivatedCode(validated.DisplayEnglish);
+                return;
+            }
+        }
+        catch (DllNotFoundException)
+        {
+            // Design-time preview fallback.
         }
 
-        _lastPrimaryTag = "send";
         SendVm.ApplyPastedText(sharedText, fromClipboardShortcut: false);
-        ShellNavigation.SelectedItem = NavSendItem;
-        ContentFrame.Navigate(typeof(SendPage), SendVm);
+        NavigateToSend();
     }
 
     public void HandleLaunchArguments(string[] args)
@@ -391,16 +460,13 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
 
             if (arg == "--screen=receive")
             {
-                _lastPrimaryTag = "receive";
-                ShellNavigation.SelectedItem = NavReceiveItem;
-                ContentFrame.Navigate(typeof(ReceivePage), ReceiveVm);
+                NavigateToReceive();
                 return;
             }
 
             if (arg == "--screen=settings")
             {
-                ShellNavigation.SelectedItem = ShellNavigation.SettingsItem;
-                ContentFrame.Navigate(typeof(SettingsPage), SettingsVm);
+                NavigateToSettings();
                 return;
             }
         }
@@ -431,9 +497,7 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
                 break;
 
             case "protocol_uri" when envelope.Payload.Code is not null:
-                _lastPrimaryTag = "receive";
-                ShellNavigation.SelectedItem = NavReceiveItem;
-                ContentFrame.Navigate(typeof(ReceivePage), ReceiveVm);
+                NavigateToReceive();
                 ReceiveVm.ApplyActivatedCode(envelope.Payload.Code.DisplayEnglish);
                 break;
 
@@ -450,14 +514,11 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
                 break;
 
             case "open_screen" when envelope.Payload.Screen == "receive":
-                _lastPrimaryTag = "receive";
-                ShellNavigation.SelectedItem = NavReceiveItem;
-                ContentFrame.Navigate(typeof(ReceivePage), ReceiveVm);
+                NavigateToReceive();
                 break;
 
             case "open_screen" when envelope.Payload.Screen == "settings":
-                ShellNavigation.SelectedItem = ShellNavigation.SettingsItem;
-                ContentFrame.Navigate(typeof(SettingsPage), SettingsVm);
+                NavigateToSettings();
                 break;
         }
     }

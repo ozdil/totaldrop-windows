@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The TotalDrop Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+using System.Runtime.InteropServices;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -28,7 +29,6 @@ public sealed partial class SendPage : Page
 {
     private readonly UISettings _uiSettings = new();
     private DispatcherQueueTimer? _pollTimer;
-    private ulong _sessionId;
     private bool _koseAnimating;
     private ContentDialog? _activeCancelDialog;
 
@@ -48,6 +48,11 @@ public sealed partial class SendPage : Page
             ViewModel = vm;
             Bindings.Update();
             RefreshKoseAnimation();
+            if (ViewModel.ActiveSessionId != 0 && ViewModel.IsTransferRunning)
+            {
+                StartPolling();
+                PollSessionOnce();
+            }
         }
     }
 
@@ -55,19 +60,20 @@ public sealed partial class SendPage : Page
     {
         StopPolling();
         DismissActiveDialog();
-        if (_sessionId != 0)
+        ulong sid = ViewModel.ActiveSessionId;
+        if (sid != 0)
         {
             try
             {
-                _ = NativeBridge.SessionCancel(_sessionId);
-                _ = NativeBridge.SessionDestroy(_sessionId);
+                _ = NativeBridge.SessionCancel(sid);
+                _ = NativeBridge.SessionDestroy(sid);
             }
             catch (DllNotFoundException)
             {
                 // Design-time preview fallback.
             }
 
-            _sessionId = 0;
+            ViewModel.ActiveSessionId = 0;
         }
 
         RefreshKoseAnimation();
@@ -180,14 +186,22 @@ public sealed partial class SendPage : Page
 
     private async void OnPasteSendTextClick(object sender, RoutedEventArgs e)
     {
-        DataPackageView content = Clipboard.GetContent();
-        if (content.Contains(StandardDataFormats.Text))
+        try
         {
-            string pasted = await content.GetTextAsync();
-            ViewModel.ApplyPastedText(pasted, fromClipboardShortcut: false);
+            DataPackageView content = Clipboard.GetContent();
+            if (content.Contains(StandardDataFormats.Text))
+            {
+                string pasted = await content.GetTextAsync();
+                ViewModel.ApplyPastedText(pasted, fromClipboardShortcut: false);
+            }
+            else
+            {
+                ViewModel.TextClipboardNotice = ViewModel.Strings.SendClipboardEmpty;
+            }
         }
-        else
+        catch (COMException)
         {
+            // Ignore transient Win32 clipboard lock (CLIPBRD_E_CANT_OPEN).
             ViewModel.TextClipboardNotice = ViewModel.Strings.SendClipboardEmpty;
         }
     }
@@ -248,7 +262,7 @@ public sealed partial class SendPage : Page
                 return;
             }
 
-            _sessionId = sid;
+            ViewModel.ActiveSessionId = sid;
             StartPolling();
             RefreshKoseAnimation();
         }
@@ -269,10 +283,17 @@ public sealed partial class SendPage : Page
             return;
         }
 
-        DataPackage pkg = new();
-        pkg.SetText(ViewModel.TransferCode);
-        Clipboard.SetContent(pkg);
-        ViewModel.CopiedFeedbackVisible = true;
+        try
+        {
+            DataPackage pkg = new();
+            pkg.SetText(ViewModel.TransferCode);
+            Clipboard.SetContent(pkg);
+            ViewModel.CopiedFeedbackVisible = true;
+        }
+        catch (COMException)
+        {
+            // Ignore transient Win32 clipboard lock (CLIPBRD_E_CANT_OPEN).
+        }
     }
 
     private void OnShareCodeClick(object sender, RoutedEventArgs e)
@@ -285,15 +306,22 @@ public sealed partial class SendPage : Page
             return;
         }
 
-        DataPackage pkg = new();
-        pkg.SetText(sharePayload);
-        Clipboard.SetContent(pkg);
-        ViewModel.CopiedFeedbackVisible = true;
+        try
+        {
+            DataPackage pkg = new();
+            pkg.SetText(sharePayload);
+            Clipboard.SetContent(pkg);
+            ViewModel.CopiedFeedbackVisible = true;
+        }
+        catch (COMException)
+        {
+            // Ignore transient Win32 clipboard lock (CLIPBRD_E_CANT_OPEN).
+        }
     }
 
     private async void OnCancelSendClick(object sender, RoutedEventArgs e)
     {
-        if (!ViewModel.IsTransferRunning || _sessionId == 0)
+        if (_activeCancelDialog is not null || !ViewModel.IsTransferRunning || ViewModel.ActiveSessionId == 0)
         {
             return;
         }
@@ -352,11 +380,12 @@ public sealed partial class SendPage : Page
 
     private void CancelActiveSession()
     {
-        if (_sessionId != 0)
+        ulong sid = ViewModel.ActiveSessionId;
+        if (sid != 0)
         {
             try
             {
-                _ = NativeBridge.SessionCancel(_sessionId);
+                _ = NativeBridge.SessionCancel(sid);
             }
             catch (DllNotFoundException)
             {
@@ -384,8 +413,14 @@ public sealed partial class SendPage : Page
 
     private void OnPollTimerTick(DispatcherQueueTimer sender, object args)
     {
+        PollSessionOnce();
+    }
+
+    private void PollSessionOnce()
+    {
         RefreshKoseAnimation();
-        if (_sessionId == 0)
+        ulong sid = ViewModel.ActiveSessionId;
+        if (sid == 0)
         {
             StopPolling();
             return;
@@ -393,7 +428,7 @@ public sealed partial class SendPage : Page
 
         try
         {
-            if (!NativeBridge.TryPollSessionEvents(_sessionId, out List<SessionEventDto> events, out _))
+            if (!NativeBridge.TryPollSessionEvents(sid, out List<SessionEventDto> events, out _))
             {
                 StopPolling();
                 return;
@@ -420,18 +455,19 @@ public sealed partial class SendPage : Page
     private void DestroyCurrentSession()
     {
         StopPolling();
-        if (_sessionId != 0)
+        ulong sid = ViewModel.ActiveSessionId;
+        if (sid != 0)
         {
             try
             {
-                _ = NativeBridge.SessionDestroy(_sessionId);
+                _ = NativeBridge.SessionDestroy(sid);
             }
             catch (DllNotFoundException)
             {
                 // Design-time preview fallback.
             }
 
-            _sessionId = 0;
+            ViewModel.ActiveSessionId = 0;
         }
     }
 

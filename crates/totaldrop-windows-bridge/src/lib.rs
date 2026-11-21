@@ -235,6 +235,21 @@ mod tests {
                 "path must be rejected: {forbidden:?}"
             );
         }
+
+        // Case-insensitive verbatim device namespaces must return exact DeviceNamespaceForbidden.
+        for device_path in [
+            r"\\?\globalroot\Device\Harddisk0",
+            r"\\?\GlobalRoot\Device\Harddisk0",
+            r"\\?\volume{01234567-89ab-cdef-0123-456789abcdef}\secret.txt",
+            r"\\?\PIPE\app.totaldrop.TotalDrop",
+            r"\\?\pipe\foo",
+        ] {
+            assert_eq!(
+                WindowsSelectionPath::parse(device_path),
+                Err(ActivationError::DeviceNamespaceForbidden),
+                "expected DeviceNamespaceForbidden for {device_path:?}"
+            );
+        }
     }
 
     #[test]
@@ -598,9 +613,12 @@ mod tests {
         for valid in [
             "wss://rendezvous.totaldrop.app",
             "  wss://relay.example.org/v0/relay  ",
+            "wss://relay.example.org:443/v0/relay",
+            "wss://[2001:db8::1]:8443/v0/relay",
             "ws://127.0.0.1:4000",
             "ws://localhost:4000",
             "ws://[::1]:4000",
+            "ws://[::1]",
         ] {
             assert!(
                 BridgeNetworkConfig::is_valid_rendezvous_url(valid),
@@ -622,6 +640,23 @@ mod tests {
             "ws://192.168.1.10:4000",
             "ws://127.0.0.1.evil.com:4000",
             "ws://0.0.0.0:4000",
+            // Authority, IPv6, port, and RFC 6455 fragment bypass vectors:
+            "wss://:443",
+            "wss://:",
+            "wss://:0",
+            "wss://:443/v0/allocate",
+            "wss://[]:443",
+            "wss://[::1]garbage",
+            "wss://example.invalid:",
+            "wss://example.invalid:99999",
+            "wss://example.invalid:abc",
+            "wss://example.invalid:0",
+            "wss://example.invalid#frag",
+            "ws://127.0.0.1:99999",
+            "ws://127.0.0.1:abc",
+            "ws://localhost:99999",
+            "ws://localhost:abc",
+            "ws://localhost#frag",
         ] {
             assert!(
                 !BridgeNetworkConfig::is_valid_rendezvous_url(invalid),
