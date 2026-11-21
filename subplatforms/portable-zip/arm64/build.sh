@@ -16,8 +16,8 @@ if [ "${1:-}" = "--check-recipe" ]; then
   [ -f "$RECIPE" ] || { echo "missing $RECIPE" >&2; exit 1; }
   [ -e "$DELEGATE" ] || { echo "missing upstream delegate $DELEGATE" >&2; exit 1; }
   grep -q 'unit_id = "windows-portable-zip-arm64"' "$RECIPE"
-  grep -q 'artifact_name = "TotalDrop-0.3.0-beta.6-portable-arm64.zip"' "$RECIPE"
-  echo "recipe check ok: windows-portable-zip-arm64 -> TotalDrop-0.3.0-beta.6-portable-arm64.zip"
+  grep -q 'artifact_name = "TotalDrop-0.1.0-beta.1-portable-arm64.zip"' "$RECIPE"
+  echo "recipe check ok: windows-portable-zip-arm64 -> TotalDrop-0.1.0-beta.1-portable-arm64.zip"
   exit 0
 fi
 
@@ -29,9 +29,9 @@ if [ "${1:-}" = "--package-staged" ]; then
   trap 'rm -rf "$stage_root"' EXIT
   cp -R "$STAGE_IN/." "$stage_root/" 2>/dev/null || true
   printf 'unit=%s\narch=%s\nformat=%s\ntarget=%s\n' "windows-portable-zip-arm64" "arm64" "portable-zip" "aarch64-pc-windows-msvc" >"$stage_root/BUILD_METADATA.txt"
-  tar --sort=name --mtime="@${SOURCE_DATE_EPOCH:-1760000000}" --owner=0 --group=0 --numeric-owner -cf - -C "$stage_root" . | gzip -n >"$OUT_DIR/TotalDrop-0.3.0-beta.6-portable-arm64.zip"
-  (cd "$OUT_DIR" && sha256sum "TotalDrop-0.3.0-beta.6-portable-arm64.zip" >SHA256SUMS)
-  echo "packaged windows-portable-zip-arm64 -> $OUT_DIR/TotalDrop-0.3.0-beta.6-portable-arm64.zip"
+  tar --sort=name --mtime="@${SOURCE_DATE_EPOCH:-1760000000}" --owner=0 --group=0 --numeric-owner -cf - -C "$stage_root" . | gzip -n >"$OUT_DIR/TotalDrop-0.1.0-beta.1-portable-arm64.zip"
+  (cd "$OUT_DIR" && sha256sum "TotalDrop-0.1.0-beta.1-portable-arm64.zip" >SHA256SUMS)
+  echo "packaged windows-portable-zip-arm64 -> $OUT_DIR/TotalDrop-0.1.0-beta.1-portable-arm64.zip"
   exit 0
 fi
 

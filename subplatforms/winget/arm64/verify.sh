@@ -22,8 +22,8 @@ if [ "${1:-}" = "--check-recipe" ]; then
 fi
 
 ART_DIR="${1:?usage: verify.sh [--check-recipe | <artifact-dir>]}"
-[ -f "$ART_DIR/TotalDrop-0.3.0-beta.6-winget-arm64.zip" ] || { echo "missing artifact $ART_DIR/TotalDrop-0.3.0-beta.6-winget-arm64.zip" >&2; exit 1; }
-[ -s "$ART_DIR/TotalDrop-0.3.0-beta.6-winget-arm64.zip" ] || { echo "empty artifact $ART_DIR/TotalDrop-0.3.0-beta.6-winget-arm64.zip" >&2; exit 1; }
+[ -f "$ART_DIR/TotalDrop-0.1.0-beta.1-winget-arm64.zip" ] || { echo "missing artifact $ART_DIR/TotalDrop-0.1.0-beta.1-winget-arm64.zip" >&2; exit 1; }
+[ -s "$ART_DIR/TotalDrop-0.1.0-beta.1-winget-arm64.zip" ] || { echo "empty artifact $ART_DIR/TotalDrop-0.1.0-beta.1-winget-arm64.zip" >&2; exit 1; }
 [ -f "$ART_DIR/SHA256SUMS" ] || { echo "missing $ART_DIR/SHA256SUMS" >&2; exit 1; }
 (cd "$ART_DIR" && sha256sum -c SHA256SUMS)
-echo "artifact verified: $ART_DIR/TotalDrop-0.3.0-beta.6-winget-arm64.zip"
+echo "artifact verified: $ART_DIR/TotalDrop-0.1.0-beta.1-winget-arm64.zip"
