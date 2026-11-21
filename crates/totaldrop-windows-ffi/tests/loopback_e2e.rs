@@ -1309,6 +1309,10 @@ fn loopback_error_taxonomy_wrong_code_nameplate_bad_server_and_destinations() ->
         let mut sb_evs = Vec::new();
         let bad_fail = wait_for_event(s_bad, &mut sb_evs, "failed", Duration::from_secs(5))?;
         assert_eq!(
+            bad_fail.get("kind").and_then(Value::as_str),
+            Some("bad_server")
+        );
+        assert_eq!(
             bad_fail.get("l10n_key").and_then(Value::as_str),
             Some("errorBadServer")
         );
@@ -1321,6 +1325,91 @@ fn loopback_error_taxonomy_wrong_code_nameplate_bad_server_and_destinations() ->
         );
         let _ = totaldrop_win_session_destroy(s_bad);
     }
+
+    // 5b. All 14 malformed authority/port/fragment URL bypass vectors fail OFFLINE (zero DNS/sockets)
+    // with exact kind="bad_server" and l10n_key="errorBadServer".
+    const MALFORMED_BYPASS_URLS: [&str; 14] = [
+        "wss://:443",
+        "wss://:",
+        "wss://:0",
+        "wss://:443/v0/allocate",
+        "wss://[]:443",
+        "wss://example.invalid:99999",
+        "wss://example.invalid:abc",
+        "wss://example.invalid:0",
+        "wss://example.invalid#frag",
+        "ws://127.0.0.1:99999",
+        "ws://127.0.0.1:abc",
+        "ws://localhost:99999",
+        "ws://localhost:abc",
+        "ws://localhost#frag",
+    ];
+    for malformed in MALFORMED_BYPASS_URLS {
+        let bad_cfg = c_str(&make_cfg_json(malformed, "", false))?;
+        // SAFETY: Live CStrings.
+        let s_bad = unsafe {
+            totaldrop_win_send_text_start(bad_cfg.as_ptr(), txt.as_ptr(), en.as_ptr(), en.as_ptr())
+        };
+        let mut sb_evs = Vec::new();
+        let bad_fail = wait_for_event(s_bad, &mut sb_evs, "failed", Duration::from_secs(2))?;
+        assert_eq!(
+            bad_fail.get("kind").and_then(Value::as_str),
+            Some("bad_server"),
+            "expected bad_server for {malformed:?}: {bad_fail}"
+        );
+        assert_eq!(
+            bad_fail.get("l10n_key").and_then(Value::as_str),
+            Some("errorBadServer"),
+            "expected errorBadServer for {malformed:?}: {bad_fail}"
+        );
+        let _ = totaldrop_win_session_destroy(s_bad);
+    }
+
+    // Also verify malformed rendezvous/relay URLs fail offline on send_files_start & receive_connect_start.
+    let bad_relay_cfg = c_str(&make_cfg_json(&srv.url, "wss://:443/v0/relay", true))?;
+    // SAFETY: Live CStrings.
+    let r_bad_relay = unsafe {
+        totaldrop_win_receive_connect_start(
+            bad_relay_cfg.as_ptr(),
+            missing_c.as_ptr(),
+            en.as_ptr(),
+            en.as_ptr(),
+        )
+    };
+    let mut rbr_evs = Vec::new();
+    let rbr_fail = wait_for_event(r_bad_relay, &mut rbr_evs, "failed", Duration::from_secs(2))?;
+    assert_eq!(
+        rbr_fail.get("kind").and_then(Value::as_str),
+        Some("bad_server")
+    );
+    assert_eq!(
+        rbr_fail.get("l10n_key").and_then(Value::as_str),
+        Some("errorBadServer")
+    );
+    let _ = totaldrop_win_session_destroy(r_bad_relay);
+
+    let bad_rdv_cfg = c_str(&make_cfg_json("wss://example.invalid:99999", "", false))?;
+    let dummy_file_paths = c_str(r#"["/nonexistent/path/must-fail-before-disk-scan.bin"]"#)?;
+    // SAFETY: Live CStrings.
+    let sf_bad = unsafe {
+        totaldrop_win_send_files_start(
+            bad_rdv_cfg.as_ptr(),
+            dummy_file_paths.as_ptr(),
+            en.as_ptr(),
+            en.as_ptr(),
+        )
+    };
+    let mut sfb_evs = Vec::new();
+    let sfb_fail = wait_for_event(sf_bad, &mut sfb_evs, "failed", Duration::from_secs(2))?;
+    assert_eq!(
+        sfb_fail.get("kind").and_then(Value::as_str),
+        Some("bad_server")
+    );
+    assert_eq!(
+        sfb_fail.get("l10n_key").and_then(Value::as_str),
+        Some("errorBadServer")
+    );
+    let _ = totaldrop_win_session_destroy(sf_bad);
 
     // 6. Regular file destination -> errorStorage + cause == "" + "is not a directory".
     let tmp = TempDirGuard::new("bad-dest")?;

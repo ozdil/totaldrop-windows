@@ -296,12 +296,12 @@ impl WindowsSelectionPath {
             if let Some(unc_rest) = body.strip_prefix(r"UNC\") {
                 build_unc_paths(unc_rest)?
             } else {
-                build_drive_paths(&body)?
+                build_drive_paths(&body, true)?
             }
         } else if let Some(unc_rest) = body.strip_prefix(r"\\") {
             build_unc_paths(unc_rest)?
         } else {
-            build_drive_paths(&body)?
+            build_drive_paths(&body, false)?
         };
 
         let utf16_units = extended.encode_utf16().count();
@@ -495,9 +495,12 @@ fn validate_segment(segment: &str) -> Result<(), ActivationError> {
     Ok(())
 }
 
-fn build_drive_paths(body: &str) -> Result<(WindowsRootKind, String, String), ActivationError> {
-    // Reject non-drive verbatim targets such as `\\?\GLOBALROOT\…` or
-    // `\\?\Volume{guid}\…`.
+fn build_drive_paths(
+    body: &str,
+    is_verbatim: bool,
+) -> Result<(WindowsRootKind, String, String), ActivationError> {
+    // Reject non-drive verbatim targets such as `\\?\GLOBALROOT\…`,
+    // `\\?\Volume{guid}\…`, or `\\?\PIPE\…`.
     let mut chars = body.chars();
     let Some(drive_letter) = chars.next() else {
         return Err(ActivationError::EmptyPath);
@@ -506,8 +509,12 @@ fn build_drive_paths(body: &str) -> Result<(WindowsRootKind, String, String), Ac
         return Err(ActivationError::NotAbsoluteWindowsPath);
     }
     if chars.next() != Some(':') {
-        // E.g. `GLOBALROOT\…` or `Volume{…}` inside `\\?\` or relative word.
-        if body.starts_with("GLOBALROOT") || body.starts_with("Volume{") {
+        // E.g. `GLOBALROOT\…`, `Volume{…}`, or `PIPE\…` inside `\\?\` (case-insensitive).
+        let upper = body.to_ascii_uppercase();
+        if upper.starts_with("GLOBALROOT")
+            || upper.starts_with("VOLUME{")
+            || (is_verbatim && (upper.starts_with(r"PIPE\") || upper == "PIPE"))
+        {
             return Err(ActivationError::DeviceNamespaceForbidden);
         }
         return Err(ActivationError::NotAbsoluteWindowsPath);

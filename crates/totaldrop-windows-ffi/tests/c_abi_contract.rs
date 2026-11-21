@@ -632,6 +632,20 @@ fn sanitize_helpers_server_url_and_windows_path_validation() -> TestResult {
         "ws://127.0.0.1.evil.com:4000",
         "http://127.0.0.1:4000",
         "wss://host /bad",
+        "wss://:443",
+        "wss://:",
+        "wss://:0",
+        "wss://:443/v0/allocate",
+        "wss://[]:443",
+        "wss://example.invalid:99999",
+        "wss://example.invalid:abc",
+        "wss://example.invalid:0",
+        "wss://example.invalid#frag",
+        "ws://127.0.0.1:99999",
+        "ws://127.0.0.1:abc",
+        "ws://localhost:99999",
+        "ws://localhost:abc",
+        "ws://localhost#frag",
     ] {
         let u = c_str(bad_url)?;
         // SAFETY: `u` is a live NUL-terminated CString.
@@ -682,6 +696,15 @@ fn sanitize_helpers_server_url_and_windows_path_validation() -> TestResult {
             "forbidden_segment_character",
         ),
         (r#"["\\\\.\\PhysicalDrive0"]"#, "device_namespace_forbidden"),
+        (
+            r#"["\\\\?\\globalroot\\Device\\Harddisk0"]"#,
+            "device_namespace_forbidden",
+        ),
+        (
+            r#"["\\\\?\\volume{01234567-89ab-cdef-0123-456789abcdef}\\a.txt"]"#,
+            "device_namespace_forbidden",
+        ),
+        (r#"["\\\\?\\PIPE\\foo"]"#, "device_namespace_forbidden"),
         (
             r#"["C:\\Users\\Alice\\..\\Bob\\a.txt"]"#,
             "dot_traversal_segment",
