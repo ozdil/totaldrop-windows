@@ -68,22 +68,24 @@ impl Default for BridgeNetworkConfig {
 }
 
 impl BridgeNetworkConfig {
-    /// Checks that user-configured rendezvous and relay URLs start with
-    /// `wss://` (or `ws://127.0.0.1` / `ws://[::1]` for local loopback testing).
+    /// Checks that user-configured rendezvous and relay URLs are accepted by
+    /// [`totaldrop_core::relay::check_url`] (`wss://` with a non-empty host, or
+    /// `ws://` strictly on localhost / `127.0.0.1` / `[::1]`, rejecting control
+    /// characters and `@` userinfo).
     #[must_use]
     pub fn is_valid_rendezvous_url(url: &str) -> bool {
+        if url.chars().any(char::is_control) {
+            return false;
+        }
         let trimmed = url.trim();
-        trimmed.starts_with("wss://")
-            || trimmed.starts_with("ws://127.0.0.1:")
-            || trimmed.starts_with("ws://[::1]:")
-            || trimmed.starts_with("ws://localhost:")
+        !trimmed.is_empty() && totaldrop_core::relay::check_url(trimmed).is_ok()
     }
 
     /// Converts this configuration into [`totaldrop_core::SendOptions`].
     #[must_use]
     pub fn to_send_options(&self) -> SendOptions {
         SendOptions {
-            server: self.rendezvous_server.clone(),
+            server: self.rendezvous_server.trim().to_owned(),
             words: if self.stronger_three_word_code { 3 } else { 2 },
             paths: self.to_path_options(),
         }
@@ -93,7 +95,7 @@ impl BridgeNetworkConfig {
     #[must_use]
     pub fn to_receive_options(&self) -> ReceiveOptions {
         ReceiveOptions {
-            server: self.rendezvous_server.clone(),
+            server: self.rendezvous_server.trim().to_owned(),
             paths: self.to_path_options(),
         }
     }
@@ -102,8 +104,8 @@ impl BridgeNetworkConfig {
     #[must_use]
     pub fn to_path_options(&self) -> PathOptions {
         PathOptions {
-            relay: self.relay_server.clone(),
-            stun: self.stun_server.clone(),
+            relay: self.relay_server.trim().to_owned(),
+            stun: self.stun_server.trim().to_owned(),
             relay_only: self.privacy_relay_only,
             gateway: totaldrop_core::portmap::Gateway::Auto,
         }
@@ -174,6 +176,15 @@ impl TransferViewEvent {
 /// technical detail in English for bug reports (`technicalDetail`, ADR 0019).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalizedTransferError {
+    /// Stable snake_case error category (`"wrong_code"`, `"bad_server"`, ...).
+    #[serde(default)]
+    pub kind: String,
+    /// Canonical `l10n/app` ARB key (`"errorWrongCode"`, `"errorBadServer"`, ...).
+    #[serde(default)]
+    pub l10n_key: String,
+    /// Canonical `cause*` key (`"causeTimedOut"`, ...) or `""` when unknown.
+    #[serde(default)]
+    pub cause: String,
     /// Primary localized message shown to the user.
     pub summary: String,
     /// Optional localized plain-language explanation (`causeTimedOut`, …).
@@ -185,33 +196,89 @@ pub struct LocalizedTransferError {
 impl LocalizedTransferError {
     /// Maps a [`totaldrop_core::Error`] and its [`Cause`] into localized user
     /// text while preserving `err.to_string()` in English.
+    ///
+    /// `is_sender` distinguishes expired sender codes (`errorCodeExpired`) from
+    /// receiver lookups of codes not in use (`errorCodeNotInUse`), matching
+    /// Linux and Android parity.
     #[must_use]
-    pub fn from_core_error(err: &CoreError, localizer: &WindowsLocalizer) -> Self {
-        let primary_key = match err {
-            CoreError::WrongCode => "errorWrongCode",
-            CoreError::PeerLeft => "errorPeerLeft",
-            CoreError::Rendezvous(_) => "errorServer",
-            CoreError::Connect(_) => "errorConnect",
-            CoreError::Protocol(_) => "errorOther",
-            CoreError::InvalidOffer(_) => "errorInvalidOffer",
-            CoreError::Rejected(_) => "errorDeclined",
-            CoreError::Cancelled(_) => "errorCancelled",
-            CoreError::Stopped => "errorStopped",
-            CoreError::Io(_) => "errorStorage",
-            CoreError::Code(_) => "errorInvalidCode",
-            CoreError::Random => "errorOther",
-        };
-        let cause = err.cause();
-        let cause_detail = if cause == Cause::Unknown {
-            None
+    pub fn from_core_error(err: &CoreError, localizer: &WindowsLocalizer, is_sender: bool) -> Self {
+        let (kind, primary_key) = if err.is_bad_server_address() {
+            ("bad_server", "errorBadServer")
+        } else if err.is_code_not_in_use() {
+            if is_sender {
+                ("code_expired", "errorCodeExpired")
+            } else {
+                ("code_not_in_use", "errorCodeNotInUse")
+            }
         } else {
-            let cause_key = format!("cause{}", cause.as_str());
-            Some(localizer.text(&cause_key))
+            match err {
+                CoreError::WrongCode => ("wrong_code", "errorWrongCode"),
+                CoreError::PeerLeft => ("peer_left", "errorPeerLeft"),
+                CoreError::Rendezvous(_) => ("server", "errorServer"),
+                CoreError::Connect(_) => ("connect", "errorConnect"),
+                CoreError::Protocol(_) => ("protocol", "errorOther"),
+                CoreError::InvalidOffer(_) => ("invalid_offer", "errorInvalidOffer"),
+                CoreError::Rejected(_) => ("declined", "errorDeclined"),
+                CoreError::Cancelled(_) => ("cancelled", "errorCancelled"),
+                CoreError::Stopped => ("stopped", "errorStopped"),
+                CoreError::Io(_) => ("storage", "errorStorage"),
+                CoreError::Code(_) => ("invalid_code", "errorInvalidCode"),
+                CoreError::Random => ("internal", "errorOther"),
+            }
+        };
+        let core_cause = err.cause();
+        let (cause, cause_detail) = if core_cause == Cause::Unknown {
+            (String::new(), None)
+        } else {
+            let cause_key = format!("cause{}", core_cause.as_str());
+            let detail = localizer.text(&cause_key);
+            (cause_key, Some(detail))
         };
         Self {
+            kind: kind.to_owned(),
+            l10n_key: primary_key.to_owned(),
+            cause,
             summary: localizer.text(primary_key),
             cause_detail,
             technical_english: err.to_string(),
+        }
+    }
+
+    /// Creates a localized `TextDamaged` error when a plain-text transfer fails
+    /// its integrity check or UTF-8 validation (`errorTextDamaged`).
+    #[must_use]
+    pub fn text_damaged(localizer: &WindowsLocalizer) -> Self {
+        Self {
+            kind: "text_damaged".to_owned(),
+            l10n_key: "errorTextDamaged".to_owned(),
+            cause: String::new(),
+            summary: localizer.text("errorTextDamaged"),
+            cause_detail: None,
+            technical_english: "the text failed its check".to_owned(),
+        }
+    }
+
+    /// Creates a localized `TextTooLong` error when outgoing text exceeds
+    /// [`totaldrop_core::MAX_TEXT`] (`1_048_576` UTF-8 bytes, `sendTextTooLong`).
+    #[must_use]
+    pub fn text_too_long(localizer: &WindowsLocalizer) -> Self {
+        let limit_str = localizer.format_bytes(totaldrop_core::MAX_TEXT);
+        let summary = localizer
+            .format_message(
+                "sendTextTooLong",
+                &[("size", totaldrop_l10n::Arg::Text(&limit_str))],
+            )
+            .unwrap_or_else(|| localizer.text("sendTextTooLong"));
+        Self {
+            kind: "text_too_long".to_owned(),
+            l10n_key: "sendTextTooLong".to_owned(),
+            cause: String::new(),
+            summary,
+            cause_detail: None,
+            technical_english: format!(
+                "the text is longer than {} bytes; send it as a file",
+                totaldrop_core::MAX_TEXT
+            ),
         }
     }
 }
@@ -399,4 +466,15 @@ pub async fn connect_windows_receive(
         () = cancel.wait_cancelled() => Err(CoreError::Stopped),
         res = IncomingOffer::connect_with(&opts, &validated.display_english, cancel.as_core_stop()) => res,
     }
+}
+
+/// Verifies that `dest` exists, is a directory (not a regular file), and is
+/// writable by delegating to [`totaldrop_core::check_destination`].
+///
+/// # Errors
+///
+/// Returns [`totaldrop_core::Error::Io`] if `dest` does not exist, is not a
+/// directory, or cannot be written to.
+pub fn check_windows_destination(dest: &Path) -> totaldrop_core::Result<PathBuf> {
+    totaldrop_core::check_destination(dest)
 }

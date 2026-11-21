@@ -388,6 +388,70 @@ impl AsRef<std::path::Path> for WindowsSelectionPath {
     }
 }
 
+/// Normalized Windows path projection returned over C ABI JSON for WinUI 3
+/// file/folder selection and display.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NormalizedWindowsPath {
+    /// Extended-length verbatim Win32 path (`\\?\C:\…` or `\\?\UNC\…`).
+    pub extended_path: String,
+    /// Unprefixed Win32 path (`C:\…` or `\\server\share\…`).
+    pub unprefixed_path: String,
+    /// Unprefixed display path with hidden control/bidi characters revealed as
+    /// `<U+XXXX>`.
+    pub safe_display_path: String,
+    /// Root classification (`drive` or `unc`).
+    pub root_kind: WindowsRootKind,
+    /// UTF-16 code-unit length of `extended_path`.
+    pub utf16_len: usize,
+    /// Whether `unprefixed_path` meets or exceeds the legacy `248`-unit
+    /// `MAX_PATH` threshold.
+    pub exceeds_legacy_max_path: bool,
+}
+
+impl From<&WindowsSelectionPath> for NormalizedWindowsPath {
+    fn from(path: &WindowsSelectionPath) -> Self {
+        Self {
+            extended_path: path.extended_path().to_owned(),
+            unprefixed_path: path.unprefixed_path().to_owned(),
+            safe_display_path: path.safe_display_path(),
+            root_kind: path.root_kind(),
+            utf16_len: path.utf16_len(),
+            exceeds_legacy_max_path: path.exceeds_legacy_max_path(),
+        }
+    }
+}
+
+/// Validates and normalizes an iterator of raw Windows paths via
+/// [`WindowsSelectionPath::parse`], deduplicating case-insensitively while
+/// preserving first-seen order and enforcing [`MAX_SELECTION_ITEMS`].
+///
+/// # Errors
+///
+/// Returns [`ActivationError`] if more than [`MAX_SELECTION_ITEMS`] paths are
+/// provided or if any path fails Windows path security checks.
+pub fn validate_windows_paths<I, S>(
+    raw_paths: I,
+) -> Result<Vec<NormalizedWindowsPath>, ActivationError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::new();
+    for (idx, raw) in raw_paths.into_iter().enumerate() {
+        if idx >= MAX_SELECTION_ITEMS {
+            return Err(ActivationError::TooManyItems {
+                count: idx.saturating_add(1),
+            });
+        }
+        let parsed = WindowsSelectionPath::parse(raw.as_ref())?;
+        if seen.insert(parsed.deduplication_key()) {
+            normalized.push(NormalizedWindowsPath::from(&parsed));
+        }
+    }
+    Ok(normalized)
+}
+
 fn is_disallowed_control(c: char) -> bool {
     let code = u32::from(c);
     code <= 0x1F || (0x7F..=0x9F).contains(&code)
