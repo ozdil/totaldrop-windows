@@ -225,10 +225,19 @@ def _check_manifest_extensions(rel: str, root: ET.Element, errors: list[str]) ->
                 )
             else:
                 com_server = child_com_servers[0]
-                if len(list(com_server)) != 2:
+                com_children = list(com_server)
+                if len(com_children) != 2:
                     errors.append(
                         f"{rel}: <com:ComServer> must contain exactly 2 children "
-                        f"(1 SurrogateServer + 1 ExeServer), found {len(list(com_server))}"
+                        f"(1 ExeServer + 1 SurrogateServer), found {len(com_children)}"
+                    )
+                elif [child.tag for child in com_children] != [
+                    f"{com_ns}ExeServer",
+                    f"{com_ns}SurrogateServer",
+                ]:
+                    errors.append(
+                        f"{rel}: <com:ComServer> must declare <com:ExeServer> before "
+                        "<com:SurrogateServer> per ComManifestSchema.xsd CT_ComServer sequence"
                     )
 
                 doc_surrogates = root.findall(f".//{com_ns}SurrogateServer")

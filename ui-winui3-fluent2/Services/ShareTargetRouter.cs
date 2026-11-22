@@ -70,9 +70,9 @@ public static class ShareTargetRouter
         object? routerLock = null)
     {
         bool dataRetrieved = false;
-        lifecycle.ReportStarted();
         try
         {
+            lifecycle.ReportStarted();
             ShareTargetInput input = extractPayload();
             lifecycle.ReportDataRetrieved();
             dataRetrieved = true;
@@ -177,9 +177,9 @@ public static class ShareTargetRouter
         uint? initiatorPid = null)
     {
         bool dataRetrieved = false;
-        lifecycle.ReportStarted();
         try
         {
+            lifecycle.ReportStarted();
             ShareTargetInput input = await extractPayloadAsync().ConfigureAwait(false);
             lifecycle.ReportDataRetrieved();
             dataRetrieved = true;

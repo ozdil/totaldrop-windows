@@ -44,7 +44,10 @@ internal static unsafe class WindowsShareSheet
             return false;
         }
 
-        Uri? parsedUri = !string.IsNullOrEmpty(webUri) && Uri.TryCreate(webUri, UriKind.Absolute, out Uri? uri)
+        Uri? parsedUri = !string.IsNullOrEmpty(webUri)
+            && Uri.TryCreate(webUri, UriKind.Absolute, out Uri? uri)
+            && (string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
             ? uri
             : null;
         string safeTitle = string.IsNullOrWhiteSpace(title) ? "TotalDrop" : title;
@@ -165,11 +168,18 @@ internal static unsafe class WindowsShareSheet
             return;
         }
 
-        args.Request.Data.Properties.Title = payload.Title;
-        args.Request.Data.SetText(payload.Text);
-        if (payload.WebLink is not null)
+        try
         {
-            args.Request.Data.SetWebLink(payload.WebLink);
+            args.Request.Data.Properties.Title = payload.Title;
+            args.Request.Data.SetText(payload.Text);
+            if (payload.WebLink is not null)
+            {
+                args.Request.Data.SetWebLink(payload.WebLink);
+            }
+        }
+        catch (Exception)
+        {
+            // Ignore transient WinRT Share Broker / COM errors during DataRequested.
         }
     }
 }

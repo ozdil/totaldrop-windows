@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2026 The TotalDrop Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace TotalDrop.WinUI.Services;
 
@@ -149,7 +151,7 @@ internal sealed class Win32PowerRequestBackend : IPowerRequestBackend
 /// time; this is an OS power-policy boundary rather than a handle leak.
 /// </para>
 /// </summary>
-public sealed class WakeLockService : IDisposable
+public sealed partial class WakeLockService : IDisposable
 {
     private readonly IPowerRequestBackend _backend;
     private readonly object _gate = new();
@@ -257,6 +259,22 @@ public sealed class WakeLockService : IDisposable
 
     private const int MaxReasonLength = 256;
 
+    private static bool IsDisallowedReasonScalar(int cp)
+    {
+        if ((cp >= 0xFDD0 && cp <= 0xFDEF)
+            || (cp & 0xFFFE) == 0xFFFE
+            || (cp >= 0xE0000 && cp <= 0xE007F))
+        {
+            return true;
+        }
+
+        UnicodeCategory cat = Rune.GetUnicodeCategory(new Rune(cp));
+        return cat is UnicodeCategory.Control
+            or UnicodeCategory.Format
+            or UnicodeCategory.LineSeparator
+            or UnicodeCategory.ParagraphSeparator;
+    }
+
     internal static string SanitizeReason(string? reason)
     {
         if (string.IsNullOrWhiteSpace(reason))
@@ -274,21 +292,28 @@ public sealed class WakeLockService : IDisposable
             {
                 if (i + 1 < trimmed.Length && char.IsLowSurrogate(trimmed[i + 1]))
                 {
+                    char low = trimmed[i + 1];
+                    int cp = char.ConvertToUtf32(c, low);
+                    i++;
+                    if (IsDisallowedReasonScalar(cp))
+                    {
+                        continue;
+                    }
+
                     if (written + 2 > MaxReasonLength)
                     {
                         break;
                     }
 
                     buffer[written++] = c;
-                    buffer[written++] = trimmed[i + 1];
-                    i++;
+                    buffer[written++] = low;
                 }
 
                 // Skip lone/unpaired high surrogates.
                 continue;
             }
 
-            if (char.IsLowSurrogate(c) || char.IsControl(c))
+            if (char.IsLowSurrogate(c) || IsDisallowedReasonScalar(c))
             {
                 continue;
             }

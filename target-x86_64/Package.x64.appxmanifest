@@ -115,15 +115,9 @@
           </uap:ShareTarget>
         </uap:Extension>
 
-        <!-- 3. COM Servers: File Explorer IExplorerCommand Surrogate + Toast Activator ExeServer -->
+        <!-- 3. COM Servers: Toast Activator ExeServer + File Explorer IExplorerCommand Surrogate (CT_ComServer XSD order) -->
         <com:Extension Category="windows.comServer">
           <com:ComServer>
-            <com:SurrogateServer DisplayName="TotalDrop Explorer Verb Host">
-              <com:Class
-                Id="8f6e3d72-4b9a-4e1c-9d3a-7c2f5a81e4b0"
-                Path="totaldrop_explorer_ext.dll"
-                ThreadingModel="STA" />
-            </com:SurrogateServer>
             <com:ExeServer
               Executable="totaldrop-winui.exe"
               Arguments="----AppNotificationActivated:"
@@ -132,6 +126,12 @@
                 Id="7df2cced-0448-4849-a140-41cd106eaa9b"
                 DisplayName="TotalDrop Notification Activator" />
             </com:ExeServer>
+            <com:SurrogateServer DisplayName="TotalDrop Explorer Verb Host">
+              <com:Class
+                Id="8f6e3d72-4b9a-4e1c-9d3a-7c2f5a81e4b0"
+                Path="totaldrop_explorer_ext.dll"
+                ThreadingModel="STA" />
+            </com:SurrogateServer>
           </com:ComServer>
         </com:Extension>
 

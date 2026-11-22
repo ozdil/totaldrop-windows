@@ -3,6 +3,7 @@
 
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Microsoft.UI.Xaml;
@@ -459,13 +460,15 @@ public sealed partial class UiStringsViewModel : ObservableViewModel, INotificat
         foreach (Rune rune in rawFilename.EnumerateRunes())
         {
             int cp = rune.Value;
-            bool isControlOrBidi = cp < 0x20
-                || cp == 0x7F
-                || (cp >= 0x80 && cp <= 0x9F)
-                || cp is 0x200E or 0x200F
-                || (cp >= 0x202A && cp <= 0x202E)
-                || (cp >= 0x2066 && cp <= 0x2069)
-                || cp is 0x061C or 0xFEFF;
+            UnicodeCategory cat = Rune.GetUnicodeCategory(rune);
+            bool isControlOrBidi = cp is not (0x200C or 0x200D)
+                && (cat is UnicodeCategory.Control
+                    or UnicodeCategory.Format
+                    or UnicodeCategory.LineSeparator
+                    or UnicodeCategory.ParagraphSeparator
+                    || (cp >= 0xFDD0 && cp <= 0xFDEF)
+                    || (cp & 0xFFFE) == 0xFFFE
+                    || (cp >= 0xE0000 && cp <= 0xE007F));
             if (isControlOrBidi)
             {
                 sb.Append($"<U+{cp:X4}>");

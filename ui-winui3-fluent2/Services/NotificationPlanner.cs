@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The TotalDrop Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+using System.Globalization;
 using System.Security;
 using System.Text;
 using TotalDrop.WinUI.Interop;
@@ -224,7 +225,7 @@ public static class NotificationPlanner
 
     private static string ResolveSize(NotificationEventInput input, INotificationLocalizer localizer)
     {
-        string cleanedInput = StripIllegalXmlControlChars(input.FormattedBytes);
+        string cleanedInput = StripIllegalXmlControlChars(input.FormattedBytes, stripBidiIsolates: true);
         if (!string.IsNullOrWhiteSpace(cleanedInput))
         {
             return cleanedInput;
@@ -245,7 +246,7 @@ public static class NotificationPlanner
             }
         }
 
-        string summary = StripIllegalXmlControlChars(input.LocalizedErrorSummary);
+        string summary = StripIllegalXmlControlChars(input.LocalizedErrorSummary, stripBidiIsolates: true);
         if (!string.IsNullOrWhiteSpace(summary))
         {
             return summary;
@@ -265,7 +266,7 @@ public static class NotificationPlanner
             }
         }
 
-        string summary = StripIllegalXmlControlChars(input.LocalizedErrorSummary);
+        string summary = StripIllegalXmlControlChars(input.LocalizedErrorSummary, stripBidiIsolates: true);
         if (!string.IsNullOrWhiteSpace(summary))
         {
             return summary;
@@ -286,7 +287,34 @@ public static class NotificationPlanner
         return string.IsNullOrWhiteSpace(cleaned) ? fallback : cleaned;
     }
 
-    private static string StripIllegalXmlControlChars(string? raw)
+    private static bool IsDisallowedToastScalar(int cp, bool stripBidiIsolates)
+    {
+        if (cp is '\t' or '\n' or '\r' or 0x200C or 0x200D)
+        {
+            return false;
+        }
+
+        if (!stripBidiIsolates && cp is 0x2068 or 0x2069)
+        {
+            // Preserve legitimate Rust FSI/PDI bidi isolates emitted by totaldrop-l10n.
+            return false;
+        }
+
+        if ((cp >= 0xFDD0 && cp <= 0xFDEF)
+            || (cp & 0xFFFE) == 0xFFFE
+            || (cp >= 0xE0000 && cp <= 0xE007F))
+        {
+            return true;
+        }
+
+        UnicodeCategory cat = Rune.GetUnicodeCategory(new Rune(cp));
+        return cat is UnicodeCategory.Control
+            or UnicodeCategory.Format
+            or UnicodeCategory.LineSeparator
+            or UnicodeCategory.ParagraphSeparator;
+    }
+
+    private static string StripIllegalXmlControlChars(string? raw, bool stripBidiIsolates = false)
     {
         if (string.IsNullOrEmpty(raw))
         {
@@ -301,10 +329,16 @@ public static class NotificationPlanner
             {
                 if (i + 1 < raw.Length && char.IsLowSurrogate(raw[i + 1]))
                 {
-                    if (sb is not null)
+                    char low = raw[i + 1];
+                    int cp = char.ConvertToUtf32(c, low);
+                    if (IsDisallowedToastScalar(cp, stripBidiIsolates))
+                    {
+                        sb ??= new StringBuilder(raw.Length).Append(raw, 0, i);
+                    }
+                    else if (sb is not null)
                     {
                         sb.Append(c);
-                        sb.Append(raw[i + 1]);
+                        sb.Append(low);
                     }
 
                     i++;
@@ -316,10 +350,7 @@ public static class NotificationPlanner
                 continue;
             }
 
-            bool illegal = char.IsLowSurrogate(c)
-                || (c < 0x20 && c != '\t' && c != '\n' && c != '\r')
-                || c == '\uFFFE'
-                || c == '\uFFFF';
+            bool illegal = char.IsLowSurrogate(c) || IsDisallowedToastScalar(c, stripBidiIsolates);
             if (illegal)
             {
                 sb ??= new StringBuilder(raw.Length).Append(raw, 0, i);

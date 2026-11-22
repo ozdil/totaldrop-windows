@@ -50,7 +50,27 @@ public partial class App : Application
         {
             // Single-window rule (ADR 0016): forward protocol/share/Explorer/toast
             // activations to the already-open window and exit immediately.
-            await mainInstance.RedirectActivationToAsync(activated);
+            try
+            {
+                await mainInstance.RedirectActivationToAsync(activated);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Single-instance redirection failed: {ex.Message}");
+                if (activated.Kind == ExtendedActivationKind.ShareTarget
+                    && activated.Data is IShareTargetActivatedEventArgs shareArgs)
+                {
+                    try
+                    {
+                        shareArgs.ShareOperation.ReportCompleted();
+                    }
+                    catch (Exception)
+                    {
+                        // Ignore WinRT share-broker teardown errors during exit.
+                    }
+                }
+            }
+
             Environment.Exit(0);
             return;
         }
@@ -62,7 +82,14 @@ public partial class App : Application
         _mainWindow.Activate();
 
         StartExplorerNamedPipeListener(_mainWindow.SessionId);
-        await DispatchActivationAsync(activated, isRedirected: false);
+        try
+        {
+            await DispatchActivationAsync(activated, isRedirected: false);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Initial activation dispatch failed: {ex.Message}");
+        }
     }
 
     private void OnRedirectedActivation(object? sender, AppActivationArguments e)
@@ -74,8 +101,15 @@ public partial class App : Application
 
         _mainWindow.DispatcherQueue.TryEnqueue(async () =>
         {
-            _mainWindow.BringToForeground();
-            await DispatchActivationAsync(e, isRedirected: true);
+            try
+            {
+                _mainWindow.BringToForeground();
+                await DispatchActivationAsync(e, isRedirected: true);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Redirected activation dispatch failed: {ex.Message}");
+            }
         });
     }
 
@@ -102,7 +136,8 @@ public partial class App : Application
             }
 
             case ExtendedActivationKind.Protocol
-                when activation.Data is IProtocolActivatedEventArgs protocolArgs:
+                when activation.Data is IProtocolActivatedEventArgs protocolArgs
+                    && protocolArgs.Uri is not null:
             {
                 string rawUri = protocolArgs.Uri.AbsoluteUri;
                 await _mainWindow.RouteProtocolUriAsync(rawUri);
@@ -283,13 +318,19 @@ public partial class App : Application
                 }
             }
 
-            return new ShareTargetInput(StorageItemPaths: paths);
+            if (paths.Count > 0)
+            {
+                return new ShareTargetInput(StorageItemPaths: paths);
+            }
         }
 
         if (data.Contains(StandardDataFormats.WebLink))
         {
-            Uri webLink = await data.GetWebLinkAsync();
-            return new ShareTargetInput(WebLink: webLink.AbsoluteUri);
+            Uri? webLink = await data.GetWebLinkAsync();
+            if (webLink is not null)
+            {
+                return new ShareTargetInput(WebLink: webLink.AbsoluteUri);
+            }
         }
 
         if (data.Contains(StandardDataFormats.Text))

@@ -844,10 +844,19 @@ def verify_manifest_extensions(manifest_root: ET.Element) -> None:
             f"(doc={len(doc_com_servers)}, direct={len(child_com_servers)}, children={len(list(com_ext))})"
         )
     com_server = child_com_servers[0]
-    if len(list(com_server)) != 2:
+    com_children = list(com_server)
+    if len(com_children) != 2:
         raise ValueError(
             "AppxManifest.xml <com:ComServer> must contain exactly 2 children "
-            f"(1 SurrogateServer + 1 ExeServer), found {len(list(com_server))}"
+            f"(1 ExeServer + 1 SurrogateServer), found {len(com_children)}"
+        )
+    if [child.tag for child in com_children] != [
+        f"{com_ns}ExeServer",
+        f"{com_ns}SurrogateServer",
+    ]:
+        raise ValueError(
+            "AppxManifest.xml <com:ComServer> must declare <com:ExeServer> before "
+            "<com:SurrogateServer> per ComManifestSchema.xsd CT_ComServer sequence"
         )
 
     doc_surrogates = manifest_root.findall(f".//{com_ns}SurrogateServer")

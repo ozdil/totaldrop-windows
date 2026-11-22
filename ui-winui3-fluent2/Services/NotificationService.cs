@@ -11,7 +11,7 @@ namespace TotalDrop.WinUI.Services;
 /// <see cref="NotificationPlanner"/> and activating the single window on click
 /// (Feature #19, ADR 0016).
 /// </summary>
-public sealed class NotificationService : IDisposable
+public sealed partial class NotificationService : IDisposable
 {
     private readonly Action _onActivateWindow;
     private bool _registered;
