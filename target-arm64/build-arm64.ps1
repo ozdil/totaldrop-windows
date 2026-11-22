@@ -74,7 +74,7 @@ function Assert-MsixVersionQuad {
         [switch]$RequireStoreRules
     )
 
-    if ($Value -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+    if ($Value -notmatch '\A[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\z') {
         throw "Invalid MSIX -Version '$Value'. Expected four-part numeric version (Major.Minor.Build.Revision)."
     }
     $parts = $Value.Split('.')
@@ -84,7 +84,7 @@ function Assert-MsixVersionQuad {
             throw "Invalid MSIX -Version '$Value': leading zeros are not permitted in version component '$part'."
         }
         [int]$num = 0
-        if (-not [int]::TryParse($part, [ref]$num) -or $num -lt 0 -or $num -gt 65535) {
+        if (-not [int]::TryParse($part, [System.Globalization.NumberStyles]::None, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$num) -or $num -lt 0 -or $num -gt 65535) {
             throw "Invalid MSIX -Version '$Value': each component must be in 0..65535 (got '$part')."
         }
         $nums += $num
@@ -314,7 +314,7 @@ function ConvertFrom-X500Publisher {
         }
         $key = $rdn.Substring(0, $eqIdx).Trim()
         $val = Remove-UnescapedX500Whitespace -Value $rdn.Substring($eqIdx + 1)
-        if ($key -notmatch '^(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?\d+(?:\.\d+)+)$' -or [string]::IsNullOrEmpty($val)) {
+        if ($key -notmatch '\A(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?[0-9]+(?:\.[0-9]+)+)\z' -or [string]::IsNullOrEmpty($val)) {
             throw "Invalid X.500 Publisher '$Publisher': malformed RDN '$rdn' (expected e.g. 'CN=...')."
         }
 

@@ -37,7 +37,7 @@ BARE_GUID_RE = re.compile(
 )
 QUAD_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$", re.ASCII)
 IDENTITY_NAME_RE = re.compile(r"^[A-Za-z0-9.-]{3,50}$")
-RDN_KEY_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?\d+(?:\.\d+)+)$")
+RDN_KEY_RE = re.compile(r"\A(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?[0-9]+(?:\.[0-9]+)+)\Z", re.ASCII)
 RFC2253_ESCAPABLE_CHARS: frozenset[str] = frozenset({",", "+", '"', "\\", "<", ">", ";", "#", "=", " "})
 ASCII_HEX_DIGITS: frozenset[str] = frozenset("0123456789ABCDEFabcdef")
 FORBIDDEN_UNQUOTED_RDN_CHARS: frozenset[str] = frozenset({'"', ";", "<", ">", "`", "$", "|", "&"})
@@ -927,6 +927,11 @@ def _check_opc_zip_entries(
             raise ValueError(f"{label}: unsafe relative/traversal path component in ZIP entry {name!r}")
         if "" in check_parts:
             raise ValueError(f"{label}: empty path segment in ZIP entry {name!r}")
+        if any(part.endswith((".", " ")) for part in check_parts):
+            raise ValueError(
+                f"{label}: OPC/ZIP path segment with trailing dot or space is forbidden "
+                f"(ECMA-376 M1.9 / Windows NTFS collision): {name!r}"
+            )
 
         if is_dir:
             if info.file_size != 0 or len(_read_zip_member(zf, info, label)) != 0:
@@ -3101,6 +3106,7 @@ def run_self_test_bundle() -> int:
             r"CN=Total\Drop",
             r"CN=\5otalDrop",
             r"CN=Bad\ffUtf8",
+            "CN=Acme, 1.\u0662.3=Val",
         ):
             expect_fail(
                 f"case-22-bad-x500-{bad_pub!r}",
@@ -3262,7 +3268,71 @@ def run_self_test_bundle() -> int:
                 "flat root",
             )
 
-    print("self-test-bundle OK: 25/25 positive & negative bundle/msixupload/store-mode checks passed.")
+        # Case 26: ECMA-376 M1.9/M1.10 & Windows NTFS trailing-dot / trailing-space OPC/ZIP path segments rejected.
+        for sub_id, bad_entry, bad_payload in (
+            ("26a-msix-pfx-trailing-dot", "signing.pfx.", b"PRIVATE_KEY_MATERIAL"),
+            ("26b-msix-pfx-trailing-space", "signing.pfx ", b"PRIVATE_KEY_MATERIAL"),
+            ("26c-msix-dll-trailing-dot", "totaldrop_explorer_ext.dll.", pe_x64),
+            ("26d-msix-manifest-trailing-dot", "AppxManifest.xml.", b"<Package/>"),
+            ("26e-msix-assets-dot-evil-dll", "Assets./evil.dll", pe_x64),
+            ("26f-msix-assets-space-extra-png", "Assets /extra.png", b"\x89PNG\r\n\x1a\n"),
+            ("26g-msix-pdb-trailing-dot", "totaldrop-winui.pdb.", b"FAKE_PDB"),
+            ("26h-msix-dot-only-segment", ".../evil.dll", pe_x64),
+            ("26i-msix-pfx-dot-dir", "signing.pfx./", b""),
+            ("26j-msix-assets-dot-dir", "Assets./", b""),
+        ):
+            arm64_ntfs_bad = _make_synthetic_msix(
+                arm64_tpl,
+                arch="arm64",
+                name=store_name,
+                publisher=store_pub,
+                version=store_ver,
+                extra_entries=[(bad_entry, bad_payload)],
+            )
+            expect_fail(
+                f"case-{sub_id}",
+                lambda m=arm64_ntfs_bad: verify_msix_archive(
+                    m,
+                    f"{sub_id}.msix",
+                    arch="arm64",
+                    expected_version=store_ver,
+                    expect_signed=False,
+                    store_mode=True,
+                    allow_test_identity=False,
+                    run_live_smoke=False,
+                ),
+                "trailing dot or space",
+            )
+        for sub_id, bad_entry, bad_payload in (
+            ("26k-bundle-appxmetadata-dot-manifest", "AppxMetadata./AppxBundleManifest.xml", b"<Bundle/>"),
+            ("26l-bundle-rogue-x86-msix-dot", "rogue_x86.msix.", b"PK\x03\x04"),
+            ("26m-bundle-pfx-trailing-dot", "signing.pfx.", b"PRIVATE_KEY_MATERIAL"),
+        ):
+            bundle_ntfs_bad = _make_synthetic_bundle(
+                name=store_name,
+                publisher=store_pub,
+                version=store_ver,
+                packages=[
+                    ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                    ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_ok),
+                ],
+                extra_entries=[(bad_entry, bad_payload)],
+            )
+            expect_fail(
+                f"case-{sub_id}",
+                lambda b=bundle_ntfs_bad: verify_msixbundle_archive(
+                    b,
+                    f"{sub_id}.msixbundle",
+                    expected_version=store_ver,
+                    expect_signed=False,
+                    store_mode=True,
+                    allow_test_identity=False,
+                    run_live_smoke=False,
+                ),
+                "trailing dot or space",
+            )
+
+    print("self-test-bundle OK: 26/26 positive & negative bundle/msixupload/store-mode checks passed.")
     return 0
 
 

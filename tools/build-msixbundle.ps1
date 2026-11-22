@@ -69,7 +69,7 @@ function Assert-MsixVersionQuad {
         [switch]$RequireStoreRules
     )
 
-    if ($Value -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+    if ($Value -notmatch '\A[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\z') {
         throw "Invalid bundle -Version '$Value'. Expected four-part numeric version (Major.Minor.Build.Revision)."
     }
     $parts = $Value.Split('.')
@@ -79,7 +79,7 @@ function Assert-MsixVersionQuad {
             throw "Invalid bundle -Version '$Value': leading zeros are not permitted in version component '$part'."
         }
         [int]$num = 0
-        if (-not [int]::TryParse($part, [ref]$num) -or $num -lt 0 -or $num -gt 65535) {
+        if (-not [int]::TryParse($part, [System.Globalization.NumberStyles]::None, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$num) -or $num -lt 0 -or $num -gt 65535) {
             throw "Invalid bundle -Version '$Value': each component must be in 0..65535 (got '$part')."
         }
         $nums += $num

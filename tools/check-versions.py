@@ -26,7 +26,7 @@ BARE_GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 IDENTITY_NAME_RE = re.compile(r"^[A-Za-z0-9.-]{3,50}$")
-RDN_KEY_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?\d+(?:\.\d+)+)$")
+RDN_KEY_RE = re.compile(r"\A(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?[0-9]+(?:\.[0-9]+)+)\Z", re.ASCII)
 RFC2253_ESCAPABLE_CHARS: frozenset[str] = frozenset({",", "+", '"', "\\", "<", ">", ";", "#", "=", " "})
 ASCII_HEX_DIGITS: frozenset[str] = frozenset("0123456789ABCDEFabcdef")
 FORBIDDEN_UNQUOTED_RDN_CHARS: frozenset[str] = frozenset({'"', ";", "<", ">", "`", "$", "|", "&"})

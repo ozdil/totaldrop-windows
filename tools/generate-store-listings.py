@@ -407,7 +407,13 @@ def _is_unsafe_screenshot_rel_path(rel_file: str) -> bool:
         or "\\" in rel_file
         or ":" in rel_file
         or Path(rel_file).is_absolute()
-        or any(part in ("", ".", "..") for part in rel_file.split("/"))
+        or any(
+            part in ("", ".", "..")
+            or part != part.strip()
+            or part.startswith(".")
+            or part.endswith(".")
+            for part in rel_file.split("/")
+        )
     )
 
 
@@ -434,7 +440,7 @@ def collect_screenshots(screenshots_dir: Path) -> tuple[dict[str, list[dict[str,
             if _is_unsafe_screenshot_rel_path(rel):
                 errors.append(
                     f"{context}: unsafe screenshot relative path {rel!r} "
-                    "(control/Bidi characters, whitespace padding, drive colons, backslashes, and '.'/'..' segments are forbidden)"
+                    "(control/Bidi characters, segment whitespace padding, hidden/trailing-dot segments, drive colons, backslashes, and '.'/'..' segments are forbidden)"
                 )
                 continue
             resolved = fpath.resolve()
@@ -904,9 +910,9 @@ def validate_document(
                     if _is_unsafe_screenshot_rel_path(rel_file):
                         errors.append(
                             f"locale {loc} Screenshots[{idx}]: unsafe screenshot relative path {rel_file!r} "
-                            "(control/Bidi characters, absolute paths, drive colons, backslashes, and '.'/'..' segments are forbidden)"
+                            "(control/Bidi characters, absolute paths, segment whitespace padding, hidden/trailing-dot segments, drive colons, backslashes, and '.'/'..' segments are forbidden)"
                         )
-                    elif not rel_file.lower().endswith(".png"):
+                    elif Path(rel_file).suffix.lower() != ".png":
                         errors.append(
                             f"locale {loc} Screenshots[{idx}]: non-PNG screenshot path {rel_file!r} "
                             "(Partner Center screenshots must use .png files)"
