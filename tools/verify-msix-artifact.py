@@ -758,6 +758,7 @@ def parse_pe64(path: Path) -> dict[str, object]:
 def verify_manifest_extensions(manifest_root: ET.Element) -> None:
     """Validate Explorer COM, FileExplorerContextMenus, Toast Activation, runFullTrust, and scoped FirewallRules."""
     appx_ns = "{http://schemas.microsoft.com/appx/manifest/foundation/windows10}"
+    uap_ns = "{http://schemas.microsoft.com/appx/manifest/uap/windows10}"
     com_ns = "{http://schemas.microsoft.com/appx/manifest/com/windows10}"
     desktop_ns = "{http://schemas.microsoft.com/appx/manifest/desktop/windows10}"
     desktop2_ns = "{http://schemas.microsoft.com/appx/manifest/desktop/windows10/2}"
@@ -765,38 +766,114 @@ def verify_manifest_extensions(manifest_root: ET.Element) -> None:
     desktop5_ns = "{http://schemas.microsoft.com/appx/manifest/desktop/windows10/5}"
     rescap_ns = "{http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities}"
 
-    app_ext = f"{appx_ns}Applications/{appx_ns}Application/{appx_ns}Extensions"
-    com_server_prefix = (
-        f"{app_ext}/{com_ns}Extension[@Category='windows.comServer']/{com_ns}ComServer"
-    )
+    if manifest_root.tag != f"{appx_ns}Package":
+        raise ValueError(f"AppxManifest.xml root must be <Package>, got {manifest_root.tag!r}")
 
-    if manifest_root.findall(f"{appx_ns}Extensions//{com_ns}ComServer"):
-        raise ValueError("com:ComServer must be declared under Applications/Application/Extensions")
-    if manifest_root.findall(f"{appx_ns}Extensions//{desktop4_ns}FileExplorerContextMenus"):
+    # 1. Single <Applications>/<Application> and single Application/Package <Extensions> containers.
+    doc_applications = manifest_root.findall(f".//{appx_ns}Applications")
+    direct_applications = manifest_root.findall(f"{appx_ns}Applications")
+    if len(doc_applications) != 1 or len(direct_applications) != 1:
         raise ValueError(
-            "desktop4:FileExplorerContextMenus must be declared under Applications/Application/Extensions"
-        )
-    if manifest_root.findall(f"{appx_ns}Extensions//{desktop_ns}ToastNotificationActivation"):
-        raise ValueError(
-            "desktop:ToastNotificationActivation must be declared under Applications/Application/Extensions"
+            "AppxManifest.xml must contain exactly 1 top-level <Applications> element "
+            f"(doc={len(doc_applications)}, direct={len(direct_applications)})"
         )
 
-    # 1. Explorer COM SurrogateServer (STA, bare CLSID, totaldrop_explorer_ext.dll).
-    surrogate_classes = manifest_root.findall(
-        f"{com_server_prefix}/{com_ns}SurrogateServer/{com_ns}Class"
-    )
-    explorer_cls = next(
-        (c for c in surrogate_classes if c.attrib.get("Id", "").lower() == EXPECTED_EXPLORER_CLSID),
-        None,
-    )
-    if explorer_cls is None:
+    doc_apps = manifest_root.findall(f".//{appx_ns}Application")
+    direct_apps = manifest_root.findall(f"{appx_ns}Applications/{appx_ns}Application")
+    if len(doc_apps) != 1 or len(direct_apps) != 1:
         raise ValueError(
-            "AppxManifest.xml missing Applications/Application/Extensions/"
-            "com:Extension[@Category='windows.comServer']/com:ComServer/"
-            f"com:SurrogateServer/com:Class for {EXPECTED_EXPLORER_CLSID}"
+            "AppxManifest.xml must contain exactly 1 <Application> under <Applications> "
+            f"(doc={len(doc_apps)}, direct={len(direct_apps)})"
         )
-    if not BARE_GUID_RE.fullmatch(explorer_cls.attrib.get("Id", "")):
-        raise ValueError("Explorer COM Class Id must be a bare GUID without braces")
+    app = direct_apps[0]
+    if app.attrib.get("Executable") != "totaldrop-winui.exe":
+        raise ValueError(
+            f"AppxManifest.xml <Application> Executable mismatch: {app.attrib.get('Executable')!r}"
+        )
+
+    app_exts = app.findall(f"{appx_ns}Extensions")
+    if len(app_exts) != 1:
+        raise ValueError(
+            f"AppxManifest.xml <Application> must contain exactly 1 <Extensions>, found {len(app_exts)}"
+        )
+    pkg_exts = manifest_root.findall(f"{appx_ns}Extensions")
+    if len(pkg_exts) != 1:
+        raise ValueError(
+            f"AppxManifest.xml <Package> must contain exactly 1 <Extensions>, found {len(pkg_exts)}"
+        )
+    doc_exts = manifest_root.findall(f".//{appx_ns}Extensions")
+    if len(doc_exts) != 2:
+        raise ValueError(
+            f"AppxManifest.xml must contain exactly 2 <Extensions> containers total, found {len(doc_exts)}"
+        )
+    app_ext = app_exts[0]
+    pkg_ext = pkg_exts[0]
+
+    allowed_app_ext_tags = {
+        f"{uap_ns}Extension",
+        f"{com_ns}Extension",
+        f"{desktop4_ns}Extension",
+        f"{desktop_ns}Extension",
+    }
+    unexpected_app_exts = [child.tag for child in app_ext if child.tag not in allowed_app_ext_tags]
+    if unexpected_app_exts:
+        raise ValueError(
+            "AppxManifest.xml Applications/Application/Extensions contains unexpected extension(s): "
+            f"{unexpected_app_exts!r}"
+        )
+
+    # 2. com:Extension (windows.comServer): exact 1 SurrogateServer (1 Class) + 1 ExeServer (1 Class).
+    doc_com_exts = manifest_root.findall(f".//{com_ns}Extension")
+    app_com_exts = app_ext.findall(f"{com_ns}Extension")
+    if len(doc_com_exts) != 1 or len(app_com_exts) != 1:
+        raise ValueError(
+            "AppxManifest.xml must declare exactly 1 <com:Extension> directly under "
+            f"Applications/Application/Extensions (doc={len(doc_com_exts)}, app={len(app_com_exts)})"
+        )
+    com_ext = app_com_exts[0]
+    if com_ext.attrib.get("Category") != "windows.comServer":
+        raise ValueError(
+            f"<com:Extension> Category must be 'windows.comServer', got {com_ext.attrib.get('Category')!r}"
+        )
+
+    doc_com_servers = manifest_root.findall(f".//{com_ns}ComServer")
+    child_com_servers = com_ext.findall(f"{com_ns}ComServer")
+    if len(doc_com_servers) != 1 or len(child_com_servers) != 1 or len(list(com_ext)) != 1:
+        raise ValueError(
+            "AppxManifest.xml <com:Extension> must contain exactly 1 <com:ComServer> as its sole child "
+            f"(doc={len(doc_com_servers)}, direct={len(child_com_servers)}, children={len(list(com_ext))})"
+        )
+    com_server = child_com_servers[0]
+    if len(list(com_server)) != 2:
+        raise ValueError(
+            "AppxManifest.xml <com:ComServer> must contain exactly 2 children "
+            f"(1 SurrogateServer + 1 ExeServer), found {len(list(com_server))}"
+        )
+
+    doc_surrogates = manifest_root.findall(f".//{com_ns}SurrogateServer")
+    child_surrogates = com_server.findall(f"{com_ns}SurrogateServer")
+    if len(doc_surrogates) != 1 or len(child_surrogates) != 1:
+        raise ValueError(
+            "AppxManifest.xml must declare exactly 1 <com:SurrogateServer> directly under <com:ComServer> "
+            f"(doc={len(doc_surrogates)}, direct={len(child_surrogates)})"
+        )
+    surrogate = child_surrogates[0]
+    surrogate_classes = surrogate.findall(f"{com_ns}Class")
+    if len(list(surrogate)) != 1 or len(surrogate_classes) != 1:
+        raise ValueError(
+            "AppxManifest.xml <com:SurrogateServer> must contain exactly 1 <com:Class> as its sole child "
+            f"(children={len(list(surrogate))}, classes={len(surrogate_classes)})"
+        )
+    explorer_cls = surrogate_classes[0]
+    if len(list(explorer_cls)) != 0:
+        raise ValueError("Explorer <com:Class> must not contain child elements")
+    explorer_id = explorer_cls.attrib.get("Id", "")
+    if not BARE_GUID_RE.fullmatch(explorer_id):
+        raise ValueError(f"Explorer COM Class Id must be a bare GUID without braces, got {explorer_id!r}")
+    if explorer_id.lower() != EXPECTED_EXPLORER_CLSID:
+        raise ValueError(
+            f"Explorer COM Class Id mismatch: {explorer_id!r} != {EXPECTED_EXPLORER_CLSID!r}"
+        )
     if explorer_cls.attrib.get("Path") != "totaldrop_explorer_ext.dll":
         raise ValueError(f"Explorer COM Path mismatch: {explorer_cls.attrib.get('Path')!r}")
     if explorer_cls.attrib.get("ThreadingModel") != "STA":
@@ -804,33 +881,149 @@ def verify_manifest_extensions(manifest_root: ET.Element) -> None:
             f"Explorer COM ThreadingModel must be 'STA', got {explorer_cls.attrib.get('ThreadingModel')!r}"
         )
 
-    # 2. FileExplorerContextMenus (* and Directory verbs).
-    item_types = {
-        it.attrib.get("Type"): [v.attrib.get("Clsid", "").lower() for v in it.findall(f"{desktop5_ns}Verb")]
-        for it in manifest_root.findall(
-            f"{app_ext}/{desktop4_ns}Extension[@Category='windows.fileExplorerContextMenus']"
-            f"/{desktop4_ns}FileExplorerContextMenus/{desktop5_ns}ItemType"
+    doc_exe_servers = manifest_root.findall(f".//{com_ns}ExeServer")
+    child_exe_servers = com_server.findall(f"{com_ns}ExeServer")
+    if len(doc_exe_servers) != 1 or len(child_exe_servers) != 1:
+        raise ValueError(
+            "AppxManifest.xml must declare exactly 1 <com:ExeServer> directly under <com:ComServer> "
+            f"(doc={len(doc_exe_servers)}, direct={len(child_exe_servers)})"
         )
-    }
-    for req_type in ("*", "Directory"):
-        if EXPECTED_EXPLORER_CLSID not in item_types.get(req_type, []):
+    exe_server = child_exe_servers[0]
+    if exe_server.attrib.get("Executable") != "totaldrop-winui.exe":
+        raise ValueError(f"Toast ExeServer Executable mismatch: {exe_server.attrib.get('Executable')!r}")
+    if exe_server.attrib.get("Arguments") != "----AppNotificationActivated:":
+        raise ValueError(f"Toast ExeServer Arguments mismatch: {exe_server.attrib.get('Arguments')!r}")
+    exe_classes = exe_server.findall(f"{com_ns}Class")
+    if len(list(exe_server)) != 1 or len(exe_classes) != 1:
+        raise ValueError(
+            "AppxManifest.xml <com:ExeServer> must contain exactly 1 <com:Class> as its sole child "
+            f"(children={len(list(exe_server))}, classes={len(exe_classes)})"
+        )
+    toast_cls = exe_classes[0]
+    if len(list(toast_cls)) != 0:
+        raise ValueError("Toast ExeServer <com:Class> must not contain child elements")
+    toast_cls_id = toast_cls.attrib.get("Id", "")
+    if not BARE_GUID_RE.fullmatch(toast_cls_id):
+        raise ValueError(f"Toast ExeServer Class Id must be a bare GUID without braces, got {toast_cls_id!r}")
+    if toast_cls_id.lower() != EXPECTED_TOAST_CLSID:
+        raise ValueError(
+            f"Toast ExeServer Class Id mismatch: {toast_cls_id!r} != {EXPECTED_TOAST_CLSID!r}"
+        )
+
+    doc_com_classes = manifest_root.findall(f".//{com_ns}Class")
+    if len(doc_com_classes) != 2:
+        raise ValueError(
+            f"AppxManifest.xml must declare exactly 2 <com:Class> elements total, found {len(doc_com_classes)}"
+        )
+    doc_com_all = [el for el in manifest_root.iter() if el.tag.startswith(com_ns)]
+    if len(doc_com_all) != 6:
+        raise ValueError(
+            f"AppxManifest.xml contains unexpected com:* elements (expected 6 total, found {len(doc_com_all)})"
+        )
+
+    # 3. desktop4:Extension (windows.fileExplorerContextMenus): exact 2 ItemTypes (* and Directory), 1 Verb each.
+    doc_d4_exts = manifest_root.findall(f".//{desktop4_ns}Extension")
+    app_d4_exts = app_ext.findall(f"{desktop4_ns}Extension")
+    if len(doc_d4_exts) != 1 or len(app_d4_exts) != 1:
+        raise ValueError(
+            "AppxManifest.xml must declare exactly 1 <desktop4:Extension> directly under "
+            f"Applications/Application/Extensions (doc={len(doc_d4_exts)}, app={len(app_d4_exts)})"
+        )
+    d4_ext = app_d4_exts[0]
+    if d4_ext.attrib.get("Category") != "windows.fileExplorerContextMenus":
+        raise ValueError(
+            "<desktop4:Extension> Category must be 'windows.fileExplorerContextMenus', "
+            f"got {d4_ext.attrib.get('Category')!r}"
+        )
+    doc_ctx_menus = manifest_root.findall(f".//{desktop4_ns}FileExplorerContextMenus")
+    child_ctx_menus = d4_ext.findall(f"{desktop4_ns}FileExplorerContextMenus")
+    if len(doc_ctx_menus) != 1 or len(child_ctx_menus) != 1 or len(list(d4_ext)) != 1:
+        raise ValueError(
+            "AppxManifest.xml <desktop4:Extension> must contain exactly 1 <desktop4:FileExplorerContextMenus> "
+            f"as its sole child (doc={len(doc_ctx_menus)}, direct={len(child_ctx_menus)}, children={len(list(d4_ext))})"
+        )
+    ctx_menus = child_ctx_menus[0]
+    doc_item_types = manifest_root.findall(f".//{desktop5_ns}ItemType")
+    child_item_types = ctx_menus.findall(f"{desktop5_ns}ItemType")
+    if len(list(ctx_menus)) != 2 or len(doc_item_types) != 2 or len(child_item_types) != 2:
+        raise ValueError(
+            "AppxManifest.xml <desktop4:FileExplorerContextMenus> must contain exactly 2 <desktop5:ItemType> "
+            f"children total (children={len(list(ctx_menus))}, doc={len(doc_item_types)}, direct={len(child_item_types)})"
+        )
+    seen_types: list[str | None] = [it.attrib.get("Type") for it in child_item_types]
+    if set(seen_types) != {"*", "Directory"}:
+        raise ValueError(
+            f"<desktop5:ItemType> Type set must be exactly {{'*', 'Directory'}}, got {seen_types!r}"
+        )
+    verb_ids: set[str] = set()
+    for item_type in child_item_types:
+        verbs = item_type.findall(f"{desktop5_ns}Verb")
+        if len(list(item_type)) != 1 or len(verbs) != 1:
             raise ValueError(
-                "AppxManifest.xml missing Applications/Application/Extensions/"
-                "desktop4:Extension[@Category='windows.fileExplorerContextMenus'] "
-                f"verb for Type={req_type!r}"
+                f"<desktop5:ItemType Type={item_type.attrib.get('Type')!r}> must contain exactly 1 "
+                f"<desktop5:Verb> as its sole child (children={len(list(item_type))}, verbs={len(verbs)})"
+            )
+        verb = verbs[0]
+        if len(list(verb)) != 0:
+            raise ValueError("<desktop5:Verb> must not contain child elements")
+        verb_id = verb.attrib.get("Id", "")
+        if not verb_id.strip():
+            raise ValueError(
+                f"<desktop5:Verb> under Type={item_type.attrib.get('Type')!r} must have a non-empty Id"
+            )
+        if verb_id in verb_ids:
+            raise ValueError(f"Duplicate <desktop5:Verb> Id {verb_id!r}")
+        verb_ids.add(verb_id)
+        verb_clsid = verb.attrib.get("Clsid", "")
+        if not BARE_GUID_RE.fullmatch(verb_clsid):
+            raise ValueError(
+                f"<desktop5:Verb> Clsid must be a bare GUID without braces, got {verb_clsid!r}"
+            )
+        if verb_clsid.lower() != EXPECTED_EXPLORER_CLSID:
+            raise ValueError(
+                f"<desktop5:Verb> Clsid mismatch: {verb_clsid!r} != {EXPECTED_EXPLORER_CLSID!r}"
             )
 
-    # 3. ToastNotificationActivation + matching com:ExeServer with bare distinct GUID.
-    toast_elem = manifest_root.find(
-        f"{app_ext}/{desktop_ns}Extension[@Category='windows.toastNotificationActivation']"
-        f"/{desktop_ns}ToastNotificationActivation"
-    )
-    if toast_elem is None:
+    doc_verbs = manifest_root.findall(f".//{desktop5_ns}Verb")
+    if len(doc_verbs) != 2:
         raise ValueError(
-            "AppxManifest.xml missing Applications/Application/Extensions/"
-            "desktop:Extension[@Category='windows.toastNotificationActivation']/"
-            "desktop:ToastNotificationActivation"
+            f"AppxManifest.xml must declare exactly 2 <desktop5:Verb> elements total, found {len(doc_verbs)}"
         )
+    doc_d4_all = [el for el in manifest_root.iter() if el.tag.startswith(desktop4_ns)]
+    if len(doc_d4_all) != 2:
+        raise ValueError(
+            f"AppxManifest.xml contains unexpected desktop4:* elements (expected 2 total, found {len(doc_d4_all)})"
+        )
+    doc_d5_all = [el for el in manifest_root.iter() if el.tag.startswith(desktop5_ns)]
+    if len(doc_d5_all) != 4:
+        raise ValueError(
+            f"AppxManifest.xml contains unexpected desktop5:* elements (expected 4 total, found {len(doc_d5_all)})"
+        )
+
+    # 4. desktop:Extension (windows.toastNotificationActivation) matching com:ExeServer Class Id.
+    doc_d_exts = manifest_root.findall(f".//{desktop_ns}Extension")
+    app_d_exts = app_ext.findall(f"{desktop_ns}Extension")
+    if len(doc_d_exts) != 1 or len(app_d_exts) != 1:
+        raise ValueError(
+            "AppxManifest.xml must declare exactly 1 <desktop:Extension> directly under "
+            f"Applications/Application/Extensions (doc={len(doc_d_exts)}, app={len(app_d_exts)})"
+        )
+    d_ext = app_d_exts[0]
+    if d_ext.attrib.get("Category") != "windows.toastNotificationActivation":
+        raise ValueError(
+            "<desktop:Extension> Category must be 'windows.toastNotificationActivation', "
+            f"got {d_ext.attrib.get('Category')!r}"
+        )
+    doc_toasts = manifest_root.findall(f".//{desktop_ns}ToastNotificationActivation")
+    child_toasts = d_ext.findall(f"{desktop_ns}ToastNotificationActivation")
+    if len(doc_toasts) != 1 or len(child_toasts) != 1 or len(list(d_ext)) != 1:
+        raise ValueError(
+            "AppxManifest.xml <desktop:Extension> must contain exactly 1 <desktop:ToastNotificationActivation> "
+            f"as its sole child (doc={len(doc_toasts)}, direct={len(child_toasts)}, children={len(list(d_ext))})"
+        )
+    toast_elem = child_toasts[0]
+    if len(list(toast_elem)) != 0:
+        raise ValueError("<desktop:ToastNotificationActivation> must not contain child elements")
     toast_guid = toast_elem.attrib.get("ToastActivatorCLSID", "")
     if not BARE_GUID_RE.fullmatch(toast_guid):
         raise ValueError(f"ToastActivatorCLSID must be a bare GUID without braces, got {toast_guid!r}")
@@ -838,41 +1031,50 @@ def verify_manifest_extensions(manifest_root: ET.Element) -> None:
         raise ValueError(f"ToastActivatorCLSID mismatch: {toast_guid!r} != {EXPECTED_TOAST_CLSID!r}")
     if toast_guid.lower() == EXPECTED_EXPLORER_CLSID:
         raise ValueError("ToastActivatorCLSID must be distinct from Explorer COM CLSID")
-
-    exe_servers = manifest_root.findall(f"{com_server_prefix}/{com_ns}ExeServer")
-    toast_srv = next(
-        (
-            srv
-            for srv in exe_servers
-            if any(c.attrib.get("Id", "").lower() == toast_guid.lower() for c in srv.findall(f"{com_ns}Class"))
-        ),
-        None,
-    )
-    if toast_srv is None:
+    if toast_guid.lower() != toast_cls_id.lower():
         raise ValueError(
-            "AppxManifest.xml missing Applications/Application/Extensions/"
-            "com:Extension[@Category='windows.comServer']/com:ComServer/"
-            "com:ExeServer matching ToastActivatorCLSID"
+            f"ToastActivatorCLSID ({toast_guid!r}) must match ExeServer/Class/@Id ({toast_cls_id!r})"
         )
-    if toast_srv.attrib.get("Executable") != "totaldrop-winui.exe":
-        raise ValueError(f"Toast ExeServer Executable mismatch: {toast_srv.attrib.get('Executable')!r}")
-    if toast_srv.attrib.get("Arguments") != "----AppNotificationActivated:":
-        raise ValueError(f"Toast ExeServer Arguments mismatch: {toast_srv.attrib.get('Arguments')!r}")
+    doc_d_all = [el for el in manifest_root.iter() if el.tag.startswith(desktop_ns)]
+    if len(doc_d_all) != 2:
+        raise ValueError(
+            f"AppxManifest.xml contains unexpected desktop:* elements (expected 2 total, found {len(doc_d_all)})"
+        )
 
-    # 4. Package-level scoped desktop2:FirewallRules (reject public/all/domain/out/TCP/wrong-exe/app-level).
-    if manifest_root.findall(f"{appx_ns}Applications//{desktop2_ns}FirewallRules"):
-        raise ValueError("desktop2:FirewallRules must be declared at Package level, not under Applications")
-    fw_nodes = manifest_root.findall(
-        f"{appx_ns}Extensions/{desktop2_ns}Extension[@Category='windows.firewallRules']/{desktop2_ns}FirewallRules"
-    )
-    if len(fw_nodes) != 1:
-        raise ValueError(f"expected exactly 1 package-level desktop2:FirewallRules, found {len(fw_nodes)}")
-    if fw_nodes[0].attrib.get("Executable") != "totaldrop-winui.exe":
-        raise ValueError(f"FirewallRules Executable mismatch: {fw_nodes[0].attrib.get('Executable')!r}")
-    rules = fw_nodes[0].findall(f"{desktop2_ns}Rule")
-    if len(rules) != 1:
-        raise ValueError(f"expected exactly 1 scoped firewall rule, found {len(rules)}")
-    rule = rules[0]
+    # 5. Package-level desktop2:Extension (windows.firewallRules): exact 1 FirewallRules + 1 scoped Rule.
+    doc_d2_exts = manifest_root.findall(f".//{desktop2_ns}Extension")
+    pkg_d2_exts = pkg_ext.findall(f"{desktop2_ns}Extension")
+    if len(doc_d2_exts) != 1 or len(pkg_d2_exts) != 1 or len(list(pkg_ext)) != 1:
+        raise ValueError(
+            "AppxManifest.xml must declare exactly 1 <desktop2:Extension> as the sole child of "
+            f"Package/Extensions (doc={len(doc_d2_exts)}, pkg={len(pkg_d2_exts)}, pkg_children={len(list(pkg_ext))})"
+        )
+    d2_ext = pkg_d2_exts[0]
+    if d2_ext.attrib.get("Category") != "windows.firewallRules":
+        raise ValueError(
+            "<desktop2:Extension> Category must be 'windows.firewallRules', "
+            f"got {d2_ext.attrib.get('Category')!r}"
+        )
+    doc_fw_rules = manifest_root.findall(f".//{desktop2_ns}FirewallRules")
+    child_fw_rules = d2_ext.findall(f"{desktop2_ns}FirewallRules")
+    if len(doc_fw_rules) != 1 or len(child_fw_rules) != 1 or len(list(d2_ext)) != 1:
+        raise ValueError(
+            "AppxManifest.xml <desktop2:Extension> must contain exactly 1 <desktop2:FirewallRules> "
+            f"as its sole child (doc={len(doc_fw_rules)}, direct={len(child_fw_rules)}, children={len(list(d2_ext))})"
+        )
+    fw_rules = child_fw_rules[0]
+    if fw_rules.attrib.get("Executable") != "totaldrop-winui.exe":
+        raise ValueError(f"FirewallRules Executable mismatch: {fw_rules.attrib.get('Executable')!r}")
+    doc_rules = manifest_root.findall(f".//{desktop2_ns}Rule")
+    child_rules = fw_rules.findall(f"{desktop2_ns}Rule")
+    if len(doc_rules) != 1 or len(child_rules) != 1 or len(list(fw_rules)) != 1:
+        raise ValueError(
+            "AppxManifest.xml <desktop2:FirewallRules> must contain exactly 1 <desktop2:Rule> "
+            f"as its sole child (doc={len(doc_rules)}, direct={len(child_rules)}, children={len(list(fw_rules))})"
+        )
+    rule = child_rules[0]
+    if len(list(rule)) != 0:
+        raise ValueError("<desktop2:Rule> must not contain child elements")
     if (
         rule.attrib.get("Direction") != "in"
         or rule.attrib.get("IPProtocol") != "UDP"
@@ -882,10 +1084,32 @@ def verify_manifest_extensions(manifest_root: ET.Element) -> None:
             "FirewallRule must be strictly Direction='in', IPProtocol='UDP', Profile='private'; "
             f"got {rule.attrib!r}"
         )
+    doc_d2_all = [el for el in manifest_root.iter() if el.tag.startswith(desktop2_ns)]
+    if len(doc_d2_all) != 3:
+        raise ValueError(
+            f"AppxManifest.xml contains unexpected desktop2:* elements (expected 3 total, found {len(doc_d2_all)})"
+        )
 
-    # 5. Restricted capability runFullTrust.
-    if manifest_root.find(f"{appx_ns}Capabilities/{rescap_ns}Capability[@Name='runFullTrust']") is None:
-        raise ValueError("AppxManifest.xml missing <rescap:Capability Name=\"runFullTrust\" />")
+    # 6. Restricted capability runFullTrust (sole rescap:Capability under Package/Capabilities).
+    doc_caps = manifest_root.findall(f".//{appx_ns}Capabilities")
+    direct_caps = manifest_root.findall(f"{appx_ns}Capabilities")
+    if len(doc_caps) != 1 or len(direct_caps) != 1:
+        raise ValueError(
+            "AppxManifest.xml must contain exactly 1 top-level <Capabilities> element "
+            f"(doc={len(doc_caps)}, direct={len(direct_caps)})"
+        )
+    caps = direct_caps[0]
+    doc_rescaps = manifest_root.findall(f".//{rescap_ns}Capability")
+    direct_rescaps = caps.findall(f"{rescap_ns}Capability")
+    if (
+        len(doc_rescaps) != 1
+        or len(direct_rescaps) != 1
+        or direct_rescaps[0].attrib.get("Name") != "runFullTrust"
+    ):
+        raise ValueError(
+            'AppxManifest.xml must declare exactly 1 <rescap:Capability Name="runFullTrust" /> '
+            "under Package/Capabilities"
+        )
 
 
 def verify_pri_dump(pri_dump_path: Path) -> None:
