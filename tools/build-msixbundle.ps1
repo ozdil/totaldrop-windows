@@ -148,6 +148,18 @@ function Assert-AppxSymArchive {
                 if ([string]::IsNullOrWhiteSpace($name)) {
                     throw "$Label contains an empty ZIP entry name."
                 }
+                foreach ($ch in $name.ToCharArray()) {
+                    $cp = [int]$ch
+                    if ($cp -lt 0x20 -or $cp -gt 0x7E) {
+                        throw ('{0} contains non-ASCII or control character (U+{1:X4}) in ZIP entry name.' -f $Label, $cp)
+                    }
+                }
+                if ($name -cne $name.Trim()) {
+                    throw "$Label contains leading or trailing whitespace in entry '$name'."
+                }
+                if ($name.StartsWith(".")) {
+                    throw "$Label contains hidden dotfile entry '$name'."
+                }
                 if ($name.Contains("/") -or $name.Contains("\") -or $name.Contains(":")) {
                     throw "$Label contains nested, trailing-slash, or unsafe path entry '$name' (flat root .pdb files only)."
                 }

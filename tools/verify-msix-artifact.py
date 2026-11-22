@@ -886,6 +886,28 @@ def _read_zip_member(zf: zipfile.ZipFile, member: str | zipfile.ZipInfo, label: 
         raise ValueError(f"{label}: corrupted ZIP member {member_name!r}: {exc}") from exc
 
 
+def _check_zip_extra_fields(extra: bytes, label: str, entry_name: str, location: str) -> None:
+    off = 0
+    extra_len = len(extra)
+    while off < extra_len:
+        if off + 4 > extra_len:
+            raise ValueError(
+                f"{label}: ZIP entry {entry_name!r} has truncated {location} extra field header"
+            )
+        header_id, data_size = struct.unpack_from("<HH", extra, off)
+        off += 4
+        if off + data_size > extra_len:
+            raise ValueError(
+                f"{label}: ZIP entry {entry_name!r} has truncated {location} extra field 0x{header_id:04x}"
+            )
+        if header_id == 0x7075:
+            raise ValueError(
+                f"{label}: ZIP entry {entry_name!r} uses forbidden Info-ZIP 0x7075 Unicode Path "
+                f"extra field ({location})"
+            )
+        off += data_size
+
+
 def _check_opc_zip_entries(
     zf: zipfile.ZipFile,
     label: str,
@@ -908,6 +930,33 @@ def _check_opc_zip_entries(
     seen_dirs: dict[str, str] = {}
     seen_dir_case: dict[str, str] = {}
     for info in infos:
+        if info.orig_filename != info.filename:
+            raise ValueError(
+                f"{label}: raw ZIP entry name {info.orig_filename!r} differs from normalized name "
+                f"{info.filename!r} (NUL truncation, backslash separator, or 0x7075 extra-field spoofing is forbidden)"
+            )
+        _check_zip_extra_fields(info.extra or b"", label, info.orig_filename, "central-directory")
+        if zf.fp is not None:
+            saved_pos = zf.fp.tell()
+            try:
+                zf.fp.seek(info.header_offset)
+                lfh = zf.fp.read(30)
+                if len(lfh) != 30 or lfh[:4] != b"PK\x03\x04":
+                    raise ValueError(
+                        f"{label}: ZIP entry {info.orig_filename!r} has invalid local file header"
+                    )
+                lfh_name_len, lfh_extra_len = struct.unpack_from("<HH", lfh, 26)
+                if lfh_extra_len:
+                    zf.fp.seek(info.header_offset + 30 + lfh_name_len)
+                    lfh_extra = zf.fp.read(lfh_extra_len)
+                    if len(lfh_extra) != lfh_extra_len:
+                        raise ValueError(
+                            f"{label}: ZIP entry {info.orig_filename!r} has truncated local-header extra field"
+                        )
+                    _check_zip_extra_fields(lfh_extra, label, info.orig_filename, "local-header")
+            finally:
+                zf.fp.seek(saved_pos)
+
         name = info.filename
         if name in seen_exact:
             raise ValueError(f"{label}: duplicate ZIP entry {name!r}")
@@ -2537,7 +2586,7 @@ def _make_synthetic_upload(entries: list[tuple[str, bytes]]) -> bytes:
 
 
 def run_self_test_bundle() -> int:
-    """Run 25 positive and negative pure-Python synthetic self-tests against the real verifier."""
+    """Run 27 positive and negative pure-Python synthetic self-tests against the real verifier."""
     repo_root = Path(__file__).resolve().parent.parent
     x64_tpl = (repo_root / "target-x86_64" / "Package.x64.appxmanifest").read_text(encoding="utf-8")
     arm64_tpl = (repo_root / "target-arm64" / "Package.arm64.appxmanifest").read_text(encoding="utf-8")
@@ -3332,7 +3381,238 @@ def run_self_test_bundle() -> int:
                 "trailing dot or space",
             )
 
-    print("self-test-bundle OK: 26/26 positive & negative bundle/msixupload/store-mode checks passed.")
+        # Case 27: NUL-byte filename truncation and Info-ZIP 0x7075 Unicode Path extra-field polyglot shadowing rejected.
+        def _make_unicode_path_extra(raw_name: str, unicode_name: str) -> bytes:
+            crc = zlib.crc32(raw_name.encode("utf-8")) & 0xFFFF_FFFF
+            payload = struct.pack("<BL", 1, crc) + unicode_name.encode("utf-8")
+            return struct.pack("<HH", 0x7075, len(payload)) + payload
+
+        def _patch_zip_raw_entries(
+            base_zip: bytes,
+            raw_entries: list[tuple[str, bytes, bytes]],
+            *,
+            drop_names: frozenset[str] = frozenset(),
+        ) -> bytes:
+            out = io.BytesIO()
+            with (
+                zipfile.ZipFile(io.BytesIO(base_zip), "r") as zin,
+                zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zout,
+            ):
+                for item in zin.infolist():
+                    if item.filename in drop_names:
+                        continue
+                    zout.writestr(item.filename, zin.read(item))
+                for raw_name, payload, extra in raw_entries:
+                    zi = zipfile.ZipInfo("placeholder")
+                    zi.filename = raw_name
+                    zi.compress_type = zipfile.ZIP_DEFLATED
+                    zi.extra = extra
+                    zout.writestr(zi, payload)
+            return out.getvalue()
+
+        # 27a: NUL-truncated benign\x00signing.pfx inside .msix.
+        arm64_nul_pfx = _patch_zip_raw_entries(
+            arm64_ok,
+            [("benign\x00signing.pfx", b"PRIVATE_KEY_MATERIAL", b"")],
+        )
+        expect_fail(
+            "case-27a-msix-nul-truncation",
+            lambda: verify_msix_archive(
+                arm64_nul_pfx,
+                "27a-nul.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "differs from normalized name",
+        )
+
+        # 27b: NUL-truncated totaldrop-winui.pdb\x00signing.pfx inside .appxsym inside .msixupload.
+        sym_nul_pfx = _patch_zip_raw_entries(
+            sym_ok,
+            [("totaldrop-winui.pdb\x00signing.pfx", b"PRIVATE_KEY_MATERIAL", b"")],
+            drop_names=frozenset({"totaldrop-winui.pdb"}),
+        )
+        upload_nul_sym = tmp_dir / "27b-appxsym-nul.msixupload"
+        upload_nul_sym.write_bytes(
+            _make_synthetic_upload(
+                [
+                    (bundle_ok_path.name, bundle_ok_bytes),
+                    (f"TotalDrop_{store_ver}_x64.appxsym", sym_nul_pfx),
+                    (f"TotalDrop_{store_ver}_arm64.appxsym", sym_ok),
+                ]
+            )
+        )
+        expect_fail(
+            "case-27b-appxsym-nul-truncation",
+            lambda: verify_msixupload_archive(
+                upload_nul_sym,
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "differs from normalized name",
+        )
+
+        # 27c: Info-ZIP 0x7075 full AppxManifest.xml polyglot shadowing (evil x86 / unsigned-OID / CN=TotalDrop).
+        with zipfile.ZipFile(io.BytesIO(arm64_ok), "r") as zf_arm64_good:
+            good_arm64_manifest = zf_arm64_good.read("AppxManifest.xml")
+        evil_manifest = _patch_manifest_xml(
+            arm64_tpl,
+            name="TotalDrop.TotalDrop",
+            publisher=f"OID.{UNSIGNED_PACKAGE_OID}=1, CN=TotalDrop",
+            version="0.0.0.1",
+            arch="x86",
+        )
+        arm64_manifest_shadow = _patch_zip_raw_entries(
+            arm64_ok,
+            [
+                (
+                    "good_manifest.dat",
+                    good_arm64_manifest,
+                    _make_unicode_path_extra("good_manifest.dat", "AppxManifest.xml"),
+                ),
+                (
+                    "AppxManifest.xml",
+                    evil_manifest,
+                    _make_unicode_path_extra("AppxManifest.xml", "harmless_note.txt"),
+                ),
+            ],
+            drop_names=frozenset({"AppxManifest.xml"}),
+        )
+        bundle_manifest_shadow = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_manifest_shadow),
+            ],
+        )
+        expect_fail(
+            "case-27c-0x7075-manifest-polyglot",
+            lambda: verify_msixbundle_archive(
+                bundle_manifest_shadow,
+                "27c-manifest-shadow.msixbundle",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "0x7075",
+        )
+
+        # 27d: Info-ZIP 0x7075 hidden signing.pfx in .msix.
+        arm64_0x7075_pfx = _patch_zip_raw_entries(
+            arm64_ok,
+            [
+                (
+                    "signing.pfx",
+                    b"PRIVATE_KEY_MATERIAL",
+                    _make_unicode_path_extra("signing.pfx", "harmless.txt"),
+                ),
+            ],
+        )
+        expect_fail(
+            "case-27d-0x7075-msix-pfx",
+            lambda: verify_msix_archive(
+                arm64_0x7075_pfx,
+                "27d-0x7075-pfx.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "0x7075",
+        )
+
+        # 27e: Info-ZIP 0x7075 hidden signing.pfx in .appxsym inside .msixupload.
+        sym_0x7075_pfx = _patch_zip_raw_entries(
+            sym_ok,
+            [
+                (
+                    "signing.pfx",
+                    b"PRIVATE_KEY_MATERIAL",
+                    _make_unicode_path_extra("signing.pfx", "totaldrop-winui.pdb"),
+                ),
+            ],
+            drop_names=frozenset({"totaldrop-winui.pdb"}),
+        )
+        upload_0x7075_sym = tmp_dir / "27e-0x7075-appxsym.msixupload"
+        upload_0x7075_sym.write_bytes(
+            _make_synthetic_upload(
+                [
+                    (bundle_ok_path.name, bundle_ok_bytes),
+                    (f"TotalDrop_{store_ver}_x64.appxsym", sym_0x7075_pfx),
+                    (f"TotalDrop_{store_ver}_arm64.appxsym", sym_ok),
+                ]
+            )
+        )
+        expect_fail(
+            "case-27e-0x7075-appxsym-pfx",
+            lambda: verify_msixupload_archive(
+                upload_0x7075_sym,
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "0x7075",
+        )
+
+        # 27f: Info-ZIP 0x7075 poisoned NUL suffix matching orig_filename (orig="benign" + 0x7075="benign\x00evil").
+        arm64_0x7075_nul_match = _patch_zip_raw_entries(
+            arm64_ok,
+            [
+                (
+                    "benign",
+                    b"POISONED_EXTRA",
+                    _make_unicode_path_extra("benign", "benign\x00evil"),
+                ),
+            ],
+        )
+        expect_fail(
+            "case-27f-0x7075-nul-matching-orig",
+            lambda: verify_msix_archive(
+                arm64_0x7075_nul_match,
+                "27f-0x7075-nul.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "0x7075",
+        )
+
+        # Positive control: standard Extended Timestamp (0x5455) extra field passes cleanly.
+        ext_ts_extra = struct.pack("<HHBI", 0x5455, 5, 1, 1760000000)
+        arm64_valid_extra = _patch_zip_raw_entries(
+            arm64_ok,
+            [("benign_meta.txt", b"OK", ext_ts_extra)],
+        )
+        verify_msix_archive(
+            arm64_valid_extra,
+            "27-pos-0x5455.msix",
+            arch="arm64",
+            expected_version=store_ver,
+            expect_signed=False,
+            store_mode=True,
+            allow_test_identity=False,
+            run_live_smoke=False,
+        )
+
+    print("self-test-bundle OK: 27/27 positive & negative bundle/msixupload/store-mode checks passed.")
     return 0
 
 
