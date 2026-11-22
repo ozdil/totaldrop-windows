@@ -11,6 +11,7 @@ Uses only the Python standard library so it runs cleanly on GitHub Actions
 from __future__ import annotations
 
 import argparse
+import re
 import struct
 import subprocess
 import sys
@@ -223,14 +224,17 @@ def parse_pe64(path: Path) -> dict[str, object]:
                 if dtype == IMAGE_DEBUG_TYPE_EX_DLLCHARACTERISTICS and size_of_data >= 4:
                     val_off = ptr_raw if ptr_raw != 0 else rva_to_off(addr_raw)
                     if val_off is not None and val_off + 4 <= len(data):
-                        ex_dll_chars = struct.unpack_from("<I", data, val_off)[0]
+                        ex_dll_chars |= struct.unpack_from("<I", data, val_off)[0]
 
         # Load Config DependentLoadFlags (offset 0x4E in IMAGE_LOAD_CONFIG_DIRECTORY64;
         # minimum struct size 0x50 = 80 bytes per Microsoft PE32+ specification).
+        # Note: MSVC link.exe historically sets DataDirectory[10].Size = 0x40 while
+        # the struct's own Size header field holds the full >= 0x50 length, whereas
+        # DataDirectory[10].Size == 0 disables Load Config in the Windows PE loader.
         dependent_load_flags: int | None = None
-        lc_rva, _ = data_dir(10)
+        lc_rva, lc_dir_size = data_dir(10)
         lc_off = rva_to_off(lc_rva)
-        if lc_off is not None and lc_off + 4 <= len(data):
+        if lc_dir_size > 0 and lc_off is not None and lc_off + 4 <= len(data):
             lc_struct_size = struct.unpack_from("<I", data, lc_off)[0]
             if lc_struct_size >= 0x50 and lc_off + 0x50 <= len(data):
                 dependent_load_flags = struct.unpack_from("<H", data, lc_off + 0x4E)[0]
@@ -315,7 +319,7 @@ def verify_pri_dump(pri_dump_path: Path) -> None:
     )
     missing = [tok for tok in required_tokens if tok not in text]
     for qualifier in ("UNPLATED", "LIGHTUNPLATED"):
-        if qualifier not in upper_text:
+        if not re.search(rf"(?<![A-Z0-9]){qualifier}(?![A-Z0-9])", upper_text):
             missing.append(qualifier)
     if missing:
         raise ValueError(f"resources.pri dump missing expected entries: {missing}")
@@ -426,7 +430,11 @@ def main(argv: list[str] | None = None) -> int:
             for n in names
             if n.lower().endswith(".pdb")
             or n.lower().endswith(".resw")
-            or (n.lower().startswith("resources.") and n.lower().endswith(".pri") and n.lower() != "resources.pri")
+            or (
+                Path(n.replace("\\", "/")).name.lower().startswith("resources.")
+                and n.lower().endswith(".pri")
+                and n.lower() != "resources.pri"
+            )
         ]
         if forbidden_entries:
             print(f"error: forbidden staging artifacts packed in MSIX: {forbidden_entries}", file=sys.stderr)

@@ -127,8 +127,48 @@ unsafe fn read_optional_c_str<'a>(ptr: *const c_char) -> Result<Option<&'a str>,
     }
 }
 
+const MAX_UNKNOWN_WORD_PREVIEW_CHARS: usize = 64;
+
+const fn is_disallowed_ui_metadata_char(ch: char) -> bool {
+    if ch.is_control() {
+        return true;
+    }
+    let cp = ch as u32;
+    matches!(
+        cp,
+        0x00AD
+            | 0x0600..=0x0605
+            | 0x061C
+            | 0x06DD
+            | 0x070F
+            | 0x0890..=0x0891
+            | 0x08E2
+            | 0x180E
+            | 0x200B..=0x200F
+            | 0x2028..=0x202E
+            | 0x2060..=0x206F
+            | 0xFDD0..=0xFDEF
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0000..=0xE007F
+    ) || (cp & 0xFFFE) == 0xFFFE
+}
+
+fn sanitize_ui_metadata(raw: &str) -> String {
+    raw.chars()
+        .filter(|&ch| !is_disallowed_ui_metadata_char(ch))
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
 fn parse_lang_tags(raw: &str) -> Vec<String> {
-    let trimmed = raw.trim();
+    let trimmed = raw.trim().trim_start_matches('\u{FEFF}').trim();
     if trimmed.is_empty() {
         return Vec::new();
     }
@@ -137,13 +177,13 @@ fn parse_lang_tags(raw: &str) -> Vec<String> {
     {
         return parsed
             .into_iter()
-            .map(|tag| tag.trim().to_owned())
+            .map(|tag| sanitize_ui_metadata(&tag))
             .filter(|tag| !tag.is_empty())
             .collect();
     }
     trimmed
         .split([',', ';'])
-        .map(|tag| tag.trim().to_owned())
+        .map(sanitize_ui_metadata)
         .filter(|tag| !tag.is_empty())
         .collect()
 }
@@ -158,6 +198,16 @@ const fn uri_error_kind(err: &UriValidationError) -> &'static str {
         UriValidationError::UnknownWord { .. } => "unknown_word",
         UriValidationError::NoCodeFoundInText => "no_code_found_in_text",
     }
+}
+
+fn format_uri_error_message(err: &UriValidationError) -> String {
+    if let UriValidationError::UnknownWord { word } = err
+        && word.chars().nth(MAX_UNKNOWN_WORD_PREVIEW_CHARS).is_some()
+    {
+        let preview: String = word.chars().take(MAX_UNKNOWN_WORD_PREVIEW_CHARS).collect();
+        return format!("{preview:?}... is not a valid TotalDrop code word");
+    }
+    err.to_string()
 }
 
 /// Frees a UTF-8 JSON string previously returned by any `totaldrop_win_*`
@@ -233,7 +283,7 @@ pub unsafe extern "C" fn totaldrop_win_validate_uri_json(raw_uri: *const c_char)
                 uri_error_kind(&err),
                 Some(err.l10n_key()),
                 None,
-                err.to_string(),
+                format_uri_error_message(&err),
             ),
         }
     })
@@ -276,7 +326,7 @@ pub unsafe extern "C" fn totaldrop_win_validate_input_json(
                 uri_error_kind(&err),
                 Some(err.l10n_key()),
                 None,
-                err.to_string(),
+                format_uri_error_message(&err),
             ),
         }
     })
@@ -306,10 +356,10 @@ pub unsafe extern "C" fn totaldrop_win_format_percent_json(
                 return error_json("invalid_utf8", Some("errorOther"), None, msg);
             }
         };
-        let region = region_opt
-            .map(str::trim)
-            .filter(|tag| !tag.is_empty())
-            .unwrap_or("en-US");
+        let sanitized_region = region_opt
+            .map(sanitize_ui_metadata)
+            .filter(|tag| !tag.is_empty());
+        let region = sanitized_region.as_deref().unwrap_or("en-US");
         let percent = format_regional_percent(done, total, region);
         serialize_or_error(&percent)
     })
@@ -359,13 +409,15 @@ pub unsafe extern "C" fn totaldrop_win_ui_bundle_json(
         };
 
         let tags = langs_opt.map(parse_lang_tags).unwrap_or_default();
-        let region = region_opt.map(str::trim).filter(|tag| !tag.is_empty());
-        let version = version_opt
-            .map(str::trim)
-            .filter(|ver| !ver.is_empty())
-            .unwrap_or(APP_VERSION);
+        let sanitized_region = region_opt
+            .map(sanitize_ui_metadata)
+            .filter(|tag| !tag.is_empty());
+        let sanitized_version = version_opt
+            .map(sanitize_ui_metadata)
+            .filter(|ver| !ver.is_empty());
+        let version = sanitized_version.as_deref().unwrap_or(APP_VERSION);
 
-        let localizer = WindowsLocalizer::new(tags, region);
+        let localizer = WindowsLocalizer::new(tags, sanitized_region.as_deref());
         let bundle = localizer.ui_bundle(version);
         serialize_or_error(&bundle)
     })
@@ -440,5 +492,43 @@ mod tests {
             parse_lang_tags(r#"["ar-SA", " en-US ", ""]"#),
             vec!["ar-SA", "en-US"]
         );
+        assert_eq!(
+            parse_lang_tags("\x1b\u{202E}tr-TR\x07, \u{2066}en-US\u{2069}"),
+            vec!["tr-TR", "en-US"]
+        );
+    }
+
+    #[test]
+    fn sanitize_ui_metadata_strips_controls_bidi_and_nonchars_preserving_clean_tags() {
+        assert_eq!(sanitize_ui_metadata("en-US"), "en-US");
+        assert_eq!(sanitize_ui_metadata("zh-Hant-TW"), "zh-Hant-TW");
+        assert_eq!(sanitize_ui_metadata("0.1.0-beta.1"), "0.1.0-beta.1");
+        assert_eq!(
+            sanitize_ui_metadata(
+                " \x1b[31m\u{202E}en-US\u{0085}\u{00AD}\u{FEFF}\u{FDD0}\u{FFFF}\u{E0041} "
+            ),
+            "[31men-US"
+        );
+        assert_eq!(
+            sanitize_ui_metadata("\x1b\u{202E}\x07\u{009B}\u{200B}\u{2028}\u{2029}   "),
+            ""
+        );
+    }
+
+    #[test]
+    fn format_uri_error_message_bounds_unknown_word_at_64_chars() {
+        let exact = UriValidationError::UnknownWord {
+            word: "a".repeat(MAX_UNKNOWN_WORD_PREVIEW_CHARS),
+        };
+        let exact_msg = format_uri_error_message(&exact);
+        assert!(!exact_msg.contains("..."));
+        assert!(exact_msg.contains(&"a".repeat(MAX_UNKNOWN_WORD_PREVIEW_CHARS)));
+
+        let over = UriValidationError::UnknownWord {
+            word: "b".repeat(MAX_UNKNOWN_WORD_PREVIEW_CHARS + 1),
+        };
+        let over_msg = format_uri_error_message(&over);
+        assert!(over_msg.contains("..."));
+        assert!(over_msg.len() < 256);
     }
 }

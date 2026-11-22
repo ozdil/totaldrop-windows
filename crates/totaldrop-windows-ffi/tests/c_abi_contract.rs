@@ -330,3 +330,236 @@ fn ui_bundle_json_preserves_29_fields_rtl_security_gates_and_fallbacks() -> Test
     );
     Ok(())
 }
+
+fn contains_disallowed_ui_char(text: &str) -> bool {
+    text.chars().any(|ch| {
+        if ch.is_control() {
+            return true;
+        }
+        let cp = ch as u32;
+        matches!(
+            cp,
+            0x00AD
+                | 0x061C
+                | 0x180E
+                | 0x200B..=0x200F
+                | 0x2028..=0x202E
+                | 0x2060..=0x206F
+                | 0xFDD0..=0xFDEF
+                | 0xFEFF
+                | 0xFFF9..=0xFFFB
+                | 0xE0000..=0xE007F
+        ) || (cp & 0xFFFE) == 0xFFFE
+    })
+}
+
+#[test]
+fn ui_bundle_json_strips_control_and_bidi_chars_and_falls_back_cleanly() -> TestResult {
+    // Direct reproduction of poisoned region_tag and app_version containing
+    // ANSI ESC, Bidi RLO, BEL, NEL, and C1 CSI.
+    let langs = c_str("en-US")?;
+    let poisoned_region = c_str("\x1b[31m\u{202E}en-US\u{0085}")?;
+    let poisoned_version = c_str("0.1.0\x1b[31m\u{202E}\x07\u{009B}31m")?;
+    // SAFETY: All three pointers are live NUL-terminated CStrings.
+    let bundle = decode_and_free(unsafe {
+        totaldrop_win_ui_bundle_json(
+            langs.as_ptr(),
+            poisoned_region.as_ptr(),
+            poisoned_version.as_ptr(),
+        )
+    })?;
+    let region_out = bundle
+        .get("region_tag")
+        .and_then(Value::as_str)
+        .ok_or("missing region_tag")?;
+    let version_out = bundle
+        .get("version_label")
+        .and_then(Value::as_str)
+        .ok_or("missing version_label")?;
+    assert!(
+        !contains_disallowed_ui_char(region_out),
+        "region_tag leaked disallowed control/Bidi char: {region_out:?}"
+    );
+    assert!(
+        !contains_disallowed_ui_char(version_out),
+        "version_label leaked disallowed control/Bidi char: {version_out:?}"
+    );
+    assert_eq!(region_out, "[31men-US");
+    assert!(version_out.contains("0.1.0[31m31m"));
+
+    // Poisoned lang_tags (both raw CSV and JSON \uXXXX escapes) with NULL region_tag
+    // must never echo raw control or Bidi chars via WindowsLocalizer's region fallback.
+    for raw_lang in [
+        "\x1b[31m\u{202E}en-US\x07",
+        r#"["\u001b[31m\u202een-US\u009b31m"]"#,
+    ] {
+        let poisoned_langs = c_str(raw_lang)?;
+        // SAFETY: `poisoned_langs` is a live NUL-terminated CString; nulls are accepted.
+        let lang_fallback_bundle = decode_and_free(unsafe {
+            totaldrop_win_ui_bundle_json(poisoned_langs.as_ptr(), ptr::null(), ptr::null())
+        })?;
+        let echoed_region = lang_fallback_bundle
+            .get("region_tag")
+            .and_then(Value::as_str)
+            .ok_or("missing region_tag")?;
+        assert!(
+            !contains_disallowed_ui_char(echoed_region),
+            "lang_tags fallback leaked disallowed char into region_tag: {echoed_region:?}"
+        );
+    }
+
+    // All-control / all-Bidi region_tag and app_version fall back cleanly to defaults.
+    let all_control = c_str("\x1b\u{202E}\x07\u{009B}\u{200B}\u{FEFF}\u{2028}\u{2029}   ")?;
+    // SAFETY: Both pointers are live NUL-terminated CStrings.
+    let fallback_bundle = decode_and_free(unsafe {
+        totaldrop_win_ui_bundle_json(langs.as_ptr(), all_control.as_ptr(), all_control.as_ptr())
+    })?;
+    assert_eq!(
+        fallback_bundle.get("region_tag").and_then(Value::as_str),
+        Some("en-US")
+    );
+    assert!(
+        fallback_bundle
+            .get("version_label")
+            .and_then(Value::as_str)
+            .is_some_and(|v| v.contains(APP_VERSION) && !contains_disallowed_ui_char(v))
+    );
+
+    // All-control / all-Bidi across all three parameters falls back cleanly to English defaults.
+    // SAFETY: All three pointers are live NUL-terminated CStrings.
+    let all_ctrl_bundle = decode_and_free(unsafe {
+        totaldrop_win_ui_bundle_json(
+            all_control.as_ptr(),
+            all_control.as_ptr(),
+            all_control.as_ptr(),
+        )
+    })?;
+    assert_eq!(
+        all_ctrl_bundle.get("language_tag").and_then(Value::as_str),
+        Some("en")
+    );
+    assert_eq!(
+        all_ctrl_bundle.get("region_tag").and_then(Value::as_str),
+        Some("en")
+    );
+    assert!(
+        all_ctrl_bundle
+            .get("version_label")
+            .and_then(Value::as_str)
+            .is_some_and(|v| v.contains(APP_VERSION) && !contains_disallowed_ui_char(v))
+    );
+
+    // Clean BCP 47 tags and SemVer strings pass through unchanged.
+    for (lang_tag, reg_tag, ver_str) in [
+        ("en-US", "en-US", "0.1.0-beta.1"),
+        ("tr-TR", "tr-TR", "0.1.0-beta.1"),
+        ("zh-Hant-TW", "zh-Hant-TW", "0.1.0-beta.1"),
+    ] {
+        let l = c_str(lang_tag)?;
+        let r = c_str(reg_tag)?;
+        let v = c_str(ver_str)?;
+        // SAFETY: All three pointers are live NUL-terminated CStrings.
+        let clean = decode_and_free(unsafe {
+            totaldrop_win_ui_bundle_json(l.as_ptr(), r.as_ptr(), v.as_ptr())
+        })?;
+        assert_eq!(
+            clean.get("region_tag").and_then(Value::as_str),
+            Some(reg_tag)
+        );
+        assert!(
+            clean
+                .get("version_label")
+                .and_then(Value::as_str)
+                .is_some_and(|label| label.contains(ver_str))
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn validate_input_json_bounds_unknown_word_message_and_preserves_oversized_kind() -> TestResult {
+    // 64 KiB unknown word must preserve exact kind/l10n_key while bounding error.message.
+    let huge_unknown = c_str(&format!("7-harbor-{}", "x".repeat(65_536)))?;
+    // SAFETY: `huge_unknown` is a live NUL-terminated CString.
+    let err = decode_and_free(unsafe { totaldrop_win_validate_input_json(huge_unknown.as_ptr()) })?;
+    assert_eq!(err.get("ok").and_then(Value::as_bool), Some(false));
+    assert_eq!(
+        err.pointer("/error/kind").and_then(Value::as_str),
+        Some("unknown_word")
+    );
+    assert_eq!(
+        err.pointer("/error/l10n_key").and_then(Value::as_str),
+        Some("receiveCodeInvalid")
+    );
+    let msg = err
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .ok_or("missing error.message")?;
+    assert!(
+        msg.len() < 256,
+        "expected bounded error.message (< 256 bytes), got {} bytes",
+        msg.len()
+    );
+    assert!(
+        msg.contains("..."),
+        "expected truncated error.message to contain '...', got {msg:?}"
+    );
+    assert!(
+        !msg.chars().any(char::is_control),
+        "expected zero raw control characters in error.message: {msg:?}"
+    );
+
+    // Exact 64-char unknown word is preserved untruncated; 65 chars truncates with "...".
+    let word64 = "a".repeat(64);
+    let input64 = c_str(&format!("7-harbor-{word64}"))?;
+    // SAFETY: `input64` is a live NUL-terminated CString.
+    let err64 = decode_and_free(unsafe { totaldrop_win_validate_input_json(input64.as_ptr()) })?;
+    let msg64 = err64
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .ok_or("missing error.message")?;
+    assert!(!msg64.contains("..."));
+    assert!(msg64.contains(&word64));
+
+    let input65 = c_str(&format!("7-harbor-{}", "a".repeat(65)))?;
+    // SAFETY: `input65` is a live NUL-terminated CString.
+    let err65 = decode_and_free(unsafe { totaldrop_win_validate_input_json(input65.as_ptr()) })?;
+    let msg65 = err65
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .ok_or("missing error.message")?;
+    assert!(msg65.contains("..."));
+    assert!(msg65.len() < 256);
+
+    // Oversized unknown word with embedded ANSI ESC keeps control chars escaped and bounded.
+    let escaped_unknown = c_str(&format!("7-harbor-\x1b{}", "y".repeat(200)))?;
+    // SAFETY: `escaped_unknown` is a live NUL-terminated CString.
+    let esc_err =
+        decode_and_free(unsafe { totaldrop_win_validate_input_json(escaped_unknown.as_ptr()) })?;
+    let esc_msg = esc_err
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .ok_or("missing error.message")?;
+    assert!(esc_msg.len() < 256);
+    assert!(esc_msg.contains("..."));
+    assert!(!esc_msg.chars().any(char::is_control));
+
+    // M5 compatibility invariant: 2 MiB single-token input must still classify as
+    // `bad_nameplate` with `receiveCodeInvalid`.
+    let two_mib = c_str(&"x".repeat(2_097_152))?;
+    // SAFETY: `two_mib` is a live NUL-terminated CString.
+    let two_mib_err =
+        decode_and_free(unsafe { totaldrop_win_validate_input_json(two_mib.as_ptr()) })?;
+    assert_eq!(two_mib_err.get("ok").and_then(Value::as_bool), Some(false));
+    assert_eq!(
+        two_mib_err.pointer("/error/kind").and_then(Value::as_str),
+        Some("bad_nameplate")
+    );
+    assert_eq!(
+        two_mib_err
+            .pointer("/error/l10n_key")
+            .and_then(Value::as_str),
+        Some("receiveCodeInvalid")
+    );
+    Ok(())
+}
