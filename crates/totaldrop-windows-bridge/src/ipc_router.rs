@@ -643,6 +643,17 @@ impl WinUiWindowRouter {
         Ok(decisions)
     }
 
+    /// Validates clean stream termination when a Named Pipe client disconnects
+    /// (e.g., 0-byte read / EOF), resetting the decoder on truncated frames.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ActivationError::MalformedIpcFrame`] if the peer disconnected
+    /// mid-header or mid-payload.
+    pub fn finish_ipc_eof(&mut self) -> Result<(), ActivationError> {
+        self.decoder.finish_eof()
+    }
+
     /// Projects a [`totaldrop_core::Event`] using regional formatting rules
     /// (`#483`), updating [`Self::activity`] and queueing the resulting
     /// [`WinUiBridgeMessage`] snapshots.

@@ -19,6 +19,10 @@ CORE_VERSION = "0.2.0-beta.5"
 APP_VERSION = "0.1.0-beta.1"
 MSIX_VERSION = "0.1.1.0"
 CANONICAL_CLSID = "8F6E3D72-4B9A-4E1C-9D3A-7C2F5A81E4B0"
+TOAST_ACTIVATOR_CLSID = "7DF2CCED-0448-4849-A140-41CD106EAA9B"
+BARE_GUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 
 # Split forbidden literals so this script never matches itself if scanned naively.
 FORBIDDEN_LITERALS: tuple[tuple[str, str], ...] = (
@@ -73,6 +77,26 @@ def check_ffi_and_csproj(errors: list[str]) -> None:
         ffi_toml.get("package", {}).get("version"),
         APP_VERSION,
     )
+
+    ext_toml = tomllib.loads(
+        (REPO_ROOT / "crates" / "totaldrop-explorer-ext" / "Cargo.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+    expect_eq(
+        errors,
+        "crates/totaldrop-explorer-ext/Cargo.toml [package].version",
+        ext_toml.get("package", {}).get("version"),
+        APP_VERSION,
+    )
+
+    ext_src = (REPO_ROOT / "crates" / "totaldrop-explorer-ext" / "src" / "lib.rs").read_text(
+        encoding="utf-8"
+    )
+    if CANONICAL_CLSID not in ext_src:
+        errors.append(
+            f"crates/totaldrop-explorer-ext/src/lib.rs: missing canonical Explorer CLSID {CANONICAL_CLSID}"
+        )
 
     ffi_src = (REPO_ROOT / "crates" / "totaldrop-windows-ffi" / "src" / "lib.rs").read_text(
         encoding="utf-8"
@@ -139,6 +163,13 @@ def check_manifests_and_scripts(errors: list[str]) -> None:
     )
 
     appx_ns = "{http://schemas.microsoft.com/appx/manifest/foundation/windows10}"
+    com_ns = "{http://schemas.microsoft.com/appx/manifest/com/windows10}"
+    desktop_ns = "{http://schemas.microsoft.com/appx/manifest/desktop/windows10}"
+    desktop2_ns = "{http://schemas.microsoft.com/appx/manifest/desktop/windows10/2}"
+    desktop4_ns = "{http://schemas.microsoft.com/appx/manifest/desktop/windows10/4}"
+    desktop5_ns = "{http://schemas.microsoft.com/appx/manifest/desktop/windows10/5}"
+    rescap_ns = "{http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities}"
+
     for rel, expected_arch in (
         ("target-x86_64/Package.x64.appxmanifest", "x64"),
         ("target-arm64/Package.arm64.appxmanifest", "arm64"),
@@ -157,6 +188,89 @@ def check_manifests_and_scripts(errors: list[str]) -> None:
             ident.attrib.get("ProcessorArchitecture") if ident is not None else None,
             expected_arch,
         )
+
+        # Verify Explorer COM SurrogateServer (STA) + FileExplorerContextMenus (* & Directory).
+        surrogate_classes = root.findall(f".//{com_ns}SurrogateServer/{com_ns}Class")
+        explorer_cls = next(
+            (
+                c
+                for c in surrogate_classes
+                if c.attrib.get("Id", "").upper() == CANONICAL_CLSID
+            ),
+            None,
+        )
+        if explorer_cls is None:
+            errors.append(f"{rel}: missing com:SurrogateServer/com:Class for {CANONICAL_CLSID}")
+        else:
+            raw_id = explorer_cls.attrib.get("Id", "")
+            if not BARE_GUID_RE.fullmatch(raw_id):
+                errors.append(f"{rel}: Explorer COM Class Id must be bare GUID without braces, got {raw_id!r}")
+            expect_eq(errors, f"{rel} Explorer COM Path", explorer_cls.attrib.get("Path"), "totaldrop_explorer_ext.dll")
+            expect_eq(errors, f"{rel} Explorer COM ThreadingModel", explorer_cls.attrib.get("ThreadingModel"), "STA")
+
+        item_types = {
+            it.attrib.get("Type"): [
+                v.attrib.get("Clsid", "").upper()
+                for v in it.findall(f"{desktop5_ns}Verb")
+            ]
+            for it in root.findall(f".//{desktop4_ns}FileExplorerContextMenus/{desktop5_ns}ItemType")
+        }
+        for required_type in ("*", "Directory"):
+            clsids = item_types.get(required_type, [])
+            if CANONICAL_CLSID not in clsids:
+                errors.append(
+                    f"{rel}: desktop4:FileExplorerContextMenus missing Type={required_type!r} verb for {CANONICAL_CLSID}"
+                )
+
+        # Verify ToastNotificationActivation + matching com:ExeServer with bare unique GUID.
+        toast_elem = root.find(f".//{desktop_ns}ToastNotificationActivation")
+        if toast_elem is None:
+            errors.append(f"{rel}: missing desktop:ToastNotificationActivation")
+        else:
+            toast_guid = toast_elem.attrib.get("ToastActivatorCLSID", "")
+            if not BARE_GUID_RE.fullmatch(toast_guid):
+                errors.append(f"{rel}: ToastActivatorCLSID must be bare GUID without braces, got {toast_guid!r}")
+            expect_eq(errors, f"{rel} ToastActivatorCLSID", toast_guid.upper(), TOAST_ACTIVATOR_CLSID)
+            if toast_guid.upper() == CANONICAL_CLSID:
+                errors.append(f"{rel}: ToastActivatorCLSID must be distinct from Explorer CLSID")
+
+            exe_servers = root.findall(f".//{com_ns}ExeServer")
+            matching_exe = next(
+                (
+                    srv
+                    for srv in exe_servers
+                    if any(c.attrib.get("Id", "").upper() == TOAST_ACTIVATOR_CLSID for c in srv.findall(f"{com_ns}Class"))
+                ),
+                None,
+            )
+            if matching_exe is None:
+                errors.append(f"{rel}: missing com:ExeServer matching ToastActivatorCLSID {TOAST_ACTIVATOR_CLSID}")
+            else:
+                expect_eq(errors, f"{rel} Toast ExeServer Executable", matching_exe.attrib.get("Executable"), "totaldrop-winui.exe")
+                expect_eq(
+                    errors,
+                    f"{rel} Toast ExeServer Arguments",
+                    matching_exe.attrib.get("Arguments"),
+                    "----AppNotificationActivated:",
+                )
+
+        # Verify package-level scoped desktop2:FirewallRules and rescap:runFullTrust.
+        pkg_fw = root.findall(f"{appx_ns}Extensions/{desktop2_ns}Extension[@Category='windows.firewallRules']/{desktop2_ns}FirewallRules")
+        if len(pkg_fw) != 1:
+            errors.append(f"{rel}: expected exactly 1 package-level desktop2:FirewallRules, found {len(pkg_fw)}")
+        else:
+            expect_eq(errors, f"{rel} FirewallRules Executable", pkg_fw[0].attrib.get("Executable"), "totaldrop-winui.exe")
+            rules = pkg_fw[0].findall(f"{desktop2_ns}Rule")
+            if len(rules) != 1:
+                errors.append(f"{rel}: expected exactly 1 scoped firewall rule, found {len(rules)}")
+            else:
+                expect_eq(errors, f"{rel} Firewall Rule Direction", rules[0].attrib.get("Direction"), "in")
+                expect_eq(errors, f"{rel} Firewall Rule IPProtocol", rules[0].attrib.get("IPProtocol"), "UDP")
+                expect_eq(errors, f"{rel} Firewall Rule Profile", rules[0].attrib.get("Profile"), "private")
+
+        run_full_trust = root.find(f"{appx_ns}Capabilities/{rescap_ns}Capability[@Name='runFullTrust']")
+        if run_full_trust is None:
+            errors.append(f"{rel}: missing <rescap:Capability Name=\"runFullTrust\" />")
 
     for rel in ("target-x86_64/build-x64.ps1", "target-arm64/build-arm64.ps1"):
         text = (REPO_ROOT / rel).read_text(encoding="utf-8")

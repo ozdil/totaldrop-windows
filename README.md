@@ -20,16 +20,17 @@ TotalDrop's invariant across every platform is strict: **protocol state machines
 │   ├── totaldrop-core/                  # QUIC + relay transport, framing, pairing, path traversal guards
 │   ├── totaldrop-l10n/                  # Compile-time ARB -> ICU4X message & regional number/percent engine
 │   ├── totaldrop-windows-bridge/        # Pure-Rust Windows 11 bridge: URI validation, Explorer IPC, 35-lang UI
-│   └── totaldrop-windows-ffi/           # Thin C ABI cdylib boundary (totaldrop_windows_ffi.dll)
+│   ├── totaldrop-windows-ffi/           # Thin C ABI cdylib boundary (totaldrop_windows_ffi.dll)
+│   └── totaldrop-explorer-ext/          # Pure-Rust IExplorerCommand COM server (totaldrop_explorer_ext.dll)
 ├── ui-winui3-fluent2/                   # 100% native WinUI 3 (Windows App SDK 1.8+) + C# 14 (.NET 10 Native AOT)
 │   ├── TotalDrop.WinUI.csproj           # net10.0-windows10.0.26100.0, PublishAot=true, CsWinRT, x64;ARM64
-│   ├── App.xaml(.cs)                    # Single-instance redirection, totaldrop:// URI & Share Target activation
+│   ├── App.xaml(.cs)                    # Single-instance Named Pipe IPC, totaldrop:// URI & Share Target activation
 │   ├── MainWindow.xaml(.cs)             # MicaBackdrop + DesktopAcrylic fallback, live Accent & High Contrast
 │   ├── Views/SendPage.xaml(.cs)         # Fluent 2 drag-and-drop card, wormhole code, Narrator UIA semantics
 │   ├── Views/ReceivePage.xaml(.cs)      # Code input, verification words, regional floor-rounded progress bar
 │   ├── ViewModels/TransferViewModels.cs # Reflection-free x:Bind observable view models
 │   ├── Interop/NativeBridge.cs          # LibraryImport source-generated C ABI P/Invoke bindings (zero Marshal)
-│   └── ExplorerExtension/               # Native COM IExplorerCommand server spec, IDL, and out-of-proc handoff
+│   └── ExplorerExtension/               # Windows 11 File Explorer COM registration & handoff architecture notes
 ├── target-x86_64/                       # Isolated Intel/AMD x64 target unit (x86_64-pc-windows-msvc)
 │   ├── cargo-config.toml                # +crt-static notes, AVX2 / PCLMUL crypto acceleration profile
 │   ├── Package.x64.appxmanifest         # ProcessorArchitecture="x64", totaldrop://, FileExplorerContextMenus

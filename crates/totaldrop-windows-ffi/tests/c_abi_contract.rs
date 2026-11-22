@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 The TotalDrop Contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! End-to-end C ABI contract tests for all 24 M1 + M2 exports in
+//! End-to-end C ABI contract tests for all 31 M1 + M2 + M3 exports in
 //! `totaldrop-windows-ffi`.
 
 use std::error::Error as StdError;
@@ -10,7 +10,9 @@ use std::ptr;
 
 use serde_json::Value;
 use totaldrop_l10n::{Domain, Strings};
-use totaldrop_windows_bridge::SUPPORTED_LANGUAGES;
+use totaldrop_windows_bridge::{
+    ActivationEnvelope, MAX_IPC_FRAME_BYTES, SUPPORTED_LANGUAGES, ScreenTarget,
+};
 use totaldrop_windows_ffi::{
     APP_VERSION, CORE_VERSION, FFI_ERR_INVALID_ARG, FFI_ERR_INVALID_HANDLE, FFI_ERR_INVALID_UTF8,
     FFI_ERR_NULL_POINTER, FFI_OK, MSIX_VERSION, totaldrop_win_code_completions_json,
@@ -18,6 +20,9 @@ use totaldrop_windows_ffi::{
     totaldrop_win_format_message_json, totaldrop_win_format_percent_json,
     totaldrop_win_receive_accept_files, totaldrop_win_receive_accept_text,
     totaldrop_win_receive_connect_start, totaldrop_win_receive_decline,
+    totaldrop_win_router_create, totaldrop_win_router_destroy, totaldrop_win_router_drain_ndjson,
+    totaldrop_win_router_ingest_ipc_bytes_json, totaldrop_win_router_set_activity_json,
+    totaldrop_win_router_set_animations_json, totaldrop_win_router_update_locale_json,
     totaldrop_win_sanitize_filename_json, totaldrop_win_sanitize_text_json,
     totaldrop_win_send_files_start, totaldrop_win_send_text_start, totaldrop_win_session_cancel,
     totaldrop_win_session_destroy, totaldrop_win_session_poll_events_ndjson,
@@ -1300,5 +1305,603 @@ fn format_message_json_and_clipboard_extract_bound_oversized_error_reflections()
         clip_msg.len()
     );
     assert!(!contains_disallowed_ui_char(clip_msg));
+    Ok(())
+}
+
+fn take_raw_and_free(ptr: *mut c_char) -> Result<String, Box<dyn StdError>> {
+    if ptr.is_null() {
+        return Err("FFI returned unexpected null pointer".into());
+    }
+    // SAFETY: `ptr` was freshly returned by a `totaldrop_win_*` FFI export.
+    let raw = unsafe { CStr::from_ptr(ptr) }.to_str()?.to_owned();
+    // SAFETY: `ptr` was allocated by `totaldrop-windows-ffi` and is freed once.
+    unsafe { totaldrop_win_string_free(ptr) };
+    Ok(raw)
+}
+
+fn frame_raw_json(json: &str) -> Result<Vec<u8>, Box<dyn StdError>> {
+    let payload = json.as_bytes();
+    let len = u32::try_from(payload.len())?;
+    let mut frame = Vec::with_capacity(payload.len().saturating_add(4));
+    frame.extend_from_slice(&len.to_le_bytes());
+    frame.extend_from_slice(payload);
+    Ok(frame)
+}
+
+#[test]
+fn router_lifecycle_chunked_framing_locale_animations_and_ndjson_drain() -> TestResult {
+    let en = c_str("en-US")?;
+    let tr = c_str("tr-TR")?;
+    let ar = c_str("ar-EG")?;
+    let ver = c_str("0.1.0-beta.1")?;
+
+    // SAFETY: All CStrings are live NUL-terminated UTF-8 buffers.
+    let h1 =
+        unsafe { totaldrop_win_router_create(1, en.as_ptr(), en.as_ptr(), ver.as_ptr(), true) };
+    // SAFETY: Null optional strings default safely to English and APP_VERSION.
+    let h2 =
+        unsafe { totaldrop_win_router_create(2, ptr::null(), ptr::null(), ptr::null(), false) };
+    assert_ne!(h1, 0);
+    assert!(h2 > h1, "router handles must be strictly monotonic");
+
+    // Startup outbox emits UiBundleReady + MarkAnimationState(animate: false).
+    let initial_ndjson = take_raw_and_free(totaldrop_win_router_drain_ndjson(h1))?;
+    let initial_lines: Vec<Value> = initial_ndjson
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()?;
+    assert_eq!(initial_lines.len(), 2);
+    assert_eq!(
+        initial_lines
+            .first()
+            .and_then(|v| v.get("kind"))
+            .and_then(Value::as_str),
+        Some("ui_bundle_ready")
+    );
+    assert_eq!(
+        initial_lines
+            .get(1)
+            .and_then(|v| v.get("kind"))
+            .and_then(Value::as_str),
+        Some("mark_animation_state")
+    );
+    // Draining again returns empty string.
+    assert_eq!(
+        take_raw_and_free(totaldrop_win_router_drain_ndjson(h1))?,
+        ""
+    );
+
+    // Locale update returns WinUiBridgeMessage(ui_bundle_ready) with RTL flow for Arabic.
+    // SAFETY: `ar` is a live NUL-terminated CString.
+    let locale_msg = decode_and_free(unsafe {
+        totaldrop_win_router_update_locale_json(h1, ar.as_ptr(), ar.as_ptr())
+    })?;
+    assert_eq!(
+        locale_msg.get("kind").and_then(Value::as_str),
+        Some("ui_bundle_ready")
+    );
+    assert_eq!(
+        locale_msg
+            .get("data")
+            .and_then(|d| d.get("flow_direction"))
+            .and_then(Value::as_str),
+        Some("RightToLeft")
+    );
+    // Switch back to Turkish for later assertions.
+    // SAFETY: `tr` is a live NUL-terminated CString.
+    let _ = decode_and_free(unsafe {
+        totaldrop_win_router_update_locale_json(h1, tr.as_ptr(), tr.as_ptr())
+    })?;
+
+    // Activity + animations toggle: transferring && enabled => animate == true.
+    let xfer = c_str(r#"{"state":"transferring","done_bytes":512,"total_bytes":4096}"#)?;
+    // SAFETY: `xfer` is a live NUL-terminated CString.
+    let anim_on =
+        decode_and_free(unsafe { totaldrop_win_router_set_activity_json(h1, xfer.as_ptr()) })?;
+    assert_eq!(
+        anim_on.get("kind").and_then(Value::as_str),
+        Some("mark_animation_state")
+    );
+    assert_eq!(
+        anim_on
+            .get("data")
+            .and_then(|d| d.get("animate"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        anim_on
+            .get("data")
+            .and_then(|d| d.get("hex_light"))
+            .and_then(Value::as_str),
+        Some("#6D4AE0")
+    );
+    assert_eq!(
+        anim_on
+            .get("data")
+            .and_then(|d| d.get("hex_dark"))
+            .and_then(Value::as_str),
+        Some("#A68BFF")
+    );
+    assert_eq!(
+        anim_on
+            .get("data")
+            .and_then(|d| d.get("cycle_ms"))
+            .and_then(Value::as_u64),
+        Some(3200)
+    );
+
+    let anim_off = decode_and_free(totaldrop_win_router_set_animations_json(h1, false))?;
+    assert_eq!(
+        anim_off
+            .get("data")
+            .and_then(|d| d.get("animate"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+
+    // Return to idle and feed two back-to-back framed envelopes 1 byte at a time (T1-F17-01 / T1-F17-02).
+    let idle = c_str(r#"{"state":"idle"}"#)?;
+    // SAFETY: `idle` is a live NUL-terminated CString.
+    let _ = decode_and_free(unsafe { totaldrop_win_router_set_activity_json(h1, idle.as_ptr()) })?;
+    let _ = take_raw_and_free(totaldrop_win_router_drain_ndjson(h1))?;
+
+    let env1 = ActivationEnvelope::explorer_send([r"C:\Users\Alice\doc.pdf"], Some(42))?;
+    let env2 = ActivationEnvelope::protocol_uri("totaldrop://r/7-harbor-rocket", Some(43))?;
+    let mut stream = env1.encode_ipc_frame()?;
+    stream.extend_from_slice(&env2.encode_ipc_frame()?);
+
+    let mut collected = Vec::new();
+    for byte in &stream {
+        // SAFETY: `byte` points to 1 valid readable byte.
+        let batch = decode_and_free(unsafe {
+            totaldrop_win_router_ingest_ipc_bytes_json(h1, ptr::from_ref(byte), 1)
+        })?;
+        let arr = batch.as_array().ok_or("expected RouterDecision[]")?;
+        collected.extend(arr.iter().cloned());
+    }
+    assert_eq!(collected.len(), 2);
+    assert_eq!(
+        collected
+            .first()
+            .and_then(|d| d.get("decision"))
+            .and_then(Value::as_str),
+        Some("navigate_send_files")
+    );
+    assert_eq!(
+        collected
+            .get(1)
+            .and_then(|d| d.get("decision"))
+            .and_then(Value::as_str),
+        Some("navigate_receive_code")
+    );
+
+    // Clean 0-byte EOF flush with NULL pointer is UB-free and returns "[]".
+    // SAFETY: `len == 0` never dereferences `ptr`.
+    let eof_ok =
+        decode_and_free(unsafe { totaldrop_win_router_ingest_ipc_bytes_json(h1, ptr::null(), 0) })?;
+    assert_eq!(eof_ok, serde_json::json!([]));
+
+    // Drained NDJSON contains both route_decision snapshots.
+    let drained = take_raw_and_free(totaldrop_win_router_drain_ndjson(h1))?;
+    let route_count = drained
+        .lines()
+        .filter(|line| line.contains(r#""kind":"route_decision""#))
+        .count();
+    assert_eq!(route_count, 2);
+
+    assert_eq!(totaldrop_win_router_destroy(h1), FFI_OK);
+    assert_eq!(totaldrop_win_router_destroy(h1), FFI_ERR_INVALID_HANDLE);
+    assert_eq!(totaldrop_win_router_destroy(h2), FFI_OK);
+    Ok(())
+}
+
+#[test]
+fn router_ipc_frame_bounds_eof_truncation_and_schema_rejections() -> TestResult {
+    let en = c_str("en-US")?;
+    // SAFETY: `en` is a live NUL-terminated CString.
+    let router =
+        unsafe { totaldrop_win_router_create(1, en.as_ptr(), en.as_ptr(), ptr::null(), true) };
+    assert_ne!(router, 0);
+    let _ = take_raw_and_free(totaldrop_win_router_drain_ndjson(router))?;
+
+    // 1. Zero-length frame (0x00000000) -> malformed_ipc_frame (T2-F17-01).
+    let zero_hdr = 0u32.to_le_bytes();
+    // SAFETY: `zero_hdr` is 4 readable bytes.
+    let err_zero = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(router, zero_hdr.as_ptr(), zero_hdr.len())
+    })?;
+    assert_strict_four_field_error(&err_zero, "malformed_ipc_frame", Some("errorOther"))?;
+
+    // 2. Exact MAX_IPC_FRAME_BYTES (4_194_304) padded JSON frame succeeds (T2-F17-02).
+    let base_json = r#"{"version":1,"payload":{"kind":"open_screen","screen":"receive"}}"#;
+    let pad_len = MAX_IPC_FRAME_BYTES
+        .checked_sub(base_json.len())
+        .ok_or("base json exceeds MAX_IPC_FRAME_BYTES")?;
+    let mut max_frame = Vec::with_capacity(MAX_IPC_FRAME_BYTES.saturating_add(4));
+    max_frame.extend_from_slice(&u32::try_from(MAX_IPC_FRAME_BYTES)?.to_le_bytes());
+    max_frame.extend_from_slice(base_json.as_bytes());
+    max_frame.resize(max_frame.len().saturating_add(pad_len), b' ');
+    // SAFETY: `max_frame` is a live byte slice.
+    let exact_ok = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(router, max_frame.as_ptr(), max_frame.len())
+    })?;
+    let exact_arr = exact_ok.as_array().ok_or("expected RouterDecision[]")?;
+    assert_eq!(exact_arr.len(), 1);
+    assert_eq!(
+        exact_arr
+            .first()
+            .and_then(|d| d.get("decision"))
+            .and_then(Value::as_str),
+        Some("switch_screen")
+    );
+    let _ = take_raw_and_free(totaldrop_win_router_drain_ndjson(router))?;
+
+    // 3. 4_194_305 and u32::MAX headers rejected immediately before allocation + clean recovery (T2-F17-02).
+    for oversized in [4_194_305u32, u32::MAX] {
+        let hdr = oversized.to_le_bytes();
+        // SAFETY: `hdr` is 4 readable bytes.
+        let err = decode_and_free(unsafe {
+            totaldrop_win_router_ingest_ipc_bytes_json(router, hdr.as_ptr(), hdr.len())
+        })?;
+        assert_strict_four_field_error(&err, "envelope_too_large", Some("errorOther"))?;
+        let msg = err
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(Value::as_str)
+            .ok_or("missing message")?;
+        assert!(msg.contains(&oversized.to_string()));
+        assert!(msg.contains("4194304"));
+    }
+
+    // 4. Truncated 2-byte header and 40/100-byte payload fail on 0-byte EOF flush and recover (T2-F17-03).
+    let two_bytes = [0x20u8, 0x00];
+    // SAFETY: `two_bytes` is 2 readable bytes.
+    let part_hdr = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(router, two_bytes.as_ptr(), two_bytes.len())
+    })?;
+    assert_eq!(part_hdr, serde_json::json!([]));
+    // SAFETY: `len == 0` signals EOF flush.
+    let eof_hdr_err = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(router, ptr::null(), 0)
+    })?;
+    assert_strict_four_field_error(&eof_hdr_err, "malformed_ipc_frame", Some("errorOther"))?;
+
+    let mut partial_payload = Vec::with_capacity(44);
+    partial_payload.extend_from_slice(&100u32.to_le_bytes());
+    partial_payload.extend_from_slice(&[b' '; 40]);
+    // SAFETY: `partial_payload` is 44 readable bytes.
+    let part_body = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(
+            router,
+            partial_payload.as_ptr(),
+            partial_payload.len(),
+        )
+    })?;
+    assert_eq!(part_body, serde_json::json!([]));
+    // SAFETY: `len == 0` signals EOF flush.
+    let eof_body_err = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(router, ptr::null(), 0)
+    })?;
+    assert_strict_four_field_error(&eof_body_err, "malformed_ipc_frame", Some("errorOther"))?;
+
+    // 5. Unsupported schema versions (2, 0), path traversal, tampered canonical URI, and 10,001 ShareTarget items (T2-F17-04, T2-F18-03).
+    for bad_ver_json in [
+        r#"{"version":2,"payload":{"kind":"open_screen","screen":"send"}}"#,
+        r#"{"version":0,"payload":{"kind":"open_screen","screen":"send"}}"#,
+    ] {
+        let f = frame_raw_json(bad_ver_json)?;
+        // SAFETY: `f` is a live slice.
+        let err = decode_and_free(unsafe {
+            totaldrop_win_router_ingest_ipc_bytes_json(router, f.as_ptr(), f.len())
+        })?;
+        assert_strict_four_field_error(&err, "unsupported_schema_version", Some("errorOther"))?;
+    }
+
+    let traversal_frame = frame_raw_json(
+        r#"{"version":1,"payload":{"kind":"explorer_send","paths":["C:\\Users\\Alice\\..\\secret.txt"]}}"#,
+    )?;
+    // SAFETY: `traversal_frame` is a live slice.
+    let traversal_err = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(
+            router,
+            traversal_frame.as_ptr(),
+            traversal_frame.len(),
+        )
+    })?;
+    assert_strict_four_field_error(&traversal_err, "invalid_json", Some("errorOther"))?;
+
+    let tampered_uri_frame = frame_raw_json(
+        r#"{"version":1,"payload":{"kind":"protocol_uri","code":{"nameplate":7,"word_count":2,"display_english":"7-harbor-rocket","canonical":"7-999-999","ltr_isolated":"\u20687-harbor-rocket\u2069","protocol_uri":"totaldrop://r/7-harbor-rocket","web_uri":"https://totaldrop.app/r#7-harbor-rocket"}}}"#,
+    )?;
+    // SAFETY: `tampered_uri_frame` is a live slice.
+    let tampered_err = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(
+            router,
+            tampered_uri_frame.as_ptr(),
+            tampered_uri_frame.len(),
+        )
+    })?;
+    assert_strict_four_field_error(&tampered_err, "invalid_uri", Some("errorInvalidCode"))?;
+
+    let too_many_paths: Vec<String> = (0..10_001)
+        .map(|i| format!(r"C:\Users\Alice\f{i}.txt"))
+        .collect();
+    let too_many_json = serde_json::json!({
+        "version": 1,
+        "payload": {
+            "kind": "share_target",
+            "paths": too_many_paths,
+            "text": Value::Null,
+        }
+    })
+    .to_string();
+    let too_many_frame = frame_raw_json(&too_many_json)?;
+    // SAFETY: `too_many_frame` is a live slice.
+    let too_many_err = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(
+            router,
+            too_many_frame.as_ptr(),
+            too_many_frame.len(),
+        )
+    })?;
+    assert_strict_four_field_error(&too_many_err, "too_many_items", Some("errorStorage"))?;
+    assert!(
+        too_many_err
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(Value::as_str)
+            .is_some_and(|m| m.contains("10001") && m.contains("10000"))
+    );
+
+    // Zero route_decision messages were queued across all rejected frames, and recovery works.
+    assert_eq!(
+        take_raw_and_free(totaldrop_win_router_drain_ndjson(router))?,
+        ""
+    );
+    let ok_frame =
+        ActivationEnvelope::open_screen(ScreenTarget::Settings, None).encode_ipc_frame()?;
+    // SAFETY: `ok_frame` is a live slice.
+    let ok_dec = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(router, ok_frame.as_ptr(), ok_frame.len())
+    })?;
+    assert_eq!(
+        ok_dec
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|d| d.get("screen"))
+            .and_then(Value::as_str),
+        Some("settings")
+    );
+
+    assert_eq!(totaldrop_win_router_destroy(router), FFI_OK);
+    Ok(())
+}
+
+#[test]
+fn router_busy_states_share_target_unc_text_bidi_and_error_safety() -> TestResult {
+    let en = c_str("en-US")?;
+    // SAFETY: `en` is a live NUL-terminated CString.
+    let router =
+        unsafe { totaldrop_win_router_create(1, en.as_ptr(), en.as_ptr(), ptr::null(), true) };
+    assert_ne!(router, 0);
+
+    // 1. ShareTarget UNC normalization (T1-F18-02).
+    let unc_frame = frame_raw_json(
+        r#"{"version":1,"payload":{"kind":"share_target","paths":["\\\\nas01\\share\\brief.pdf","C:\\Users\\Alice\\a.txt"],"text":null}}"#,
+    )?;
+    // SAFETY: `unc_frame` is a live slice.
+    let unc_res = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(router, unc_frame.as_ptr(), unc_frame.len())
+    })?;
+    let unc_dec = unc_res
+        .as_array()
+        .and_then(|a| a.first())
+        .ok_or("missing unc decision")?;
+    assert_eq!(
+        unc_dec.get("decision").and_then(Value::as_str),
+        Some("navigate_send_files")
+    );
+    assert_eq!(
+        unc_dec.get("paths"),
+        Some(&serde_json::json!([
+            r"\\?\UNC\nas01\share\brief.pdf",
+            r"\\?\C:\Users\Alice\a.txt"
+        ]))
+    );
+
+    // 2. ShareTarget plain text -> navigate_send_text with Bidi reveal (T1-F18-03, T2-F18-04).
+    let bidi_text_json = serde_json::json!({
+        "version": 1,
+        "payload": {
+            "kind": "share_target",
+            "paths": [],
+            "text": "hello \u{202E}txt.exe"
+        }
+    })
+    .to_string();
+    let bidi_frame = frame_raw_json(&bidi_text_json)?;
+    // SAFETY: `bidi_frame` is a live slice.
+    let bidi_res = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(router, bidi_frame.as_ptr(), bidi_frame.len())
+    })?;
+    let bidi_dec = bidi_res
+        .as_array()
+        .and_then(|a| a.first())
+        .ok_or("missing bidi decision")?;
+    assert_eq!(
+        bidi_dec.get("decision").and_then(Value::as_str),
+        Some("navigate_send_text")
+    );
+    assert_eq!(
+        bidi_dec.get("raw_text").and_then(Value::as_str),
+        Some("hello \u{202E}txt.exe")
+    );
+    assert_eq!(
+        bidi_dec
+            .get("sanitized_preview")
+            .and_then(|p| p.get("display_text"))
+            .and_then(Value::as_str),
+        Some("hello <U+202E>txt.exe")
+    );
+    assert_eq!(
+        bidi_dec
+            .get("sanitized_preview")
+            .and_then(|p| p.get("has_hidden_controls"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    // 3. Empty ShareTarget -> switch_screen("send").
+    let empty_share_frame = frame_raw_json(
+        r#"{"version":1,"payload":{"kind":"share_target","paths":[],"text":null}}"#,
+    )?;
+    // SAFETY: `empty_share_frame` is a live slice.
+    let empty_res = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(
+            router,
+            empty_share_frame.as_ptr(),
+            empty_share_frame.len(),
+        )
+    })?;
+    assert_eq!(
+        empty_res
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|d| d.get("decision"))
+            .and_then(Value::as_str),
+        Some("switch_screen")
+    );
+    assert_eq!(
+        empty_res
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|d| d.get("screen"))
+            .and_then(Value::as_str),
+        Some("send")
+    );
+
+    // 4. All 6 busy states reject explorer_send, share_target, and protocol_uri with reject_busy
+    //    (shareBusy vs linkBusy) without mutating activity state (T2-F17-05, T3-07, T3-11).
+    // SAFETY: `en` is a live NUL-terminated CString.
+    let bundle = decode_and_free(unsafe {
+        totaldrop_win_ui_bundle_json(en.as_ptr(), en.as_ptr(), ptr::null())
+    })?;
+    let share_busy = bundle
+        .get("share_busy")
+        .and_then(Value::as_str)
+        .ok_or("missing share_busy")?;
+    let link_busy = bundle
+        .get("link_busy")
+        .and_then(Value::as_str)
+        .ok_or("missing link_busy")?;
+    assert_ne!(share_busy, link_busy);
+
+    let explorer_frame = ActivationEnvelope::explorer_send([r"C:\Users\Alice\busy.bin"], Some(10))?
+        .encode_ipc_frame()?;
+    let proto_frame = ActivationEnvelope::protocol_uri("totaldrop://r/7-harbor-rocket", Some(11))?
+        .encode_ipc_frame()?;
+
+    // Verify both full and minimal JSON forms work for busy states.
+    for state_json in [
+        r#"{"state":"preparing_send"}"#,
+        r#"{"state":"waiting_for_peer"}"#,
+        r#"{"state":"connecting_receive"}"#,
+        r#"{"state":"offer_prompt_pending"}"#,
+        r#"{"state":"transferring","done_bytes":512,"total_bytes":4096}"#,
+        r#"{"state":"showing_text_note"}"#,
+    ] {
+        let state_c = c_str(state_json)?;
+        // SAFETY: `state_c` is a live NUL-terminated CString.
+        let mark = decode_and_free(unsafe {
+            totaldrop_win_router_set_activity_json(router, state_c.as_ptr())
+        })?;
+        assert_eq!(
+            mark.get("kind").and_then(Value::as_str),
+            Some("mark_animation_state")
+        );
+
+        for (frame, expected_banner) in [
+            (&explorer_frame, share_busy),
+            (&unc_frame, share_busy),
+            (&proto_frame, link_busy),
+        ] {
+            // SAFETY: `frame` is a live slice.
+            let decs = decode_and_free(unsafe {
+                totaldrop_win_router_ingest_ipc_bytes_json(router, frame.as_ptr(), frame.len())
+            })?;
+            let first = decs
+                .as_array()
+                .and_then(|a| a.first())
+                .ok_or("missing busy decision")?;
+            assert_eq!(
+                first.get("decision").and_then(Value::as_str),
+                Some("reject_busy")
+            );
+            assert_eq!(
+                first.get("localized_banner").and_then(Value::as_str),
+                Some(expected_banner)
+            );
+        }
+    }
+
+    // 5. Invalid/null/UTF-8/destroyed router handle guards.
+    let bad_utf8: [u8; 2] = [0xFF, 0x00];
+    let bad_utf8_ptr = bad_utf8.as_ptr().cast::<c_char>();
+    // SAFETY: `bad_utf8_ptr` is NUL-terminated invalid UTF-8.
+    let bad_utf8_router =
+        unsafe { totaldrop_win_router_create(1, bad_utf8_ptr, ptr::null(), ptr::null(), true) };
+    assert_eq!(bad_utf8_router, 0);
+
+    // SAFETY: `ptr::null()` with `len > 0` returns null_pointer without dereference.
+    let null_buf_err = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(router, ptr::null(), 4)
+    })?;
+    assert_strict_four_field_error(&null_buf_err, "null_pointer", Some("errorOther"))?;
+
+    // SAFETY: `len > isize::MAX` returns envelope_too_large without dereference.
+    let huge_len_err = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(router, explorer_frame.as_ptr(), usize::MAX)
+    })?;
+    assert_strict_four_field_error(&huge_len_err, "envelope_too_large", Some("errorOther"))?;
+
+    // SAFETY: Null activity JSON returns null_pointer; unknown state returns invalid_json.
+    let null_act_err =
+        decode_and_free(unsafe { totaldrop_win_router_set_activity_json(router, ptr::null()) })?;
+    assert_strict_four_field_error(&null_act_err, "null_pointer", Some("errorOther"))?;
+
+    let unknown_state = c_str(r#"{"state":"nonexistent_state"}"#)?;
+    // SAFETY: `unknown_state` is a live CString.
+    let bad_state_err = decode_and_free(unsafe {
+        totaldrop_win_router_set_activity_json(router, unknown_state.as_ptr())
+    })?;
+    assert_strict_four_field_error(&bad_state_err, "invalid_json", Some("errorOther"))?;
+
+    // SAFETY: `bad_utf8_ptr` is NUL-terminated invalid UTF-8.
+    let bad_locale_err = decode_and_free(unsafe {
+        totaldrop_win_router_update_locale_json(router, bad_utf8_ptr, ptr::null())
+    })?;
+    assert_strict_four_field_error(&bad_locale_err, "invalid_utf8", Some("errorOther"))?;
+
+    assert_eq!(totaldrop_win_router_destroy(router), FFI_OK);
+    assert_eq!(totaldrop_win_router_destroy(0), FFI_ERR_INVALID_HANDLE);
+    assert_eq!(totaldrop_win_router_destroy(router), FFI_ERR_INVALID_HANDLE);
+
+    // Destroyed router returns invalid_handle across all calls.
+    // SAFETY: `len == 0` is safe even on destroyed handle.
+    let dead_eof = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(router, ptr::null(), 0)
+    })?;
+    assert_strict_four_field_error(&dead_eof, "invalid_handle", Some("errorOther"))?;
+    let dead_anim = decode_and_free(totaldrop_win_router_set_animations_json(router, true))?;
+    assert_strict_four_field_error(&dead_anim, "invalid_handle", Some("errorOther"))?;
+    let dead_drain = decode_and_free(totaldrop_win_router_drain_ndjson(router))?;
+    assert_strict_four_field_error(&dead_drain, "invalid_handle", Some("errorOther"))?;
+    // SAFETY: `en` is a live CString.
+    let dead_loc = decode_and_free(unsafe {
+        totaldrop_win_router_update_locale_json(router, en.as_ptr(), en.as_ptr())
+    })?;
+    assert_strict_four_field_error(&dead_loc, "invalid_handle", Some("errorOther"))?;
+
     Ok(())
 }

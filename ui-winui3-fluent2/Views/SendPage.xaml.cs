@@ -298,18 +298,32 @@ public sealed partial class SendPage : Page
 
     private void OnShareCodeClick(object sender, RoutedEventArgs e)
     {
-        string sharePayload = !string.IsNullOrEmpty(ViewModel.TransferWebUri)
-            ? ViewModel.TransferWebUri
-            : ViewModel.TransferCode;
-        if (string.IsNullOrEmpty(sharePayload))
+        string shareText = !string.IsNullOrEmpty(ViewModel.ShareText)
+            ? ViewModel.ShareText
+            : (!string.IsNullOrEmpty(ViewModel.TransferWebUri)
+                ? ViewModel.TransferWebUri
+                : ViewModel.TransferCode);
+        if (string.IsNullOrEmpty(shareText))
         {
             return;
         }
 
+        nint hwnd = XamlRoot?.ContentIslandEnvironment is not null
+            ? Win32Interop.GetWindowFromWindowId(XamlRoot.ContentIslandEnvironment.AppWindowId)
+            : 0;
+        if (WindowsShareSheet.TryShowShareSheet(hwnd, "TotalDrop", shareText, ViewModel.TransferWebUri))
+        {
+            return;
+        }
+
+        // Safe fallback when Windows Share Broker is unavailable (e.g., unpackaged/headless sessions).
+        string clipboardFallback = !string.IsNullOrEmpty(ViewModel.TransferWebUri)
+            ? ViewModel.TransferWebUri
+            : ViewModel.TransferCode;
         try
         {
             DataPackage pkg = new();
-            pkg.SetText(sharePayload);
+            pkg.SetText(clipboardFallback);
             Clipboard.SetContent(pkg);
             ViewModel.CopiedFeedbackVisible = true;
         }
@@ -470,6 +484,8 @@ public sealed partial class SendPage : Page
             ViewModel.ActiveSessionId = 0;
         }
     }
+
+    public void DismissCancelDialog() => DismissActiveDialog();
 
     private void DismissActiveDialog()
     {
