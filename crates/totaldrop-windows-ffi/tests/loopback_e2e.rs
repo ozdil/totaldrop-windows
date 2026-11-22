@@ -1858,3 +1858,498 @@ fn malformed_relay_urls_fail_offline_before_contacting_rendezvous_canary() -> Te
 
     Ok(())
 }
+
+struct ExpectedCounts {
+    files: u64,
+    dirs: u64,
+    total_bytes: u64,
+    skipped: u64,
+}
+
+fn run_count_parity_loopback(
+    srv: &MockRendezvous,
+    send_paths: &[PathBuf],
+    dest_dir: &Path,
+    expected: ExpectedCounts,
+) -> Result<(Value, Value), Box<dyn StdError>> {
+    std::fs::create_dir_all(dest_dir)?;
+
+    let cfg = c_str(&make_cfg_json(&srv.url, "", false))?;
+    let path_strings: Vec<String> = send_paths
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    let paths_json = c_str(&serde_json::to_string(&path_strings)?)?;
+    let en = c_str("en-US")?;
+
+    // SAFETY: All pointers are live NUL-terminated CStrings.
+    let send_sid = unsafe {
+        totaldrop_win_send_files_start(cfg.as_ptr(), paths_json.as_ptr(), en.as_ptr(), en.as_ptr())
+    };
+    assert_ne!(send_sid, 0);
+
+    let mut send_events = Vec::new();
+    let code_ev = wait_for_event(
+        send_sid,
+        &mut send_events,
+        "code_ready",
+        Duration::from_secs(10),
+    )?;
+    assert_eq!(
+        code_ev.get("is_text").and_then(Value::as_bool),
+        Some(false),
+        "expected is_text == false in code_ready: {code_ev}"
+    );
+    assert_eq!(
+        code_ev.get("files").and_then(Value::as_u64),
+        Some(expected.files),
+        "unexpected files in code_ready: {code_ev}"
+    );
+    assert_eq!(
+        code_ev.get("dirs").and_then(Value::as_u64),
+        Some(expected.dirs),
+        "unexpected dirs in code_ready: {code_ev}"
+    );
+    assert_eq!(
+        code_ev.get("total_bytes").and_then(Value::as_u64),
+        Some(expected.total_bytes),
+        "unexpected total_bytes in code_ready: {code_ev}"
+    );
+    assert_eq!(
+        code_ev.get("skipped").and_then(Value::as_u64),
+        Some(expected.skipped),
+        "unexpected skipped in code_ready: {code_ev}"
+    );
+
+    let code_str = code_ev
+        .pointer("/code/display_english")
+        .and_then(Value::as_str)
+        .ok_or("missing display_english in code_ready")?
+        .to_owned();
+    let code_c = c_str(&code_str)?;
+
+    // SAFETY: All pointers are live NUL-terminated CStrings.
+    let recv_sid = unsafe {
+        totaldrop_win_receive_connect_start(cfg.as_ptr(), code_c.as_ptr(), en.as_ptr(), en.as_ptr())
+    };
+    assert_ne!(recv_sid, 0);
+
+    let mut recv_events = Vec::new();
+    let offer_ev = wait_for_event(
+        recv_sid,
+        &mut recv_events,
+        "offer_ready",
+        Duration::from_secs(15),
+    )?;
+    assert_eq!(
+        offer_ev.get("is_text").and_then(Value::as_bool),
+        Some(false),
+        "expected is_text == false in offer_ready: {offer_ev}"
+    );
+    assert_eq!(
+        code_ev.get("files"),
+        offer_ev.get("files"),
+        "code_ready.files must match offer_ready.files: code={code_ev} offer={offer_ev}"
+    );
+    assert_eq!(
+        offer_ev.get("files").and_then(Value::as_u64),
+        Some(expected.files),
+        "unexpected files in offer_ready: {offer_ev}"
+    );
+    assert_eq!(
+        code_ev.get("dirs"),
+        offer_ev.get("dirs"),
+        "code_ready.dirs must match offer_ready.dirs: code={code_ev} offer={offer_ev}"
+    );
+    assert_eq!(
+        offer_ev.get("dirs").and_then(Value::as_u64),
+        Some(expected.dirs),
+        "unexpected dirs in offer_ready: {offer_ev}"
+    );
+    assert_eq!(
+        code_ev.get("total_bytes"),
+        offer_ev.get("total_bytes"),
+        "code_ready.total_bytes must match offer_ready.total_bytes: code={code_ev} offer={offer_ev}"
+    );
+    assert_eq!(
+        offer_ev.get("total_bytes").and_then(Value::as_u64),
+        Some(expected.total_bytes),
+        "unexpected total_bytes in offer_ready: {offer_ev}"
+    );
+
+    let recv_words = offer_ev
+        .get("verification_words")
+        .and_then(Value::as_array)
+        .ok_or("missing offer verification_words")?
+        .clone();
+    assert_eq!(recv_words.len(), 4);
+
+    let send_conn = wait_for_event(
+        send_sid,
+        &mut send_events,
+        "connected",
+        Duration::from_secs(10),
+    )?;
+    let send_words = send_conn
+        .get("verification_words")
+        .and_then(Value::as_array)
+        .ok_or("missing sender verification_words")?;
+    assert_eq!(send_words, &recv_words);
+
+    let dest_c = c_str(&dest_dir.to_string_lossy())?;
+    // SAFETY: `dest_c` is a live NUL-terminated CString.
+    let accept_rc = unsafe { totaldrop_win_receive_accept_files(recv_sid, dest_c.as_ptr()) };
+    assert_eq!(accept_rc, FFI_OK);
+
+    let recv_done = wait_for_event(recv_sid, &mut recv_events, "done", Duration::from_secs(20))?;
+    let send_done = wait_for_event(send_sid, &mut send_events, "done", Duration::from_secs(20))?;
+
+    assert_eq!(
+        recv_done.get("files_ok").and_then(Value::as_u64),
+        Some(expected.files)
+    );
+    assert_eq!(
+        recv_done.get("files_failed").and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        recv_done.get("bytes").and_then(Value::as_u64),
+        Some(expected.total_bytes)
+    );
+    assert_eq!(
+        send_done.get("files_ok").and_then(Value::as_u64),
+        Some(expected.files)
+    );
+    assert_eq!(
+        send_done.get("files_failed").and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        send_done.get("bytes").and_then(Value::as_u64),
+        Some(expected.total_bytes)
+    );
+
+    assert_eq!(totaldrop_win_session_destroy(send_sid), FFI_OK);
+    assert_eq!(totaldrop_win_session_destroy(recv_sid), FFI_OK);
+
+    Ok((code_ev, offer_ev))
+}
+
+#[test]
+fn loopback_code_ready_matches_offer_ready_for_nested_directory() -> TestResult {
+    let _guard = SHUTDOWN_GATE.read().map_err(|_| "lock poisoned")?;
+    let srv = MockRendezvous::start("127.0.0.1:0", RendezvousFault::None)?;
+    let tmp = TempDirGuard::new("parity-nested")?;
+
+    // (a1) Nested directory with 2 dirs + 3 files (root + 1 subdir) -> files == 3, dirs == 2.
+    let bundle = tmp.path().join("src1").join("bundle");
+    let bundle_sub = bundle.join("sub");
+    std::fs::create_dir_all(&bundle_sub)?;
+    let empty_bytes: &[u8] = b"";
+    let report_bytes: &[u8] = b"TotalDrop nested report payload 2026\n";
+    let third_bytes = vec![0xABu8; 4096];
+    std::fs::write(bundle.join("empty.txt"), empty_bytes)?;
+    std::fs::write(bundle.join("report-2026.txt"), report_bytes)?;
+    std::fs::write(bundle_sub.join("third.bin"), &third_bytes)?;
+
+    let total_a1 = u64::try_from(empty_bytes.len())?
+        .saturating_add(u64::try_from(report_bytes.len())?)
+        .saturating_add(u64::try_from(third_bytes.len())?);
+    let dest1 = tmp.path().join("dest1");
+    let (_code1, offer1) = run_count_parity_loopback(
+        &srv,
+        &[bundle],
+        &dest1,
+        ExpectedCounts {
+            files: 3,
+            dirs: 2,
+            total_bytes: total_a1,
+            skipped: 0,
+        },
+    )?;
+    assert_eq!(offer1.get("top_level"), Some(&json!(["bundle"])));
+    assert_eq!(
+        blake3::hash(&std::fs::read(dest1.join("bundle").join("empty.txt"))?),
+        blake3::hash(empty_bytes)
+    );
+    assert_eq!(
+        blake3::hash(&std::fs::read(
+            dest1.join("bundle").join("report-2026.txt")
+        )?),
+        blake3::hash(report_bytes)
+    );
+    assert_eq!(
+        blake3::hash(&std::fs::read(
+            dest1.join("bundle").join("sub").join("third.bin")
+        )?),
+        blake3::hash(&third_bytes)
+    );
+
+    // (a2) Nested directory with 2 subdirs + 3 files -> files == 3, dirs == 3.
+    let pack = tmp.path().join("src2").join("pack");
+    let sub1 = pack.join("sub1");
+    let sub2 = pack.join("sub2");
+    std::fs::create_dir_all(&sub1)?;
+    std::fs::create_dir_all(&sub2)?;
+    let a_bytes: &[u8] = b"root-a";
+    let b_bytes: &[u8] = b"nested-sub1-b";
+    let c_bytes = vec![0xCDu8; 1024];
+    std::fs::write(pack.join("a.txt"), a_bytes)?;
+    std::fs::write(sub1.join("b.txt"), b_bytes)?;
+    std::fs::write(sub2.join("c.bin"), &c_bytes)?;
+
+    let total_a2 = u64::try_from(a_bytes.len())?
+        .saturating_add(u64::try_from(b_bytes.len())?)
+        .saturating_add(u64::try_from(c_bytes.len())?);
+    let dest2 = tmp.path().join("dest2");
+    let (_code2, offer2) = run_count_parity_loopback(
+        &srv,
+        &[pack],
+        &dest2,
+        ExpectedCounts {
+            files: 3,
+            dirs: 3,
+            total_bytes: total_a2,
+            skipped: 0,
+        },
+    )?;
+    assert_eq!(offer2.get("top_level"), Some(&json!(["pack"])));
+    assert_eq!(
+        blake3::hash(&std::fs::read(dest2.join("pack").join("a.txt"))?),
+        blake3::hash(a_bytes)
+    );
+    assert_eq!(
+        blake3::hash(&std::fs::read(
+            dest2.join("pack").join("sub1").join("b.txt")
+        )?),
+        blake3::hash(b_bytes)
+    );
+    assert_eq!(
+        blake3::hash(&std::fs::read(
+            dest2.join("pack").join("sub2").join("c.bin")
+        )?),
+        blake3::hash(&c_bytes)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn loopback_code_ready_matches_offer_ready_for_empty_directories_and_files() -> TestResult {
+    let _guard = SHUTDOWN_GATE.read().map_err(|_| "lock poisoned")?;
+    let srv = MockRendezvous::start("127.0.0.1:0", RendezvousFault::None)?;
+    let tmp = TempDirGuard::new("parity-empty-dirs")?;
+
+    // (b1) Nested empty subdirectories + regular file -> files == 1, dirs == 4.
+    let pack = tmp.path().join("src1").join("pack");
+    std::fs::create_dir_all(pack.join("empty_sub"))?;
+    std::fs::create_dir_all(pack.join("nested_empty").join("leaf_empty"))?;
+    let doc_bytes: &[u8] = b"with empty subdirs";
+    std::fs::write(pack.join("doc.txt"), doc_bytes)?;
+
+    let dest1 = tmp.path().join("dest1");
+    let (_code1, _offer1) = run_count_parity_loopback(
+        &srv,
+        &[pack],
+        &dest1,
+        ExpectedCounts {
+            files: 1,
+            dirs: 4,
+            total_bytes: u64::try_from(doc_bytes.len())?,
+            skipped: 0,
+        },
+    )?;
+    assert!(dest1.join("pack").join("empty_sub").is_dir());
+    assert!(
+        dest1
+            .join("pack")
+            .join("nested_empty")
+            .join("leaf_empty")
+            .is_dir()
+    );
+    assert_eq!(
+        blake3::hash(&std::fs::read(dest1.join("pack").join("doc.txt"))?),
+        blake3::hash(doc_bytes)
+    );
+
+    // (b2) Top-level empty directory + top-level regular file -> files == 1, dirs == 1.
+    let src2 = tmp.path().join("src2");
+    let standalone_empty = src2.join("standalone_empty");
+    std::fs::create_dir_all(&standalone_empty)?;
+    let top_file = src2.join("top_file.txt");
+    let top_bytes: &[u8] = b"top-level sibling file";
+    std::fs::write(&top_file, top_bytes)?;
+
+    let dest2 = tmp.path().join("dest2");
+    let (_code2, offer2) = run_count_parity_loopback(
+        &srv,
+        &[standalone_empty, top_file],
+        &dest2,
+        ExpectedCounts {
+            files: 1,
+            dirs: 1,
+            total_bytes: u64::try_from(top_bytes.len())?,
+            skipped: 0,
+        },
+    )?;
+    assert_eq!(
+        offer2.get("top_level"),
+        Some(&json!(["standalone_empty", "top_file.txt"]))
+    );
+    assert!(dest2.join("standalone_empty").is_dir());
+    assert_eq!(
+        blake3::hash(&std::fs::read(dest2.join("top_file.txt"))?),
+        blake3::hash(top_bytes)
+    );
+
+    // (b3) Pure single empty directory -> files == 0, dirs == 1, total_bytes == 0.
+    let only_empty = tmp.path().join("src3").join("only_empty");
+    std::fs::create_dir_all(&only_empty)?;
+
+    let dest3 = tmp.path().join("dest3");
+    let (_code3, offer3) = run_count_parity_loopback(
+        &srv,
+        &[only_empty],
+        &dest3,
+        ExpectedCounts {
+            files: 0,
+            dirs: 1,
+            total_bytes: 0,
+            skipped: 0,
+        },
+    )?;
+    assert_eq!(offer3.get("top_level"), Some(&json!(["only_empty"])));
+    assert!(dest3.join("only_empty").is_dir());
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn loopback_code_ready_matches_offer_ready_with_skipped_symlinks_on_unix() -> TestResult {
+    use std::os::unix::fs::symlink;
+
+    let _guard = SHUTDOWN_GATE.read().map_err(|_| "lock poisoned")?;
+    let srv = MockRendezvous::start("127.0.0.1:0", RendezvousFault::None)?;
+    let tmp = TempDirGuard::new("parity-symlinks")?;
+
+    // External targets outside the transferred tree (must never be followed).
+    let ext_dir = tmp.path().join("external");
+    let ext_populated = ext_dir.join("ext_dir");
+    std::fs::create_dir_all(ext_populated.join("ext_sub"))?;
+    let ext_secret = ext_dir.join("secret.txt");
+    std::fs::write(&ext_secret, vec![0xEEu8; 128])?;
+    std::fs::write(
+        ext_populated.join("hidden.txt"),
+        b"must never be followed 001",
+    )?;
+    std::fs::write(
+        ext_populated.join("ext_sub").join("deep.txt"),
+        b"deep hidden",
+    )?;
+
+    // (c1) Regular files/dirs + symlink-to-file + symlink-to-populated-dir + dangling symlink.
+    let bundle = tmp.path().join("src1").join("bundle");
+    let sub = bundle.join("sub");
+    std::fs::create_dir_all(&sub)?;
+    let regular_bytes: &[u8] = b"regular file one";
+    let inner_bytes: &[u8] = b"inner binary payload 12345";
+    std::fs::write(bundle.join("regular.txt"), regular_bytes)?;
+    std::fs::write(sub.join("inner.bin"), inner_bytes)?;
+    symlink(&ext_secret, bundle.join("link_to_file"))?;
+    symlink(&ext_populated, bundle.join("link_to_dir"))?;
+    symlink(
+        tmp.path().join("does-not-exist-anywhere"),
+        sub.join("dangling_link"),
+    )?;
+
+    let total_c1 =
+        u64::try_from(regular_bytes.len())?.saturating_add(u64::try_from(inner_bytes.len())?);
+    let dest1 = tmp.path().join("dest1");
+    let (_code1, _offer1) = run_count_parity_loopback(
+        &srv,
+        &[bundle],
+        &dest1,
+        ExpectedCounts {
+            files: 2,
+            dirs: 2,
+            total_bytes: total_c1,
+            skipped: 3,
+        },
+    )?;
+    assert_eq!(
+        blake3::hash(&std::fs::read(dest1.join("bundle").join("regular.txt"))?),
+        blake3::hash(regular_bytes)
+    );
+    assert_eq!(
+        blake3::hash(&std::fs::read(
+            dest1.join("bundle").join("sub").join("inner.bin")
+        )?),
+        blake3::hash(inner_bytes)
+    );
+    assert!(std::fs::symlink_metadata(dest1.join("bundle").join("link_to_file")).is_err());
+    assert!(std::fs::symlink_metadata(dest1.join("bundle").join("link_to_dir")).is_err());
+    assert!(
+        std::fs::symlink_metadata(dest1.join("bundle").join("sub").join("dangling_link")).is_err()
+    );
+
+    // (c2) Directory containing ONLY symlinks -> files == 0, dirs == 1, total_bytes == 0, skipped == 2.
+    let only_links = tmp.path().join("src2").join("only_links");
+    std::fs::create_dir_all(&only_links)?;
+    symlink(&ext_secret, only_links.join("link_a"))?;
+    symlink(
+        tmp.path().join("still-missing-target"),
+        only_links.join("link_dangling"),
+    )?;
+
+    let dest2 = tmp.path().join("dest2");
+    let (_code2, _offer2) = run_count_parity_loopback(
+        &srv,
+        &[only_links],
+        &dest2,
+        ExpectedCounts {
+            files: 0,
+            dirs: 1,
+            total_bytes: 0,
+            skipped: 2,
+        },
+    )?;
+    assert!(dest2.join("only_links").is_dir());
+    assert!(std::fs::symlink_metadata(dest2.join("only_links").join("link_a")).is_err());
+    assert!(std::fs::symlink_metadata(dest2.join("only_links").join("link_dangling")).is_err());
+
+    Ok(())
+}
+
+#[test]
+fn loopback_code_ready_matches_offer_ready_for_single_file() -> TestResult {
+    let _guard = SHUTDOWN_GATE.read().map_err(|_| "lock poisoned")?;
+    let srv = MockRendezvous::start("127.0.0.1:0", RendezvousFault::None)?;
+    let tmp = TempDirGuard::new("parity-single")?;
+
+    let src_dir = tmp.path().join("src");
+    std::fs::create_dir_all(&src_dir)?;
+    let single_file = src_dir.join("single.dat");
+    let payload = vec![0x55u8; 2048];
+    std::fs::write(&single_file, &payload)?;
+
+    let dest = tmp.path().join("dest");
+    let (_code, offer) = run_count_parity_loopback(
+        &srv,
+        &[single_file],
+        &dest,
+        ExpectedCounts {
+            files: 1,
+            dirs: 0,
+            total_bytes: u64::try_from(payload.len())?,
+            skipped: 0,
+        },
+    )?;
+    assert_eq!(offer.get("top_level"), Some(&json!(["single.dat"])));
+    assert_eq!(
+        blake3::hash(&std::fs::read(dest.join("single.dat"))?),
+        blake3::hash(&payload)
+    );
+
+    Ok(())
+}
