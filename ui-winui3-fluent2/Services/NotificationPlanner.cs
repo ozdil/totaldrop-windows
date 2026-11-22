@@ -206,27 +206,31 @@ public static class NotificationPlanner
                 return null;
         }
 
-        string safeTitle = StripIllegalXmlControlChars(NonEmptyOr(title, AppTitle));
-        string safeBody = StripIllegalXmlControlChars(NonEmptyOr(body, NonEmptyOr(localizer.ErrorOther, AppTitle)));
+        string fallbackError = NonEmptyOr(localizer.ErrorOther, AppTitle);
+        string safeTitle = NonEmptyOr(title, AppTitle);
+        string safeBody = NonEmptyOr(body, fallbackError);
         string xml = BuildToastXml(safeTitle, safeBody);
         return new PlannedToastNotification(safeTitle, safeBody, xml);
     }
 
     public static string BuildToastXml(string title, string body)
     {
-        string escapedTitle = SecurityElement.Escape(StripIllegalXmlControlChars(title)) ?? AppTitle;
-        string escapedBody = SecurityElement.Escape(StripIllegalXmlControlChars(body)) ?? string.Empty;
+        string cleanTitle = NonEmptyOr(title, AppTitle);
+        string cleanBody = NonEmptyOr(body, AppTitle);
+        string escapedTitle = SecurityElement.Escape(cleanTitle) ?? AppTitle;
+        string escapedBody = SecurityElement.Escape(cleanBody) ?? AppTitle;
         return $"<toast launch=\"activate\"><visual><binding template=\"ToastGeneric\"><text>{escapedTitle}</text><text>{escapedBody}</text></binding></visual></toast>";
     }
 
     private static string ResolveSize(NotificationEventInput input, INotificationLocalizer localizer)
     {
-        if (!string.IsNullOrWhiteSpace(input.FormattedBytes))
+        string cleanedInput = StripIllegalXmlControlChars(input.FormattedBytes);
+        if (!string.IsNullOrWhiteSpace(cleanedInput))
         {
-            return input.FormattedBytes;
+            return cleanedInput;
         }
 
-        string formatted = localizer.FormatBytes(input.ByteCount);
+        string formatted = StripIllegalXmlControlChars(localizer.FormatBytes(input.ByteCount));
         return string.IsNullOrWhiteSpace(formatted) ? $"{input.ByteCount} B" : formatted;
     }
 
@@ -234,16 +238,17 @@ public static class NotificationPlanner
     {
         if (!string.IsNullOrWhiteSpace(input.ErrorL10nKey))
         {
-            string keyFormatted = localizer.FormatMessage(input.ErrorL10nKey);
+            string keyFormatted = StripIllegalXmlControlChars(localizer.FormatMessage(input.ErrorL10nKey));
             if (!string.IsNullOrWhiteSpace(keyFormatted))
             {
                 return keyFormatted;
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(input.LocalizedErrorSummary))
+        string summary = StripIllegalXmlControlChars(input.LocalizedErrorSummary);
+        if (!string.IsNullOrWhiteSpace(summary))
         {
-            return input.LocalizedErrorSummary;
+            return summary;
         }
 
         return localizer.ErrorOther;
@@ -253,47 +258,71 @@ public static class NotificationPlanner
     {
         if (!string.IsNullOrWhiteSpace(input.ErrorL10nKey))
         {
-            string keyFormatted = localizer.FormatMessage(input.ErrorL10nKey);
+            string keyFormatted = StripIllegalXmlControlChars(localizer.FormatMessage(input.ErrorL10nKey));
             if (!string.IsNullOrWhiteSpace(keyFormatted))
             {
                 return keyFormatted;
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(input.LocalizedErrorSummary))
+        string summary = StripIllegalXmlControlChars(input.LocalizedErrorSummary);
+        if (!string.IsNullOrWhiteSpace(summary))
         {
-            return input.LocalizedErrorSummary;
+            return summary;
         }
 
         if (input.Role == TransferRole.Send)
         {
-            string declined = localizer.FormatMessage("errorDeclined");
+            string declined = StripIllegalXmlControlChars(localizer.FormatMessage("errorDeclined"));
             return string.IsNullOrWhiteSpace(declined) ? localizer.ErrorOther : declined;
         }
 
         return input.IsText ? localizer.ReceiveTextDeclined : localizer.ReceiveDeclined;
     }
 
-    private static string NonEmptyOr(string? primary, string fallback) =>
-        string.IsNullOrWhiteSpace(primary) ? fallback : primary;
-
-    private static string StripIllegalXmlControlChars(string value)
+    private static string NonEmptyOr(string? primary, string fallback)
     {
-        if (string.IsNullOrEmpty(value))
+        string cleaned = StripIllegalXmlControlChars(primary);
+        return string.IsNullOrWhiteSpace(cleaned) ? fallback : cleaned;
+    }
+
+    private static string StripIllegalXmlControlChars(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw))
         {
             return string.Empty;
         }
 
         StringBuilder? sb = null;
-        for (int i = 0; i < value.Length; i++)
+        for (int i = 0; i < raw.Length; i++)
         {
-            char c = value[i];
-            bool illegal = (c < 0x20 && c != '\t' && c != '\n' && c != '\r')
+            char c = raw[i];
+            if (char.IsHighSurrogate(c))
+            {
+                if (i + 1 < raw.Length && char.IsLowSurrogate(raw[i + 1]))
+                {
+                    if (sb is not null)
+                    {
+                        sb.Append(c);
+                        sb.Append(raw[i + 1]);
+                    }
+
+                    i++;
+                    continue;
+                }
+
+                // Drop lone/unpaired high surrogate (illegal in XML 1.0).
+                sb ??= new StringBuilder(raw.Length).Append(raw, 0, i);
+                continue;
+            }
+
+            bool illegal = char.IsLowSurrogate(c)
+                || (c < 0x20 && c != '\t' && c != '\n' && c != '\r')
                 || c == '\uFFFE'
                 || c == '\uFFFF';
             if (illegal)
             {
-                sb ??= new StringBuilder(value.Length).Append(value, 0, i);
+                sb ??= new StringBuilder(raw.Length).Append(raw, 0, i);
             }
             else if (sb is not null)
             {
@@ -301,6 +330,6 @@ public static class NotificationPlanner
             }
         }
 
-        return sb is null ? value : sb.ToString();
+        return sb is null ? raw : sb.ToString();
     }
 }

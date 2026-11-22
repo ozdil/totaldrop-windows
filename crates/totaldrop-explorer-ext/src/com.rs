@@ -29,8 +29,8 @@ use windows_sys::Win32::Storage::FileSystem::{
 };
 use windows_sys::Win32::System::Com::{CoTaskMemAlloc, CoTaskMemFree};
 use windows_sys::Win32::System::LibraryLoader::{
-    DisableThreadLibraryCalls, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, GetModuleFileNameW, GetModuleHandleExW,
+    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+    GetModuleFileNameW, GetModuleHandleExW,
 };
 use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
 use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
@@ -81,7 +81,7 @@ fn increment_module_ref() {
 }
 
 fn decrement_module_ref() {
-    let _ = MODULE_REF_COUNT.fetch_update(Ordering::AcqRel, Ordering::Acquire, |cur| {
+    let _ = MODULE_REF_COUNT.try_update(Ordering::AcqRel, Ordering::Acquire, |cur| {
         cur.checked_sub(1)
     });
 }
@@ -1057,7 +1057,7 @@ fn launch_process_no_shell(exe_path: &str, command_line: &str) -> HRESULT {
 // Standard Win32 In-Proc / Surrogate COM DLL Exports
 
 /// Standard Win32 DLL entry point storing the module `HMODULE` for
-/// `IExplorerCommand::GetIcon` and disabling unused per-thread notifications.
+/// `IExplorerCommand::GetIcon`.
 ///
 /// # Safety
 ///
@@ -1071,11 +1071,11 @@ pub unsafe extern "system" fn DllMain(
 ) -> BOOL {
     catch_unwind(AssertUnwindSafe(|| {
         if fdw_reason == DLL_PROCESS_ATTACH {
+            // `DisableThreadLibraryCalls` is intentionally omitted because this
+            // DLL links the static MSVC CRT (`+crt-static` / `libcmt`), which
+            // requires `DLL_THREAD_ATTACH` and `DLL_THREAD_DETACH` notifications
+            // to allocate and reclaim per-thread CRT TLS state cleanly.
             MODULE_HANDLE.store(hinst_dll, Ordering::Release);
-            if !hinst_dll.is_null() {
-                // SAFETY: `hinst_dll` is the live module handle supplied by Windows loader.
-                let _ = unsafe { DisableThreadLibraryCalls(hinst_dll) };
-            }
         }
         1
     }))

@@ -30,6 +30,7 @@ public partial class App : Application
 {
     private const string SingleInstanceKey = "app.totaldrop.TotalDrop.Main";
     private const int NamedPipeChunkBytes = 16 * 1024;
+    private static readonly TimeSpan NamedPipeReadTimeout = TimeSpan.FromSeconds(5);
 
     private MainWindow? _mainWindow;
     private CancellationTokenSource? _ipcCts;
@@ -104,7 +105,7 @@ public partial class App : Application
                 when activation.Data is IProtocolActivatedEventArgs protocolArgs:
             {
                 string rawUri = protocolArgs.Uri.AbsoluteUri;
-                _mainWindow.RouteProtocolUri(rawUri);
+                await _mainWindow.RouteProtocolUriAsync(rawUri);
                 break;
             }
 
@@ -122,7 +123,7 @@ public partial class App : Application
 
                 if (rawArgs.Length > 0)
                 {
-                    _mainWindow.HandleLaunchArguments(rawArgs);
+                    await _mainWindow.HandleLaunchArgumentsAsync(rawArgs);
                 }
 
                 break;
@@ -236,12 +237,18 @@ public partial class App : Application
         }
 
         if (tokens.Count > 0
-            && tokens[0].EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            && GetWin32FileName(tokens[0]).Equals("totaldrop-winui.exe", StringComparison.OrdinalIgnoreCase))
         {
             tokens.RemoveAt(0);
         }
 
         return [.. tokens];
+    }
+
+    private static ReadOnlySpan<char> GetWin32FileName(string path)
+    {
+        int sep = path.AsSpan().LastIndexOfAny('\\', '/');
+        return sep >= 0 ? path.AsSpan(sep + 1) : path.AsSpan();
     }
 
     private async Task HandleShareTargetAsync(ShareOperation shareOperation)
@@ -322,7 +329,7 @@ public partial class App : Application
                         PipeTransmissionMode.Byte,
                         PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
 
-                    await server.WaitForConnectionAsync(token);
+                    await server.WaitForConnectionAsync(token).ConfigureAwait(false);
 
                     MainWindow? window = _mainWindow;
                     if (window is null)
@@ -330,38 +337,71 @@ public partial class App : Application
                         continue;
                     }
 
-                    await window.AcquireRouterStreamGateAsync(token);
+                    await window.AcquireRouterStreamGateAsync(token).ConfigureAwait(false);
+                    bool needsEofFlush = false;
                     try
                     {
+                        using CancellationTokenSource connCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                        connCts.CancelAfter(NamedPipeReadTimeout);
+
                         while (!token.IsCancellationRequested)
                         {
-                            int bytesRead = await server.ReadAsync(buffer.AsMemory(0, buffer.Length), token);
+                            int bytesRead = await server
+                                .ReadAsync(buffer.AsMemory(0, buffer.Length), connCts.Token)
+                                .ConfigureAwait(false);
                             if (bytesRead == 0)
                             {
                                 // Clean EOF flush: validates no truncated header or partial frame remains.
+                                needsEofFlush = false;
                                 _ = DispatchNamedPipeChunk(window, ReadOnlySpan<byte>.Empty);
                                 break;
                             }
 
+                            needsEofFlush = true;
                             if (!DispatchNamedPipeChunk(window, buffer.AsSpan(0, bytesRead)))
                             {
-                                // Rust rejected oversized (>4 MiB) or malformed frame and reset decoder.
+                                // Rust rejected oversized (>4 MiB) or malformed frame and reset its decoder.
+                                needsEofFlush = false;
                                 break;
                             }
                         }
                     }
                     finally
                     {
-                        window.ReleaseRouterStreamGate();
+                        try
+                        {
+                            if (needsEofFlush)
+                            {
+                                // Abrupt IOException, timeout, or cancellation mid-frame: flush 0-byte EOF
+                                // before releasing the gate so Rust resets IpcFrameDecoder cleanly (F-01).
+                                _ = window.TryIngestNamedPipeChunk(ReadOnlySpan<byte>.Empty, out _);
+                            }
+                        }
+                        finally
+                        {
+                            window.ReleaseRouterStreamGate();
+                        }
                     }
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    break;
                 }
                 catch (OperationCanceledException)
                 {
-                    break;
+                    Debug.WriteLine("Explorer IPC listener connection timed out.");
                 }
                 catch (Exception ex)
                 {
                     Debug.WriteLine($"Explorer IPC listener warning: {ex.Message}");
+                    try
+                    {
+                        await Task.Delay(250, token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
                 }
             }
         }, token);

@@ -255,26 +255,50 @@ public sealed class WakeLockService : IDisposable
         }
     }
 
-    private static string SanitizeReason(string? reason)
+    private const int MaxReasonLength = 256;
+
+    internal static string SanitizeReason(string? reason)
     {
         if (string.IsNullOrWhiteSpace(reason))
         {
             return "TotalDrop";
         }
 
-        Span<char> buffer = reason.Length <= 256 ? stackalloc char[reason.Length] : new char[256];
+        ReadOnlySpan<char> trimmed = reason.AsSpan().Trim();
+        Span<char> buffer = stackalloc char[MaxReasonLength];
         int written = 0;
-        foreach (char c in reason)
+        for (int i = 0; i < trimmed.Length; i++)
         {
-            if (written >= buffer.Length)
+            char c = trimmed[i];
+            if (char.IsHighSurrogate(c))
+            {
+                if (i + 1 < trimmed.Length && char.IsLowSurrogate(trimmed[i + 1]))
+                {
+                    if (written + 2 > MaxReasonLength)
+                    {
+                        break;
+                    }
+
+                    buffer[written++] = c;
+                    buffer[written++] = trimmed[i + 1];
+                    i++;
+                }
+
+                // Skip lone/unpaired high surrogates.
+                continue;
+            }
+
+            if (char.IsLowSurrogate(c) || char.IsControl(c))
+            {
+                continue;
+            }
+
+            if (written >= MaxReasonLength)
             {
                 break;
             }
 
-            if (!char.IsControl(c))
-            {
-                buffer[written++] = c;
-            }
+            buffer[written++] = c;
         }
 
         string cleaned = new string(buffer[..written]).Trim();

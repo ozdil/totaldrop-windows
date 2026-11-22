@@ -156,7 +156,8 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
     private void InitializeSessionAndRouter()
     {
         uint pid = (uint)Environment.ProcessId;
-        if (!NativeBridge.ProcessIdToSessionId(pid, out uint sessionId))
+        uint sessionId = 0;
+        if (OperatingSystem.IsWindows() && !NativeBridge.ProcessIdToSessionId(pid, out sessionId))
         {
             sessionId = 0;
         }
@@ -178,6 +179,7 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
                     regionTag,
                     appVersion,
                     _uiSettings.AnimationsEnabled);
+                DrainRouterOutboxLocked();
             }
         }
         catch (DllNotFoundException)
@@ -233,6 +235,8 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
                 {
                     bundle = routerBundle;
                 }
+
+                DrainRouterOutboxLocked();
             }
 
             bundle ??= NativeBridge.TryResolveUiBundle(joinedTags, regionTag, appVersion);
@@ -530,6 +534,7 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
                 if (_routerId != 0)
                 {
                     _ = NativeBridge.TrySetRouterActivity(_routerId, state, out _, out _);
+                    DrainRouterOutboxLocked();
                 }
             }
         }
@@ -549,6 +554,7 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
                 if (_routerId != 0)
                 {
                     _ = NativeBridge.TrySetRouterAnimations(_routerId, enabled, out _, out _);
+                    DrainRouterOutboxLocked();
                 }
             }
         }
@@ -724,6 +730,8 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private static readonly TimeSpan LocalRouterGateTimeout = TimeSpan.FromSeconds(2);
+
     /// <summary>
     /// Feeds raw Named Pipe bytes (or <see cref="ReadOnlySpan{T}.Empty"/> for
     /// 0-byte EOF flush) directly into Rust <c>WinUiWindowRouter</c>.
@@ -740,7 +748,14 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
                     return false;
                 }
 
-                return NativeBridge.TryIngestRouterIpcBytes(_routerId, chunk, out decisions, out _);
+                try
+                {
+                    return NativeBridge.TryIngestRouterIpcBytes(_routerId, chunk, out decisions, out _);
+                }
+                finally
+                {
+                    DrainRouterOutboxLocked();
+                }
             }
         }
         catch (DllNotFoundException)
@@ -753,40 +768,58 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
         Func<Task<ShareTargetInput>> extractPayloadAsync,
         IShareOperationLifecycle lifecycle)
     {
+        ShareTargetRouteResult result = await ShareTargetRouter.RouteAsync(
+            extractPayloadAsync,
+            lifecycle,
+            ingestFrameAsync: IngestShareTargetFrameAsync,
+            initiatorPid: (uint)Environment.ProcessId);
+
+        if (result.Succeeded && result.Decisions.Length > 0)
+        {
+            ApplyRouterDecisions(result.Decisions);
+        }
+    }
+
+    private async Task<ShareTargetRouteResult> IngestShareTargetFrameAsync(byte[] frame)
+    {
         bool acquired = false;
-        bool routed = false;
         try
         {
-            await _routerStreamGate.WaitAsync();
+            if (!await _routerStreamGate.WaitAsync(LocalRouterGateTimeout).ConfigureAwait(false))
+            {
+                return new ShareTargetRouteResult(
+                    Succeeded: false,
+                    Decisions: [],
+                    Error: new BridgeErrorDto("router_gate_timeout", "errorOther", null, "router stream gate timed out"));
+            }
+
             acquired = true;
-            ulong routerId;
             lock (_routerLock)
             {
-                routerId = _routerId;
-            }
+                if (_routerId == 0)
+                {
+                    return new ShareTargetRouteResult(
+                        Succeeded: false,
+                        Decisions: [],
+                        Error: new BridgeErrorDto("invalid_handle", "errorOther", null, "router handle is not initialized"));
+                }
 
-            routed = true;
-            ShareTargetRouteResult result = await ShareTargetRouter.RouteAsync(
-                routerId,
-                extractPayloadAsync,
-                lifecycle,
-                initiatorPid: (uint)Environment.ProcessId,
-                routerLock: _routerLock);
-
-            if (result.Succeeded && result.Decisions.Length > 0)
-            {
-                ApplyRouterDecisions(result.Decisions);
+                return ShareTargetRouter.IngestFrameAndFlushLocked(_routerId, frame);
             }
+        }
+        catch (DllNotFoundException)
+        {
+            return new ShareTargetRouteResult(
+                Succeeded: false,
+                Decisions: [],
+                Error: new BridgeErrorDto("bridge_unavailable", "errorOther", null, "native bridge DLL unavailable"));
         }
         catch (ObjectDisposedException)
         {
-            if (!routed)
-            {
-                _ = ShareTargetRouter.Route(
-                    routerId: 0,
-                    extractPayload: static () => new ShareTargetInput(),
-                    lifecycle: lifecycle);
-            }
+            return new ShareTargetRouteResult(
+                Succeeded: false,
+                Decisions: [],
+                Error: new BridgeErrorDto("router_disposed", "errorOther", null, "router stream gate disposed"));
         }
         finally
         {
@@ -797,7 +830,7 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    public void RouteProtocolUri(string rawUri)
+    public async Task RouteProtocolUriAsync(string rawUri)
     {
         try
         {
@@ -807,9 +840,15 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
                 byte[] frame = NativeBridge.BuildFramedProtocolUriEnvelope(
                     validated,
                     initiatorPid: (uint)Environment.ProcessId);
-                if (TryRouteLocalFrame(frame, out RouterDecisionDto[] decisions))
+                (LocalRouteOutcome outcome, RouterDecisionDto[] decisions) = await TryRouteLocalFrameAsync(frame);
+                if (outcome == LocalRouteOutcome.Routed)
                 {
                     ApplyRouterDecisions(decisions);
+                    return;
+                }
+
+                if (outcome == LocalRouteOutcome.Rejected)
+                {
                     return;
                 }
 
@@ -843,7 +882,7 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    public void RouteExplorerSend(IReadOnlyList<string> rawPaths)
+    public async Task RouteExplorerSendAsync(IReadOnlyList<string> rawPaths)
     {
         if (rawPaths.Count == 0)
         {
@@ -853,27 +892,41 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
         byte[] frame = NativeBridge.BuildFramedExplorerSendEnvelope(
             rawPaths,
             initiatorPid: (uint)Environment.ProcessId);
-        if (TryRouteLocalFrame(frame, out RouterDecisionDto[] decisions))
+        (LocalRouteOutcome outcome, RouterDecisionDto[] decisions) = await TryRouteLocalFrameAsync(frame);
+        if (outcome == LocalRouteOutcome.Routed)
         {
             ApplyRouterDecisions(decisions);
             return;
         }
 
-        if (!IsWindowBusy())
+        if (outcome == LocalRouteOutcome.Rejected)
         {
-            _ = SendVm.TryAddRawPaths(rawPaths);
+            // Live Rust router rejected invalid/hostile paths or >10,000 items;
+            // never mutate SendVm or navigate away from the current screen.
+            return;
+        }
+
+        if (!IsWindowBusy() && SendVm.TryAddRawPaths(rawPaths))
+        {
             NavigateToSend();
+            TriggerSendPageDirectoryMeasurement();
         }
     }
 
-    public void RouteOpenScreen(string screen)
+    public async Task RouteOpenScreenAsync(string screen)
     {
         byte[] frame = NativeBridge.BuildFramedOpenScreenEnvelope(
             screen,
             initiatorPid: (uint)Environment.ProcessId);
-        if (TryRouteLocalFrame(frame, out RouterDecisionDto[] decisions))
+        (LocalRouteOutcome outcome, RouterDecisionDto[] decisions) = await TryRouteLocalFrameAsync(frame);
+        if (outcome == LocalRouteOutcome.Routed)
         {
             ApplyRouterDecisions(decisions);
+            return;
+        }
+
+        if (outcome == LocalRouteOutcome.Rejected)
+        {
             return;
         }
 
@@ -883,7 +936,7 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    public void HandleLaunchArguments(string[] args)
+    public async Task HandleLaunchArgumentsAsync(string[] args)
     {
         if (args.Length == 0)
         {
@@ -909,7 +962,7 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
             if (arg.StartsWith("totaldrop:", StringComparison.OrdinalIgnoreCase)
                 || arg.StartsWith("https://totaldrop.app/r#", StringComparison.OrdinalIgnoreCase))
             {
-                RouteProtocolUri(arg);
+                await RouteProtocolUriAsync(arg);
                 return;
             }
 
@@ -918,18 +971,28 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
                 string target = arg["--screen=".Length..];
                 if (target is "send" or "clipboard" or "receive" or "settings")
                 {
-                    RouteOpenScreen(target);
+                    await RouteOpenScreenAsync(target);
                     return;
                 }
             }
         }
 
         List<string> filePaths = [];
+        bool optionsActive = true;
         foreach (string arg in args)
         {
-            if (arg is "--explorer-send" or "--" || arg.StartsWith('-'))
+            if (optionsActive)
             {
-                continue;
+                if (arg == "--")
+                {
+                    optionsActive = false;
+                    continue;
+                }
+
+                if (arg == "--explorer-send" || (arg.StartsWith('-') && arg.Length > 1))
+                {
+                    continue;
+                }
             }
 
             filePaths.Add(arg);
@@ -937,7 +1000,7 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
 
         if (filePaths.Count > 0)
         {
-            RouteExplorerSend(filePaths);
+            await RouteExplorerSendAsync(filePaths);
         }
     }
 
@@ -957,6 +1020,7 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
                 IsBusyNoticeOpen = false;
                 _ = SendVm.TryAddRawPaths(paths);
                 NavigateToSend();
+                TriggerSendPageDirectoryMeasurement();
                 break;
 
             case "navigate_send_text" when !string.IsNullOrEmpty(decision.RawText):
@@ -983,6 +1047,14 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
                     : decision.LocalizedBanner;
                 IsBusyNoticeOpen = true;
                 break;
+        }
+    }
+
+    private void TriggerSendPageDirectoryMeasurement()
+    {
+        if (ContentFrame.Content is SendPage sendPage)
+        {
+            sendPage.TriggerPendingDirectoryMeasurement();
         }
     }
 
@@ -1028,36 +1100,75 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
 
     private bool IsWindowBusy() => HasActiveTransfer || ReceiveVm.IsReceivedTextVisible;
 
-    private bool TryRouteLocalFrame(byte[] frame, out RouterDecisionDto[] decisions)
+    private void DrainRouterOutboxLocked()
     {
-        decisions = [];
+        if (_routerId != 0)
+        {
+            _ = NativeBridge.TryDrainRouterNdjson(_routerId, out _, out _);
+        }
+    }
+
+    private async Task<(LocalRouteOutcome Outcome, RouterDecisionDto[] Decisions)> TryRouteLocalFrameAsync(byte[] frame)
+    {
         bool acquired = false;
         try
         {
-            _routerStreamGate.Wait();
+            if (!await _routerStreamGate.WaitAsync(LocalRouterGateTimeout).ConfigureAwait(false))
+            {
+                return (LocalRouteOutcome.Unavailable, []);
+            }
+
             acquired = true;
             lock (_routerLock)
             {
                 if (_routerId == 0)
                 {
-                    return false;
+                    return (LocalRouteOutcome.Unavailable, []);
                 }
 
-                if (!NativeBridge.TryIngestRouterIpcBytes(_routerId, frame, out decisions, out _))
+                try
                 {
-                    return false;
-                }
+                    if (!NativeBridge.TryIngestRouterIpcBytes(
+                            _routerId,
+                            frame,
+                            out RouterDecisionDto[] decisions,
+                            out BridgeErrorDto? ingestError))
+                    {
+                        return (
+                            string.Equals(ingestError?.Kind, "invalid_handle", StringComparison.Ordinal)
+                                ? LocalRouteOutcome.Unavailable
+                                : LocalRouteOutcome.Rejected,
+                            []);
+                    }
 
-                return NativeBridge.TryIngestRouterIpcBytes(_routerId, ReadOnlySpan<byte>.Empty, out _, out _);
+                    if (!NativeBridge.TryIngestRouterIpcBytes(
+                            _routerId,
+                            ReadOnlySpan<byte>.Empty,
+                            out _,
+                            out BridgeErrorDto? eofError))
+                    {
+                        return (
+                            string.Equals(eofError?.Kind, "invalid_handle", StringComparison.Ordinal)
+                                ? LocalRouteOutcome.Unavailable
+                                : LocalRouteOutcome.Rejected,
+                            []);
+                    }
+
+                    return (LocalRouteOutcome.Routed, decisions);
+                }
+                finally
+                {
+                    DrainRouterOutboxLocked();
+                }
             }
         }
         catch (DllNotFoundException)
         {
-            return false;
+            return (LocalRouteOutcome.Unavailable, []);
         }
         catch (ObjectDisposedException)
         {
-            return false;
+            return (LocalRouteOutcome.Unavailable, []);
         }
         finally
         {

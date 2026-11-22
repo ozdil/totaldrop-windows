@@ -28,6 +28,7 @@ namespace TotalDrop.WinUI.Views;
 public sealed partial class SendPage : Page
 {
     private readonly UISettings _uiSettings = new();
+    private readonly HashSet<TransferItemModel> _measuringDirectories = [];
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _pollTimer;
     private bool _koseAnimating;
     private ContentDialog? _activeCancelDialog;
@@ -53,8 +54,12 @@ public sealed partial class SendPage : Page
                 StartPolling();
                 PollSessionOnce();
             }
+
+            TriggerPendingDirectoryMeasurement();
         }
     }
+
+    public void TriggerPendingDirectoryMeasurement() => _ = MeasurePendingDirectoriesAsync();
 
     public void ShutdownSession()
     {
@@ -527,7 +532,9 @@ public sealed partial class SendPage : Page
         List<TransferItemModel> dirs = [];
         foreach (TransferItemModel item in ViewModel.SelectedItems)
         {
-            if (item.IsDirectory)
+            if (item.IsDirectory
+                && string.Equals(item.FormattedSize, ViewModel.Strings.SendCounting, StringComparison.Ordinal)
+                && _measuringDirectories.Add(item))
             {
                 dirs.Add(item);
             }
@@ -538,14 +545,24 @@ public sealed partial class SendPage : Page
             return;
         }
 
-        foreach (TransferItemModel dirItem in dirs)
+        try
         {
-            ulong bytes = await Task.Run(() => ComputeDirectoryBytes(dirItem.ExtendedPath));
-            dirItem.ByteSize = bytes;
-            dirItem.FormattedSize = ViewModel.Strings.FormatBytes(bytes);
-        }
+            foreach (TransferItemModel dirItem in dirs)
+            {
+                ulong bytes = await Task.Run(() => ComputeDirectoryBytes(dirItem.ExtendedPath));
+                dirItem.ByteSize = bytes;
+                dirItem.FormattedSize = ViewModel.Strings.FormatBytes(bytes);
+            }
 
-        ViewModel.UpdateSelectionSummaryFromItems();
+            ViewModel.UpdateSelectionSummaryFromItems();
+        }
+        finally
+        {
+            foreach (TransferItemModel dirItem in dirs)
+            {
+                _measuringDirectories.Remove(dirItem);
+            }
+        }
     }
 
     private static ulong ComputeDirectoryBytes(string rootPath)

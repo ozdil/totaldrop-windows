@@ -1624,6 +1624,34 @@ fn router_ipc_frame_bounds_eof_truncation_and_schema_rejections() -> TestResult 
     })?;
     assert_strict_four_field_error(&tampered_err, "invalid_uri", Some("errorInvalidCode"))?;
 
+    // Valid canonical + nameplate + display_english, but tampered web_uri / ltr_isolated / protocol_uri / word_count.
+    let valid_code = totaldrop_windows_bridge::ValidatedCode::from_user_input("7-harbor-rocket")?;
+    let mut tampered_web = valid_code.clone();
+    tampered_web.web_uri = "https://evil.example/r#7-harbor-rocket".to_owned();
+    let mut tampered_ltr = valid_code.clone();
+    tampered_ltr.ltr_isolated = "spoofed".to_owned();
+    let mut tampered_proto = valid_code.clone();
+    tampered_proto.protocol_uri = "https://evil.example/r#7-harbor-rocket".to_owned();
+    let mut tampered_wc = valid_code;
+    tampered_wc.word_count = 3;
+
+    for tampered in [tampered_web, tampered_ltr, tampered_proto, tampered_wc] {
+        let tampered_json = serde_json::json!({
+            "version": 1,
+            "payload": {
+                "kind": "protocol_uri",
+                "code": tampered,
+            }
+        })
+        .to_string();
+        let frame = frame_raw_json(&tampered_json)?;
+        // SAFETY: `frame` is a live slice.
+        let err = decode_and_free(unsafe {
+            totaldrop_win_router_ingest_ipc_bytes_json(router, frame.as_ptr(), frame.len())
+        })?;
+        assert_strict_four_field_error(&err, "invalid_uri", Some("errorInvalidCode"))?;
+    }
+
     let too_many_paths: Vec<String> = (0..10_001)
         .map(|i| format!(r"C:\Users\Alice\f{i}.txt"))
         .collect();

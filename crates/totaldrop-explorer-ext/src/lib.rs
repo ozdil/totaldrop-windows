@@ -8,7 +8,7 @@
 //! resolution, Named Pipe / `CreateProcessW` transport planning, icon resource
 //! formatting, and path helpers strictly cross-platform and unit-testable on
 //! both Linux and Windows, while isolating Win32 COM vtables and DLL entry
-//! points inside the `#[cfg(windows)]` [`com`] module.
+//! points inside the `#[cfg(windows)]` `com` module.
 
 use totaldrop_windows_bridge::activation::{
     ActivationEnvelope, ActivationError, ExplorerLaunchTransport, MAX_SELECTION_ITEMS,
@@ -126,7 +126,8 @@ where
 ///
 /// Returns [`ActivationError::TooManyItems`] if `raw_paths.len() > 10_000`,
 /// [`ActivationError::EmptyExplorerSelection`] if `raw_paths` is empty, or any
-/// path validation error from [`WindowsSelectionPath::parse`].
+/// path validation error from
+/// [`totaldrop_windows_bridge::activation::WindowsSelectionPath::parse`].
 pub fn prepare_explorer_envelope(
     raw_paths: &[String],
     initiator_pid: Option<u32>,

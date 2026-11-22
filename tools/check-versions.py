@@ -189,8 +189,25 @@ def check_manifests_and_scripts(errors: list[str]) -> None:
             expected_arch,
         )
 
+        app_ext = f"{appx_ns}Applications/{appx_ns}Application/{appx_ns}Extensions"
+        com_server_prefix = (
+            f"{app_ext}/{com_ns}Extension[@Category='windows.comServer']/{com_ns}ComServer"
+        )
+        if root.findall(f"{appx_ns}Extensions//{com_ns}ComServer"):
+            errors.append(f"{rel}: com:ComServer must be declared under Applications/Application/Extensions")
+        if root.findall(f"{appx_ns}Extensions//{desktop4_ns}FileExplorerContextMenus"):
+            errors.append(
+                f"{rel}: desktop4:FileExplorerContextMenus must be declared under Applications/Application/Extensions"
+            )
+        if root.findall(f"{appx_ns}Extensions//{desktop_ns}ToastNotificationActivation"):
+            errors.append(
+                f"{rel}: desktop:ToastNotificationActivation must be declared under Applications/Application/Extensions"
+            )
+
         # Verify Explorer COM SurrogateServer (STA) + FileExplorerContextMenus (* & Directory).
-        surrogate_classes = root.findall(f".//{com_ns}SurrogateServer/{com_ns}Class")
+        surrogate_classes = root.findall(
+            f"{com_server_prefix}/{com_ns}SurrogateServer/{com_ns}Class"
+        )
         explorer_cls = next(
             (
                 c
@@ -200,7 +217,11 @@ def check_manifests_and_scripts(errors: list[str]) -> None:
             None,
         )
         if explorer_cls is None:
-            errors.append(f"{rel}: missing com:SurrogateServer/com:Class for {CANONICAL_CLSID}")
+            errors.append(
+                f"{rel}: missing Applications/Application/Extensions/"
+                f"com:Extension[@Category='windows.comServer']/com:ComServer/"
+                f"com:SurrogateServer/com:Class for {CANONICAL_CLSID}"
+            )
         else:
             raw_id = explorer_cls.attrib.get("Id", "")
             if not BARE_GUID_RE.fullmatch(raw_id):
@@ -213,19 +234,31 @@ def check_manifests_and_scripts(errors: list[str]) -> None:
                 v.attrib.get("Clsid", "").upper()
                 for v in it.findall(f"{desktop5_ns}Verb")
             ]
-            for it in root.findall(f".//{desktop4_ns}FileExplorerContextMenus/{desktop5_ns}ItemType")
+            for it in root.findall(
+                f"{app_ext}/{desktop4_ns}Extension[@Category='windows.fileExplorerContextMenus']"
+                f"/{desktop4_ns}FileExplorerContextMenus/{desktop5_ns}ItemType"
+            )
         }
         for required_type in ("*", "Directory"):
             clsids = item_types.get(required_type, [])
             if CANONICAL_CLSID not in clsids:
                 errors.append(
-                    f"{rel}: desktop4:FileExplorerContextMenus missing Type={required_type!r} verb for {CANONICAL_CLSID}"
+                    f"{rel}: Applications/Application/Extensions/"
+                    f"desktop4:Extension[@Category='windows.fileExplorerContextMenus'] "
+                    f"missing Type={required_type!r} verb for {CANONICAL_CLSID}"
                 )
 
         # Verify ToastNotificationActivation + matching com:ExeServer with bare unique GUID.
-        toast_elem = root.find(f".//{desktop_ns}ToastNotificationActivation")
+        toast_elem = root.find(
+            f"{app_ext}/{desktop_ns}Extension[@Category='windows.toastNotificationActivation']"
+            f"/{desktop_ns}ToastNotificationActivation"
+        )
         if toast_elem is None:
-            errors.append(f"{rel}: missing desktop:ToastNotificationActivation")
+            errors.append(
+                f"{rel}: missing Applications/Application/Extensions/"
+                "desktop:Extension[@Category='windows.toastNotificationActivation']/"
+                "desktop:ToastNotificationActivation"
+            )
         else:
             toast_guid = toast_elem.attrib.get("ToastActivatorCLSID", "")
             if not BARE_GUID_RE.fullmatch(toast_guid):
@@ -234,7 +267,7 @@ def check_manifests_and_scripts(errors: list[str]) -> None:
             if toast_guid.upper() == CANONICAL_CLSID:
                 errors.append(f"{rel}: ToastActivatorCLSID must be distinct from Explorer CLSID")
 
-            exe_servers = root.findall(f".//{com_ns}ExeServer")
+            exe_servers = root.findall(f"{com_server_prefix}/{com_ns}ExeServer")
             matching_exe = next(
                 (
                     srv
@@ -244,7 +277,11 @@ def check_manifests_and_scripts(errors: list[str]) -> None:
                 None,
             )
             if matching_exe is None:
-                errors.append(f"{rel}: missing com:ExeServer matching ToastActivatorCLSID {TOAST_ACTIVATOR_CLSID}")
+                errors.append(
+                    f"{rel}: missing Applications/Application/Extensions/"
+                    f"com:Extension[@Category='windows.comServer']/com:ComServer/"
+                    f"com:ExeServer matching ToastActivatorCLSID {TOAST_ACTIVATOR_CLSID}"
+                )
             else:
                 expect_eq(errors, f"{rel} Toast ExeServer Executable", matching_exe.attrib.get("Executable"), "totaldrop-winui.exe")
                 expect_eq(
@@ -255,6 +292,8 @@ def check_manifests_and_scripts(errors: list[str]) -> None:
                 )
 
         # Verify package-level scoped desktop2:FirewallRules and rescap:runFullTrust.
+        if root.findall(f"{appx_ns}Applications//{desktop2_ns}FirewallRules"):
+            errors.append(f"{rel}: desktop2:FirewallRules must be declared at Package level, not under Applications")
         pkg_fw = root.findall(f"{appx_ns}Extensions/{desktop2_ns}Extension[@Category='windows.firewallRules']/{desktop2_ns}FirewallRules")
         if len(pkg_fw) != 1:
             errors.append(f"{rel}: expected exactly 1 package-level desktop2:FirewallRules, found {len(pkg_fw)}")

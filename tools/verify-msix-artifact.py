@@ -765,15 +765,35 @@ def verify_manifest_extensions(manifest_root: ET.Element) -> None:
     desktop5_ns = "{http://schemas.microsoft.com/appx/manifest/desktop/windows10/5}"
     rescap_ns = "{http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities}"
 
+    app_ext = f"{appx_ns}Applications/{appx_ns}Application/{appx_ns}Extensions"
+    com_server_prefix = (
+        f"{app_ext}/{com_ns}Extension[@Category='windows.comServer']/{com_ns}ComServer"
+    )
+
+    if manifest_root.findall(f"{appx_ns}Extensions//{com_ns}ComServer"):
+        raise ValueError("com:ComServer must be declared under Applications/Application/Extensions")
+    if manifest_root.findall(f"{appx_ns}Extensions//{desktop4_ns}FileExplorerContextMenus"):
+        raise ValueError(
+            "desktop4:FileExplorerContextMenus must be declared under Applications/Application/Extensions"
+        )
+    if manifest_root.findall(f"{appx_ns}Extensions//{desktop_ns}ToastNotificationActivation"):
+        raise ValueError(
+            "desktop:ToastNotificationActivation must be declared under Applications/Application/Extensions"
+        )
+
     # 1. Explorer COM SurrogateServer (STA, bare CLSID, totaldrop_explorer_ext.dll).
-    surrogate_classes = manifest_root.findall(f".//{com_ns}SurrogateServer/{com_ns}Class")
+    surrogate_classes = manifest_root.findall(
+        f"{com_server_prefix}/{com_ns}SurrogateServer/{com_ns}Class"
+    )
     explorer_cls = next(
         (c for c in surrogate_classes if c.attrib.get("Id", "").lower() == EXPECTED_EXPLORER_CLSID),
         None,
     )
     if explorer_cls is None:
         raise ValueError(
-            f"AppxManifest.xml missing com:SurrogateServer/com:Class for {EXPECTED_EXPLORER_CLSID}"
+            "AppxManifest.xml missing Applications/Application/Extensions/"
+            "com:Extension[@Category='windows.comServer']/com:ComServer/"
+            f"com:SurrogateServer/com:Class for {EXPECTED_EXPLORER_CLSID}"
         )
     if not BARE_GUID_RE.fullmatch(explorer_cls.attrib.get("Id", "")):
         raise ValueError("Explorer COM Class Id must be a bare GUID without braces")
@@ -787,18 +807,30 @@ def verify_manifest_extensions(manifest_root: ET.Element) -> None:
     # 2. FileExplorerContextMenus (* and Directory verbs).
     item_types = {
         it.attrib.get("Type"): [v.attrib.get("Clsid", "").lower() for v in it.findall(f"{desktop5_ns}Verb")]
-        for it in manifest_root.findall(f".//{desktop4_ns}FileExplorerContextMenus/{desktop5_ns}ItemType")
+        for it in manifest_root.findall(
+            f"{app_ext}/{desktop4_ns}Extension[@Category='windows.fileExplorerContextMenus']"
+            f"/{desktop4_ns}FileExplorerContextMenus/{desktop5_ns}ItemType"
+        )
     }
     for req_type in ("*", "Directory"):
         if EXPECTED_EXPLORER_CLSID not in item_types.get(req_type, []):
             raise ValueError(
-                f"AppxManifest.xml missing desktop4:FileExplorerContextMenus verb for Type={req_type!r}"
+                "AppxManifest.xml missing Applications/Application/Extensions/"
+                "desktop4:Extension[@Category='windows.fileExplorerContextMenus'] "
+                f"verb for Type={req_type!r}"
             )
 
     # 3. ToastNotificationActivation + matching com:ExeServer with bare distinct GUID.
-    toast_elem = manifest_root.find(f".//{desktop_ns}ToastNotificationActivation")
+    toast_elem = manifest_root.find(
+        f"{app_ext}/{desktop_ns}Extension[@Category='windows.toastNotificationActivation']"
+        f"/{desktop_ns}ToastNotificationActivation"
+    )
     if toast_elem is None:
-        raise ValueError("AppxManifest.xml missing desktop:ToastNotificationActivation")
+        raise ValueError(
+            "AppxManifest.xml missing Applications/Application/Extensions/"
+            "desktop:Extension[@Category='windows.toastNotificationActivation']/"
+            "desktop:ToastNotificationActivation"
+        )
     toast_guid = toast_elem.attrib.get("ToastActivatorCLSID", "")
     if not BARE_GUID_RE.fullmatch(toast_guid):
         raise ValueError(f"ToastActivatorCLSID must be a bare GUID without braces, got {toast_guid!r}")
@@ -807,7 +839,7 @@ def verify_manifest_extensions(manifest_root: ET.Element) -> None:
     if toast_guid.lower() == EXPECTED_EXPLORER_CLSID:
         raise ValueError("ToastActivatorCLSID must be distinct from Explorer COM CLSID")
 
-    exe_servers = manifest_root.findall(f".//{com_ns}ExeServer")
+    exe_servers = manifest_root.findall(f"{com_server_prefix}/{com_ns}ExeServer")
     toast_srv = next(
         (
             srv
@@ -817,7 +849,11 @@ def verify_manifest_extensions(manifest_root: ET.Element) -> None:
         None,
     )
     if toast_srv is None:
-        raise ValueError("AppxManifest.xml missing com:ExeServer matching ToastActivatorCLSID")
+        raise ValueError(
+            "AppxManifest.xml missing Applications/Application/Extensions/"
+            "com:Extension[@Category='windows.comServer']/com:ComServer/"
+            "com:ExeServer matching ToastActivatorCLSID"
+        )
     if toast_srv.attrib.get("Executable") != "totaldrop-winui.exe":
         raise ValueError(f"Toast ExeServer Executable mismatch: {toast_srv.attrib.get('Executable')!r}")
     if toast_srv.attrib.get("Arguments") != "----AppNotificationActivated:":
