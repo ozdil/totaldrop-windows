@@ -29,7 +29,7 @@ namespace TotalDrop.WinUI.Views;
 public sealed partial class ReceivePage : Page
 {
     private readonly UISettings _uiSettings = new();
-    private DispatcherQueueTimer? _pollTimer;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _pollTimer;
     private bool _koseAnimating;
     private ContentDialog? _activeCancelDialog;
 
@@ -510,7 +510,7 @@ public sealed partial class ReceivePage : Page
         _pollTimer?.Stop();
     }
 
-    private void OnPollTimerTick(DispatcherQueueTimer sender, object args)
+    private void OnPollTimerTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
     {
         PollSessionOnce();
     }

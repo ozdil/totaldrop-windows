@@ -40,7 +40,8 @@
                 Background="{ThemeResource TotalDropCardBackgroundBrush}"
                 BorderBrush="{ThemeResource TotalDropCardStrokeBrush}"
                 BorderThickness="1"
-                AutomationProperties.LandmarkType="Region"
+                AutomationProperties.LandmarkType="Custom"
+                AutomationProperties.LocalizedLandmarkType="{x:Bind ViewModel.Strings.SettingsServer, Mode=OneWay}"
                 AutomationProperties.Name="{x:Bind ViewModel.Strings.SettingsServer, Mode=OneWay}">
                 <StackPanel Spacing="12">
                     <TextBlock
@@ -115,7 +116,8 @@
                 Background="{ThemeResource TotalDropCardBackgroundBrush}"
                 BorderBrush="{ThemeResource TotalDropCardStrokeBrush}"
                 BorderThickness="1"
-                AutomationProperties.LandmarkType="Region"
+                AutomationProperties.LandmarkType="Custom"
+                AutomationProperties.LocalizedLandmarkType="{x:Bind ViewModel.Strings.SettingsPrivacy, Mode=OneWay}"
                 AutomationProperties.Name="{x:Bind ViewModel.Strings.SettingsPrivacy, Mode=OneWay}">
                 <StackPanel Spacing="12">
                     <TextBlock
@@ -155,7 +157,8 @@
                 Background="{ThemeResource TotalDropCardBackgroundBrush}"
                 BorderBrush="{ThemeResource TotalDropCardStrokeBrush}"
                 BorderThickness="1"
-                AutomationProperties.LandmarkType="Region"
+                AutomationProperties.LandmarkType="Custom"
+                AutomationProperties.LocalizedLandmarkType="{x:Bind ViewModel.Strings.SettingsAbout, Mode=OneWay}"
                 AutomationProperties.Name="{x:Bind ViewModel.Strings.SettingsAbout, Mode=OneWay}">
                 <StackPanel Spacing="12">
                     <TextBlock

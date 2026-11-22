@@ -28,7 +28,7 @@ namespace TotalDrop.WinUI.Views;
 public sealed partial class SendPage : Page
 {
     private readonly UISettings _uiSettings = new();
-    private DispatcherQueueTimer? _pollTimer;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _pollTimer;
     private bool _koseAnimating;
     private ContentDialog? _activeCancelDialog;
 
@@ -169,7 +169,7 @@ public sealed partial class SendPage : Page
         StorageFolder? folder = await picker.PickSingleFolderAsync();
         if (folder is not null && !string.IsNullOrWhiteSpace(folder.Path))
         {
-            if (ViewModel.TryAddRawPaths([folder.Path]))
+            if (ViewModel.TryAddRawPaths(new[] { folder.Path }))
             {
                 _ = MeasurePendingDirectoriesAsync();
             }
@@ -411,7 +411,7 @@ public sealed partial class SendPage : Page
         _pollTimer?.Stop();
     }
 
-    private void OnPollTimerTick(DispatcherQueueTimer sender, object args)
+    private void OnPollTimerTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
     {
         PollSessionOnce();
     }
@@ -541,7 +541,7 @@ public sealed partial class SendPage : Page
             {
                 RecurseSubdirectories = true,
                 IgnoreInaccessible = true,
-                AttributesToSkip = FileAttributes.ReparsePoint,
+                AttributesToSkip = System.IO.FileAttributes.ReparsePoint,
             };
             foreach (FileInfo file in new DirectoryInfo(rootPath).EnumerateFiles("*", opts))
             {

@@ -965,7 +965,7 @@ public sealed partial class SendViewModel : ObservableViewModel
             }
 
             string safeLeaf = NativeBridge.TrySanitizeFilename(rawLeaf)?.Sanitized
-                ?? $"\u2068{rawLeaf}\u2069";
+                ?? item.SafeDisplayPath;
 
             bool isDir = false;
             ulong size = 0;
@@ -1717,7 +1717,8 @@ public sealed partial class ReceiveViewModel : ObservableViewModel
                     IsTextOffer = true;
                     ResultTitle = Strings.ReceiveTextDone;
                     RawReceivedText = ev.ReceivedText ?? string.Empty;
-                    DisplayReceivedText = ev.SanitizedText?.DisplayText ?? RawReceivedText;
+                    DisplayReceivedText = ev.SanitizedText?.DisplayText
+                        ?? TrySanitizeReceivedTextFallback(RawReceivedText);
                     ReceivedTextShortened = ev.SanitizedText?.Shortened == true;
                     ReceivedTextHidden = ev.SanitizedText?.HasHiddenControls == true;
                     SavedToFolder = string.Empty;
@@ -1814,6 +1815,23 @@ public sealed partial class ReceiveViewModel : ObservableViewModel
         NotifyChanged(nameof(DoneTextVisibility));
         NotifyChanged(nameof(DeclinedVisibility));
         NotifyChanged(nameof(FailedVisibility));
+    }
+
+    private static string TrySanitizeReceivedTextFallback(string raw)
+    {
+        if (string.IsNullOrEmpty(raw))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            return NativeBridge.TrySanitizeText(raw)?.DisplayText ?? string.Empty;
+        }
+        catch (DllNotFoundException)
+        {
+            return string.Empty;
+        }
     }
 }
 
