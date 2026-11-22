@@ -289,12 +289,105 @@ fn resolve_send_paths(raw_paths: Vec<String>) -> Result<Vec<PathBuf>, String> {
     }
 }
 
+fn is_valid_uri_scheme(scheme: &str) -> bool {
+    let mut bytes = scheme.bytes();
+    let Some(first) = bytes.next() else {
+        return false;
+    };
+    first.is_ascii_alphabetic()
+        && bytes.all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+}
+
+fn is_loopback_ws_authority(authority: &str) -> bool {
+    if let Some(rest) = authority.strip_prefix('[') {
+        let Some((host, after)) = rest.split_once(']') else {
+            return false;
+        };
+        let port_ok = after.is_empty()
+            || after.strip_prefix(':').is_some_and(|p| {
+                !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) && p.parse::<u16>().is_ok()
+            });
+        host == "::1" && port_ok
+    } else {
+        let (host, port_opt) = match authority.split_once(':') {
+            Some((h, p)) => (h, Some(p)),
+            None => (authority, None),
+        };
+        let port_ok = port_opt.is_none_or(|p| {
+            !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) && p.parse::<u16>().is_ok()
+        });
+        matches!(host, "localhost" | "127.0.0.1") && port_ok
+    }
+}
+
+fn has_valid_authority_syntax(authority: &str) -> bool {
+    if authority.is_empty() {
+        return false;
+    }
+    if let Some(rest) = authority.strip_prefix('[') {
+        let Some((host, after)) = rest.split_once(']') else {
+            return false;
+        };
+        if host.parse::<std::net::Ipv6Addr>().is_err() {
+            return false;
+        }
+        after.is_empty()
+            || after.strip_prefix(':').is_some_and(|p| {
+                !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) && p.parse::<u16>().is_ok()
+            })
+    } else {
+        let (host, port_opt) = match authority.split_once(':') {
+            Some((h, p)) => (h, Some(p)),
+            None => (authority, None),
+        };
+        !host.is_empty()
+            && !host.contains('[')
+            && !host.contains(']')
+            && !host.contains(':')
+            && port_opt.is_none_or(|p| {
+                !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) && p.parse::<u16>().is_ok()
+            })
+    }
+}
+
+/// Maps a rendezvous URL already rejected by `totaldrop_core::relay::check_url`
+/// into the exact `CoreError::Rendezvous` `BAD_ADDRESS` message from
+/// `totaldrop_core::rendezvous::check_url` so invalid URLs fail offline before
+/// scanning disk or generating ephemeral keys.
+fn classify_bad_rendezvous_url(url: &str) -> CoreError {
+    let msg = if url.is_empty() || !url.is_ascii() || url.bytes().any(|b| b <= 0x20 || b == 0x7F) {
+        "invalid server address"
+    } else if let Some((scheme, rest)) = url.split_once("://") {
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+        if !is_valid_uri_scheme(scheme) || authority.is_empty() {
+            "invalid server address"
+        } else if authority.contains('@') {
+            "the server address must not contain a user name"
+        } else if !has_valid_authority_syntax(authority) {
+            "invalid server address"
+        } else if scheme == "ws" {
+            if is_loopback_ws_authority(authority) {
+                "invalid server address"
+            } else {
+                "unencrypted ws:// is only allowed for a server on this machine"
+            }
+        } else if scheme == "wss" {
+            "invalid server address"
+        } else {
+            "the server address must start with wss://"
+        }
+    } else if url.contains('@') {
+        "the server address must not contain a user name"
+    } else {
+        "the server address must start with wss://"
+    };
+    CoreError::Rendezvous(msg.to_owned())
+}
+
 fn validate_session_server_urls(cfg: &BridgeNetworkConfig) -> Result<(), CoreError> {
     let rdv_trimmed = cfg.rendezvous_server.trim();
     if totaldrop_core::relay::check_url(rdv_trimmed).is_err() {
-        // Delegate inputs that core's `check_url` already rejects so
-        // `technical_english` keeps core's exact `BAD_ADDRESS` wording.
-        return Ok(());
+        return Err(classify_bad_rendezvous_url(rdv_trimmed));
     }
     if !BridgeNetworkConfig::is_valid_rendezvous_url(&cfg.rendezvous_server) {
         return Err(CoreError::Rendezvous("invalid server address".to_owned()));
@@ -427,7 +520,7 @@ pub(crate) fn start_send_files(
                     cause: String::new(),
                     summary: entry.localizer.text("errorStorage"),
                     cause_detail: None,
-                    technical_english: msg,
+                    technical_english: totaldrop_l10n::reveal_controls(&msg),
                 });
                 return;
             }

@@ -2353,3 +2353,103 @@ fn loopback_code_ready_matches_offer_ready_for_single_file() -> TestResult {
 
     Ok(())
 }
+
+#[test]
+fn receive_connect_start_bounds_unknown_word_and_sanitizes_technical_english() -> TestResult {
+    let _guard = SHUTDOWN_GATE.read().map_err(|_| "lock poisoned")?;
+    let cfg = c_str(&make_cfg_json("ws://127.0.0.1:4000", "", false))?;
+    let en = c_str("en-US")?;
+
+    // 20 KiB unknown word containing Bidi RLO and ANSI ESC must fail offline with
+    // bounded, sanitized technical_english (< 256 bytes, zero raw hidden chars).
+    let huge_code = c_str(&format!("7-harbor-\x1b\u{202E}{}", "x".repeat(20_000)))?;
+    // SAFETY: All four pointers are live NUL-terminated CStrings.
+    let sid = unsafe {
+        totaldrop_win_receive_connect_start(
+            cfg.as_ptr(),
+            huge_code.as_ptr(),
+            en.as_ptr(),
+            en.as_ptr(),
+        )
+    };
+    assert_ne!(sid, 0);
+    let mut evs = Vec::new();
+    let fail = wait_for_event(sid, &mut evs, "failed", Duration::from_secs(5))?;
+    assert_eq!(
+        fail.get("l10n_key").and_then(Value::as_str),
+        Some("errorInvalidCode")
+    );
+    let tech = fail
+        .get("technical_english")
+        .and_then(Value::as_str)
+        .ok_or("missing technical_english")?;
+    assert!(
+        tech.len() < 256,
+        "expected bounded technical_english (< 256 bytes), got {} bytes",
+        tech.len()
+    );
+    assert!(
+        tech.contains("..."),
+        "expected truncated preview '...' in {tech:?}"
+    );
+    assert!(
+        !tech.chars().any(totaldrop_l10n::is_hidden),
+        "leaked raw hidden char in technical_english: {tech:?}"
+    );
+    assert_eq!(totaldrop_win_session_destroy(sid), FFI_OK);
+    Ok(())
+}
+
+#[test]
+fn send_files_start_rejects_bad_rendezvous_url_before_disk_scan() -> TestResult {
+    let _guard = SHUTDOWN_GATE.read().map_err(|_| "lock poisoned")?;
+    let en = c_str("en-US")?;
+    let missing_path = std::env::temp_dir().join(format!(
+        "totaldrop-nonexistent-early-url-check-{}.bin",
+        std::process::id()
+    ));
+    let paths_c = c_str(&serde_json::to_string(&vec![
+        missing_path.to_string_lossy().into_owned(),
+    ])?)?;
+
+    for (bad_url, expected_substr) in [
+        ("http://127.0.0.1:4000", "must start with wss://"),
+        (
+            "ws://localhost@evil.example",
+            "the server address must not contain a user name",
+        ),
+        (
+            "ws://192.168.1.5:4000",
+            "unencrypted ws:// is only allowed for a server on this machine",
+        ),
+        ("wss://", "invalid server address"),
+    ] {
+        let cfg = c_str(&make_cfg_json(bad_url, "", false))?;
+        // SAFETY: All four pointers are live NUL-terminated CStrings.
+        let sid = unsafe {
+            totaldrop_win_send_files_start(cfg.as_ptr(), paths_c.as_ptr(), en.as_ptr(), en.as_ptr())
+        };
+        assert_ne!(sid, 0);
+        let mut evs = Vec::new();
+        let fail = wait_for_event(sid, &mut evs, "failed", Duration::from_secs(5))?;
+        assert_eq!(
+            fail.get("kind").and_then(Value::as_str),
+            Some("bad_server"),
+            "expected bad_server before disk scan for {bad_url:?}, got {fail}"
+        );
+        assert_eq!(
+            fail.get("l10n_key").and_then(Value::as_str),
+            Some("errorBadServer"),
+            "expected errorBadServer before disk scan for {bad_url:?}, got {fail}"
+        );
+        assert!(
+            fail.get("technical_english")
+                .and_then(Value::as_str)
+                .is_some_and(|t| t.contains(expected_substr)),
+            "expected {expected_substr:?} in technical_english for {bad_url:?}, got {fail}"
+        );
+        assert_eq!(totaldrop_win_session_destroy(sid), FFI_OK);
+    }
+
+    Ok(())
+}

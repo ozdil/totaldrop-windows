@@ -258,9 +258,12 @@ pub struct LocalizedTransferError {
     pub summary: String,
     /// Optional localized plain-language explanation (`causeTimedOut`, …).
     pub cause_detail: Option<String>,
-    /// Unmodified English technical string for problem reports.
+    /// Sanitized English technical string for problem reports (hidden
+    /// control/bidi characters revealed as `<U+XXXX>`).
     pub technical_english: String,
 }
+
+const MAX_ERROR_WORD_PREVIEW_CHARS: usize = 64;
 
 impl LocalizedTransferError {
     /// Maps a [`totaldrop_core::Error`] and its [`Cause`] into localized user
@@ -303,13 +306,23 @@ impl LocalizedTransferError {
             let detail = localizer.text(&cause_key);
             (cause_key, Some(detail))
         };
+        let raw_technical = match err {
+            CoreError::Code(CodeError::UnknownWord(word))
+                if word.chars().nth(MAX_ERROR_WORD_PREVIEW_CHARS).is_some() =>
+            {
+                let preview: String = word.chars().take(MAX_ERROR_WORD_PREVIEW_CHARS).collect();
+                format!("{preview:?}... is not a code word")
+            }
+            _ => err.to_string(),
+        };
+        let technical_english = totaldrop_l10n::reveal_controls(&raw_technical);
         Self {
             kind: kind.to_owned(),
             l10n_key: primary_key.to_owned(),
             cause,
             summary: localizer.text(primary_key),
             cause_detail,
-            technical_english: err.to_string(),
+            technical_english,
         }
     }
 
@@ -546,4 +559,89 @@ pub async fn connect_windows_receive(
 /// directory, or cannot be written to.
 pub fn check_windows_destination(dest: &Path) -> totaldrop_core::Result<PathBuf> {
     totaldrop_core::check_destination(dest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn localized_transfer_error_sanitizes_untrusted_remote_reasons() {
+        let localizer = WindowsLocalizer::new(["en-US"], Some("en-US"));
+        let malicious = concat!(
+            "remote\u{202E}evil\u{2069}",
+            "\x1b[31m\u{009B}31m\u{0085}",
+            "\u{2028}\u{2029}\u{FDD0}\u{FFFF}\u{E0041}"
+        );
+
+        for err in [
+            CoreError::Rendezvous(malicious.to_owned()),
+            CoreError::Cancelled(malicious.to_owned()),
+        ] {
+            let localized = LocalizedTransferError::from_core_error(&err, &localizer, false);
+            assert!(
+                !localized
+                    .technical_english
+                    .chars()
+                    .any(totaldrop_l10n::is_hidden),
+                "leaked hidden char in technical_english: {:?}",
+                localized.technical_english
+            );
+            for expected_escape in [
+                "<U+202E>",
+                "<U+2069>",
+                "<U+001B>",
+                "<U+009B>",
+                "<U+0085>",
+                "<U+2028>",
+                "<U+2029>",
+                "<U+FDD0>",
+                "<U+FFFF>",
+                "<U+E0041>",
+            ] {
+                assert!(
+                    localized.technical_english.contains(expected_escape),
+                    "expected {expected_escape} in {:?}",
+                    localized.technical_english
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn localized_transfer_error_bounds_unknown_word_preview_at_64_scalars() {
+        let localizer = WindowsLocalizer::new(["en-US"], Some("en-US"));
+
+        let word64 = "a".repeat(MAX_ERROR_WORD_PREVIEW_CHARS);
+        let exact = LocalizedTransferError::from_core_error(
+            &CoreError::Code(CodeError::UnknownWord(word64.clone())),
+            &localizer,
+            false,
+        );
+        assert!(!exact.technical_english.contains("..."));
+        assert!(exact.technical_english.contains(&word64));
+
+        let word65 = "é".repeat(MAX_ERROR_WORD_PREVIEW_CHARS + 1);
+        let over = LocalizedTransferError::from_core_error(
+            &CoreError::Code(CodeError::UnknownWord(word65)),
+            &localizer,
+            false,
+        );
+        assert!(over.technical_english.contains("..."));
+        assert!(over.technical_english.len() < 256);
+
+        let huge = LocalizedTransferError::from_core_error(
+            &CoreError::Code(CodeError::UnknownWord("x".repeat(20_000))),
+            &localizer,
+            false,
+        );
+        assert!(huge.technical_english.contains("..."));
+        assert!(huge.technical_english.len() < 256);
+        assert!(
+            !huge
+                .technical_english
+                .chars()
+                .any(totaldrop_l10n::is_hidden)
+        );
+    }
 }

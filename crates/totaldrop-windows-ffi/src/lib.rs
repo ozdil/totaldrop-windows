@@ -197,7 +197,27 @@ unsafe fn read_optional_c_str<'a>(ptr: *const c_char) -> Result<Option<&'a str>,
     }
 }
 
-const MAX_UNKNOWN_WORD_PREVIEW_CHARS: usize = 64;
+const MAX_ERROR_PREVIEW_CHARS: usize = 64;
+
+fn bounded_debug_preview(s: &str, max_chars: usize) -> String {
+    if s.chars().nth(max_chars).is_some() {
+        let preview: String = s.chars().take(max_chars).collect();
+        format!("{preview:?}...")
+    } else {
+        format!("{s:?}")
+    }
+}
+
+fn sanitize_message_text_arg(s: &str) -> String {
+    if let Some(inner) = s
+        .strip_prefix('\u{2068}')
+        .and_then(|rest| rest.strip_suffix('\u{2069}'))
+    {
+        totaldrop_windows_bridge::isolate_bidi(&totaldrop_l10n::reveal_controls(inner))
+    } else {
+        totaldrop_l10n::reveal_controls(s)
+    }
+}
 
 const fn is_disallowed_ui_metadata_char(ch: char) -> bool {
     if ch.is_control() {
@@ -279,11 +299,9 @@ const fn uri_error_kind(err: &UriValidationError) -> &'static str {
 }
 
 fn format_uri_error_message(err: &UriValidationError) -> String {
-    if let UriValidationError::UnknownWord { word } = err
-        && word.chars().nth(MAX_UNKNOWN_WORD_PREVIEW_CHARS).is_some()
-    {
-        let preview: String = word.chars().take(MAX_UNKNOWN_WORD_PREVIEW_CHARS).collect();
-        return format!("{preview:?}... is not a valid TotalDrop code word");
+    if let UriValidationError::UnknownWord { word } = err {
+        let preview = bounded_debug_preview(word, MAX_ERROR_PREVIEW_CHARS);
+        return format!("{preview} is not a valid TotalDrop code word");
     }
     err.to_string()
 }
@@ -561,7 +579,7 @@ pub unsafe extern "C" fn totaldrop_win_extract_clipboard_code_json(
                 uri_error_kind(&err),
                 Some(err.l10n_key()),
                 None,
-                err.to_string(),
+                format_uri_error_message(&err),
             ),
         }
     })
@@ -735,7 +753,10 @@ pub unsafe extern "C" fn totaldrop_win_format_message_json(
                 for (arg_name, arg_val) in map {
                     match arg_val {
                         serde_json::Value::String(s) => {
-                            owned_args.push((arg_name.clone(), OwnedArg::Text(s.clone())));
+                            owned_args.push((
+                                arg_name.clone(),
+                                OwnedArg::Text(sanitize_message_text_arg(s)),
+                            ));
                         }
                         serde_json::Value::Number(n) => {
                             let Some(count) = n.as_u64() else {
@@ -744,7 +765,8 @@ pub unsafe extern "C" fn totaldrop_win_format_message_json(
                                     Some("errorOther"),
                                     None,
                                     format!(
-                                        "numeric argument {arg_name:?} must be a non-negative integer"
+                                        "numeric argument {} must be a non-negative integer",
+                                        bounded_debug_preview(arg_name, MAX_ERROR_PREVIEW_CHARS)
                                     ),
                                 );
                             };
@@ -756,7 +778,8 @@ pub unsafe extern "C" fn totaldrop_win_format_message_json(
                                 Some("errorOther"),
                                 None,
                                 format!(
-                                    "argument {arg_name:?} must be a JSON string or unsigned integer"
+                                    "argument {} must be a JSON string or unsigned integer",
+                                    bounded_debug_preview(arg_name, MAX_ERROR_PREVIEW_CHARS)
                                 ),
                             );
                         }
@@ -771,7 +794,10 @@ pub unsafe extern "C" fn totaldrop_win_format_message_json(
                 "unknown_key",
                 Some("errorOther"),
                 None,
-                format!("unknown localization message key {key_str:?}"),
+                format!(
+                    "unknown localization message key {}",
+                    bounded_debug_preview(key_str, MAX_ERROR_PREVIEW_CHARS)
+                ),
             );
         }
 
@@ -788,7 +814,10 @@ pub unsafe extern "C" fn totaldrop_win_format_message_json(
                 "unknown_key",
                 Some("errorOther"),
                 None,
-                format!("unknown localization message key {key_str:?}"),
+                format!(
+                    "unknown localization message key {}",
+                    bounded_debug_preview(key_str, MAX_ERROR_PREVIEW_CHARS)
+                ),
             );
         };
 
@@ -1291,17 +1320,37 @@ mod tests {
     #[test]
     fn format_uri_error_message_bounds_unknown_word_at_64_chars() {
         let exact = UriValidationError::UnknownWord {
-            word: "a".repeat(MAX_UNKNOWN_WORD_PREVIEW_CHARS),
+            word: "a".repeat(MAX_ERROR_PREVIEW_CHARS),
         };
         let exact_msg = format_uri_error_message(&exact);
         assert!(!exact_msg.contains("..."));
-        assert!(exact_msg.contains(&"a".repeat(MAX_UNKNOWN_WORD_PREVIEW_CHARS)));
+        assert!(exact_msg.contains(&"a".repeat(MAX_ERROR_PREVIEW_CHARS)));
 
         let over = UriValidationError::UnknownWord {
-            word: "b".repeat(MAX_UNKNOWN_WORD_PREVIEW_CHARS + 1),
+            word: "b".repeat(MAX_ERROR_PREVIEW_CHARS + 1),
         };
         let over_msg = format_uri_error_message(&over);
         assert!(over_msg.contains("..."));
         assert!(over_msg.len() < 256);
+    }
+
+    #[test]
+    fn sanitize_message_text_arg_preserves_outer_isolate_and_defeats_breakout() {
+        // M5 sendShareText contract: single outer FSI/PDI around clean code preserved verbatim.
+        assert_eq!(
+            sanitize_message_text_arg("\u{2068}7-harbor-rocket\u{2069}"),
+            "\u{2068}7-harbor-rocket\u{2069}"
+        );
+        // Interior PDI breakout + RLO + ANSI ESC inside outer isolate are revealed cleanly.
+        let nested = sanitize_message_text_arg("\u{2068}ok\u{2069}\u{202E}evil\x1b[31m\u{2069}");
+        assert_eq!(nested, "\u{2068}ok<U+2069><U+202E>evil<U+001B>[31m\u{2069}");
+        // Unwrapped attacker folder path has all hidden chars revealed (preserving ZWNJ/ZWJ/NBSP).
+        let folder = sanitize_message_text_arg(
+            "C:\\Users\\\u{2069}\u{202E}evil\x1b[31m\u{009B}m\u{FDD0}\u{E0041}\u{200C}\u{00A0}",
+        );
+        assert_eq!(
+            folder,
+            "C:\\Users\\<U+2069><U+202E>evil<U+001B>[31m<U+009B>m<U+FDD0><U+E0041>\u{200C}\u{00A0}"
+        );
     }
 }

@@ -1006,3 +1006,299 @@ fn validate_input_json_bounds_unknown_word_message_and_preserves_oversized_kind(
     );
     Ok(())
 }
+
+#[test]
+fn build_localizer_sanitizes_region_and_lang_metadata_across_exports() -> TestResult {
+    let poisoned_langs = c_str("\x1b[31m\u{202E}de-DE\u{FDD0}\u{E0041},en-US")?;
+    let poisoned_region = c_str("\u{2066}\u{202E}de-DE\x1b[31m\u{009B}31m\u{FFFF}\u{E0041}")?;
+    let poisoned_ver = c_str("\u{202E}0.1.0\u{FDD0}\u{E007F}")?;
+
+    // 1. ui_bundle_json
+    // SAFETY: All three pointers are live NUL-terminated CStrings.
+    let bundle = decode_and_free(unsafe {
+        totaldrop_win_ui_bundle_json(
+            poisoned_langs.as_ptr(),
+            poisoned_region.as_ptr(),
+            poisoned_ver.as_ptr(),
+        )
+    })?;
+    let region_out = bundle
+        .get("region_tag")
+        .and_then(Value::as_str)
+        .ok_or("missing region_tag")?;
+    assert!(!contains_disallowed_ui_char(region_out));
+    assert_eq!(
+        bundle.get("language_tag").and_then(Value::as_str),
+        Some("en")
+    );
+
+    // 2. format_bytes_json uses build_localizer (poisoned de-DE still formats cleanly with zero raw hidden chars)
+    let clean_en = c_str("en-US")?;
+    let dirty_de = c_str("\x1b\u{202E}de-DE\u{009B}\u{FDD0}\u{E0041}")?;
+    // SAFETY: Both pointers are live NUL-terminated CStrings.
+    let bytes_json = decode_and_free(unsafe {
+        totaldrop_win_format_bytes_json(1_500_000, clean_en.as_ptr(), dirty_de.as_ptr())
+    })?;
+    let formatted_bytes = bytes_json
+        .get("formatted")
+        .and_then(Value::as_str)
+        .ok_or("missing formatted bytes")?;
+    assert_eq!(formatted_bytes, "1,5 MB");
+    assert!(!contains_disallowed_ui_char(formatted_bytes));
+
+    // 3. format_message_json uses build_localizer with poisoned lang_tags & region_tag
+    let key = c_str("sendDoneBody")?;
+    let args = c_str(r#"{"count":3}"#)?;
+    let dirty_tr = c_str("\u{202E}\x1btr-TR\u{FDD0}\u{E0041}")?;
+    // SAFETY: All four pointers are live NUL-terminated CStrings.
+    let msg_json = decode_and_free(unsafe {
+        totaldrop_win_format_message_json(
+            key.as_ptr(),
+            args.as_ptr(),
+            dirty_tr.as_ptr(),
+            dirty_tr.as_ptr(),
+        )
+    })?;
+    assert_eq!(
+        msg_json.get("language_tag").and_then(Value::as_str),
+        Some("tr")
+    );
+    let formatted_msg = msg_json
+        .get("formatted")
+        .and_then(Value::as_str)
+        .ok_or("missing formatted message")?;
+    assert!(!contains_disallowed_ui_char(formatted_msg));
+    Ok(())
+}
+
+#[test]
+fn format_message_json_defeats_rtl_pdi_breakout_and_preserves_m5_share_isolate() -> TestResult {
+    let ar = c_str("ar-SA")?;
+    let ar_reg = c_str("ar-EG")?;
+
+    // 1. Arabic RTL PDI breakout + RLO + ANSI ESC + C1 CSI + noncharacters + Unicode Tag
+    // inside `receiveSaveTo` folder argument must be revealed, leaving only outer FSI/PDI balance.
+    let save_key = c_str("receiveSaveTo")?;
+    let attack_folder = concat!(
+        r"C:\Users\",
+        "\u{2069}\u{202E}evil\x1b[31m\u{009B}31m\u{FDD0}\u{FFFF}\u{E0041}"
+    );
+    let save_args = c_str(&serde_json::json!({ "folder": attack_folder }).to_string())?;
+    // SAFETY: All four pointers are live NUL-terminated CStrings.
+    let save_res = decode_and_free(unsafe {
+        totaldrop_win_format_message_json(
+            save_key.as_ptr(),
+            save_args.as_ptr(),
+            ar.as_ptr(),
+            ar_reg.as_ptr(),
+        )
+    })?;
+    let rendered = save_res
+        .get("formatted")
+        .and_then(Value::as_str)
+        .ok_or("missing formatted")?;
+    for expected_escape in [
+        "<U+2069>",
+        "<U+202E>",
+        "<U+001B>",
+        "<U+009B>",
+        "<U+FDD0>",
+        "<U+FFFF>",
+        "<U+E0041>",
+    ] {
+        assert!(
+            rendered.contains(expected_escape),
+            "expected {expected_escape} in {rendered:?}"
+        );
+    }
+    // Zero raw control/RLO/noncharacter/Tag characters anywhere in rendered output,
+    // and exactly one balanced FSI/PDI pair from totaldrop_l10n's RTL wrapper.
+    assert!(!rendered.contains('\u{202E}'));
+    assert!(!rendered.contains('\x1b'));
+    assert!(!rendered.contains('\u{009B}'));
+    assert!(!rendered.contains('\u{FDD0}'));
+    assert!(!rendered.contains('\u{E0041}'));
+    assert_eq!(rendered.matches('\u{2068}').count(), 1);
+    assert_eq!(rendered.matches('\u{2069}').count(), 1);
+
+    // 2. M5 contract compatibility: single outer `\u{2068}...\u{2069}` in `sendShareText`
+    // is preserved verbatim, while interior PDI breakout inside outer FSI/PDI is neutralized.
+    let share_key = c_str("sendShareText")?;
+    let m5_args = c_str(r#"{"code":"\u20687-harbor-rocket\u2069"}"#)?;
+    // SAFETY: All four pointers are live NUL-terminated CStrings.
+    let m5_res = decode_and_free(unsafe {
+        totaldrop_win_format_message_json(
+            share_key.as_ptr(),
+            m5_args.as_ptr(),
+            ar.as_ptr(),
+            ar_reg.as_ptr(),
+        )
+    })?;
+    let m5_sentence = m5_res
+        .get("formatted")
+        .and_then(Value::as_str)
+        .ok_or("missing formatted share sentence")?;
+    assert!(
+        m5_sentence.contains("\u{2068}7-harbor-rocket\u{2069}"),
+        "M5 sendShareText outer isolate must be preserved: {m5_sentence:?}"
+    );
+
+    let nested_attack = "\u{2068}7-harbor\u{2069}\u{202E}evil\x1b[31m\u{2069}";
+    let nested_args = c_str(&serde_json::json!({ "code": nested_attack }).to_string())?;
+    // SAFETY: All four pointers are live NUL-terminated CStrings.
+    let nested_res = decode_and_free(unsafe {
+        totaldrop_win_format_message_json(
+            share_key.as_ptr(),
+            nested_args.as_ptr(),
+            ar.as_ptr(),
+            ar_reg.as_ptr(),
+        )
+    })?;
+    let nested_sentence = nested_res
+        .get("formatted")
+        .and_then(Value::as_str)
+        .ok_or("missing nested formatted")?;
+    assert!(nested_sentence.contains("<U+2069><U+202E>evil<U+001B>[31m"));
+    assert!(!nested_sentence.contains('\u{202E}'));
+    assert!(!nested_sentence.contains('\x1b'));
+    Ok(())
+}
+
+#[test]
+fn format_message_json_and_clipboard_extract_bound_oversized_error_reflections() -> TestResult {
+    let en = c_str("en-US")?;
+    let empty_args = c_str("{}")?;
+
+    // 1. Oversized unknown_key (10 KiB) bounded at 64 Unicode scalars.
+    let huge_key = c_str(&"k".repeat(10_240))?;
+    // SAFETY: All four pointers are live NUL-terminated CStrings.
+    let key_err = decode_and_free(unsafe {
+        totaldrop_win_format_message_json(
+            huge_key.as_ptr(),
+            empty_args.as_ptr(),
+            en.as_ptr(),
+            en.as_ptr(),
+        )
+    })?;
+    assert_eq!(key_err.get("ok").and_then(Value::as_bool), Some(false));
+    assert_eq!(
+        key_err.pointer("/error/kind").and_then(Value::as_str),
+        Some("unknown_key")
+    );
+    let key_msg = key_err
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .ok_or("missing key error message")?;
+    assert!(
+        key_msg.len() < 256,
+        "unbounded unknown_key error: {} bytes",
+        key_msg.len()
+    );
+    assert!(key_msg.contains("..."));
+    assert!(!key_msg.chars().any(char::is_control));
+
+    // Exact 64-char unknown_key is untruncated; 65-char multi-byte key truncates cleanly.
+    let key64 = c_str(&"m".repeat(64))?;
+    // SAFETY: Live CStrings.
+    let err64 = decode_and_free(unsafe {
+        totaldrop_win_format_message_json(
+            key64.as_ptr(),
+            empty_args.as_ptr(),
+            en.as_ptr(),
+            en.as_ptr(),
+        )
+    })?;
+    let msg64 = err64
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .ok_or("missing msg64")?;
+    assert!(!msg64.contains("..."));
+
+    let key65_mb = c_str(&"é".repeat(65))?;
+    // SAFETY: Live CStrings.
+    let err65 = decode_and_free(unsafe {
+        totaldrop_win_format_message_json(
+            key65_mb.as_ptr(),
+            empty_args.as_ptr(),
+            en.as_ptr(),
+            en.as_ptr(),
+        )
+    })?;
+    let msg65 = err65
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .ok_or("missing msg65")?;
+    assert!(msg65.contains("..."));
+    assert!(msg65.len() < 256);
+
+    // 2. Oversized invalid arg_name (numeric negative AND unsupported bool) bounded at 64 scalars.
+    let valid_key = c_str("sendDoneBody")?;
+    let huge_arg_name = "a".repeat(12_000);
+    let neg_args = c_str(&serde_json::json!({ &huge_arg_name: -1 }).to_string())?;
+    // SAFETY: Live CStrings.
+    let neg_err = decode_and_free(unsafe {
+        totaldrop_win_format_message_json(
+            valid_key.as_ptr(),
+            neg_args.as_ptr(),
+            en.as_ptr(),
+            en.as_ptr(),
+        )
+    })?;
+    assert_eq!(
+        neg_err.pointer("/error/kind").and_then(Value::as_str),
+        Some("invalid_args")
+    );
+    let neg_msg = neg_err
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .ok_or("missing neg_msg")?;
+    assert!(
+        neg_msg.len() < 256,
+        "unbounded numeric arg_name error: {} bytes",
+        neg_msg.len()
+    );
+    assert!(neg_msg.contains("..."));
+
+    let bool_args = c_str(&serde_json::json!({ &huge_arg_name: true }).to_string())?;
+    // SAFETY: Live CStrings.
+    let bool_err = decode_and_free(unsafe {
+        totaldrop_win_format_message_json(
+            valid_key.as_ptr(),
+            bool_args.as_ptr(),
+            en.as_ptr(),
+            en.as_ptr(),
+        )
+    })?;
+    assert_eq!(
+        bool_err.pointer("/error/kind").and_then(Value::as_str),
+        Some("invalid_args")
+    );
+    let bool_msg = bool_err
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .ok_or("missing bool_msg")?;
+    assert!(
+        bool_msg.len() < 256,
+        "unbounded type arg_name error: {} bytes",
+        bool_msg.len()
+    );
+    assert!(bool_msg.contains("..."));
+
+    // 3. extract_clipboard_code_json with huge non-code text stays bounded and control-free.
+    let huge_clip = c_str(&format!("7-harbor-\x1b\u{202E}{}", "z".repeat(20_000)))?;
+    // SAFETY: Live CString.
+    let clip_err =
+        decode_and_free(unsafe { totaldrop_win_extract_clipboard_code_json(huge_clip.as_ptr()) })?;
+    assert_eq!(clip_err.get("ok").and_then(Value::as_bool), Some(false));
+    let clip_msg = clip_err
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .ok_or("missing clip_msg")?;
+    assert!(
+        clip_msg.len() < 256,
+        "unbounded clipboard error: {} bytes",
+        clip_msg.len()
+    );
+    assert!(!contains_disallowed_ui_char(clip_msg));
+    Ok(())
+}

@@ -159,6 +159,48 @@ lib.totaldrop_win_validate_server_url_json.restype = ctypes.c_void_p
 lib.totaldrop_win_validate_paths_json.argtypes = [ctypes.c_char_p]
 lib.totaldrop_win_validate_paths_json.restype = ctypes.c_void_p
 
+lib.totaldrop_win_send_files_start.argtypes = [
+    ctypes.c_char_p,
+    ctypes.c_char_p,
+    ctypes.c_char_p,
+    ctypes.c_char_p,
+]
+lib.totaldrop_win_send_files_start.restype = ctypes.c_uint64
+
+lib.totaldrop_win_send_text_start.argtypes = [
+    ctypes.c_char_p,
+    ctypes.c_char_p,
+    ctypes.c_char_p,
+    ctypes.c_char_p,
+]
+lib.totaldrop_win_send_text_start.restype = ctypes.c_uint64
+
+lib.totaldrop_win_receive_connect_start.argtypes = [
+    ctypes.c_char_p,
+    ctypes.c_char_p,
+    ctypes.c_char_p,
+    ctypes.c_char_p,
+]
+lib.totaldrop_win_receive_connect_start.restype = ctypes.c_uint64
+
+lib.totaldrop_win_receive_accept_files.argtypes = [ctypes.c_uint64, ctypes.c_char_p]
+lib.totaldrop_win_receive_accept_files.restype = ctypes.c_int32
+
+lib.totaldrop_win_receive_accept_text.argtypes = [ctypes.c_uint64]
+lib.totaldrop_win_receive_accept_text.restype = ctypes.c_int32
+
+lib.totaldrop_win_receive_decline.argtypes = [ctypes.c_uint64]
+lib.totaldrop_win_receive_decline.restype = ctypes.c_int32
+
+lib.totaldrop_win_session_poll_events_ndjson.argtypes = [ctypes.c_uint64]
+lib.totaldrop_win_session_poll_events_ndjson.restype = ctypes.c_void_p
+
+lib.totaldrop_win_session_cancel.argtypes = [ctypes.c_uint64]
+lib.totaldrop_win_session_cancel.restype = ctypes.c_int32
+
+lib.totaldrop_win_session_destroy.argtypes = [ctypes.c_uint64]
+lib.totaldrop_win_session_destroy.restype = ctypes.c_int32
+
 lib.totaldrop_win_shutdown.argtypes = [ctypes.c_uint32]
 lib.totaldrop_win_shutdown.restype = ctypes.c_int32
 
@@ -235,6 +277,19 @@ paths_ok = take_json(
 )
 assert len(paths_ok) == 1 and paths_ok[0].get("extended_path") == r"\\?\UNC\nas01\team\spec.docx"
 
+assert lib.totaldrop_win_send_files_start(None, None, None, None) == 0
+assert lib.totaldrop_win_send_text_start(None, None, None, None) == 0
+assert lib.totaldrop_win_receive_connect_start(None, None, None, None) == 0
+assert lib.totaldrop_win_receive_accept_files(0, None) == -1
+assert lib.totaldrop_win_receive_accept_files(0, b"C:\\Downloads") == -3
+assert lib.totaldrop_win_receive_accept_text(0) == -3
+assert lib.totaldrop_win_receive_decline(0) == -3
+poll_bad = take_json(lib.totaldrop_win_session_poll_events_ndjson(0))
+assert poll_bad.get("ok") is False and poll_bad.get("error", {}).get("kind") == "invalid_handle", (
+    f"unexpected poll invalid_handle JSON: {poll_bad}"
+)
+assert lib.totaldrop_win_session_cancel(0) == -3
+assert lib.totaldrop_win_session_destroy(0) == -3
 assert lib.totaldrop_win_shutdown(100) == 0
 """
 
