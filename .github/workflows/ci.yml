@@ -188,29 +188,48 @@ jobs:
           $tmpDir = Join-Path $env:RUNNER_TEMP "wack-smoke"
           New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
           $passXml = Join-Path $tmpDir "pass.xml"
-          $failXml = Join-Path $tmpDir "fail.xml"
           Set-Content -LiteralPath $passXml -Encoding UTF8 -Value '<REPORT OVERALL_RESULT="PASS"><REQUIREMENTS><REQUIREMENT><TEST NAME="Supported APIs" RESULT="PASS" /></REQUIREMENT></REQUIREMENTS></REPORT>'
-          Set-Content -LiteralPath $failXml -Encoding UTF8 -Value '<REPORT OVERALL_RESULT="PASS"><REQUIREMENTS><REQUIREMENT><TEST NAME="Supported APIs" RESULT="FAIL" /></REQUIREMENT></REQUIREMENTS></REPORT>'
           pwsh -NoProfile -File .\tools\run-wack.ps1 -CheckReportOnly -ReportPath $passXml
           if ($LASTEXITCODE -ne 0) {
             throw "Expected tools/run-wack.ps1 -CheckReportOnly to PASS on clean report (exit=$LASTEXITCODE)"
           }
-          $prevEap = $ErrorActionPreference
-          $ErrorActionPreference = "Continue"
-          try {
-            $failOut = (& pwsh -NoProfile -File .\tools\run-wack.ps1 -CheckReportOnly -ReportPath $failXml 2>&1 | Out-String)
-            $failCode = $LASTEXITCODE
+          $negCases = @(
+            @{
+              Name   = "lowercase-fail"
+              Xml    = '<REPORT OVERALL_RESULT="PASS"><REQUIREMENTS><REQUIREMENT><TEST NAME="Supported APIs" result="fail" /></REQUIREMENT></REQUIREMENTS></REPORT>'
+              Expect = "Supported APIs"
+            },
+            @{
+              Name   = "error-result"
+              Xml    = '<REPORT OVERALL_RESULT="PASS"><REQUIREMENTS><REQUIREMENT><TEST NAME="Crash Test" RESULT="ERROR" /></REQUIREMENT></REQUIREMENTS></REPORT>'
+              Expect = "Crash Test"
+            },
+            @{
+              Name   = "empty-report"
+              Xml    = '<REPORT OVERALL_RESULT="PASS"></REPORT>'
+              Expect = "zero <TEST>"
+            }
+          )
+          foreach ($case in $negCases) {
+            $casePath = Join-Path $tmpDir "$($case.Name).xml"
+            Set-Content -LiteralPath $casePath -Encoding UTF8 -Value $case.Xml
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+              $failOut = (& pwsh -NoProfile -File .\tools\run-wack.ps1 -CheckReportOnly -ReportPath $casePath 2>&1 | Out-String)
+              $failCode = $LASTEXITCODE
+            }
+            finally {
+              $ErrorActionPreference = $prevEap
+            }
+            if ($failCode -eq 0) {
+              throw "Expected tools/run-wack.ps1 -CheckReportOnly to FAIL on negative case '$($case.Name)'"
+            }
+            if ($failOut -notmatch [regex]::Escape($case.Expect)) {
+              throw "Expected '$($case.Expect)' in WACK error output for '$($case.Name)', got: $failOut"
+            }
           }
-          finally {
-            $ErrorActionPreference = $prevEap
-          }
-          if ($failCode -eq 0) {
-            throw "Expected tools/run-wack.ps1 -CheckReportOnly to FAIL when a child <TEST RESULT='FAIL'> exists"
-          }
-          if ($failOut -notmatch "Supported APIs") {
-            throw "Expected failing test name 'Supported APIs' in WACK error output, got: $failOut"
-          }
-          Write-Host "WACK -CheckReportOnly positive & negative smoke tests OK"
+          Write-Host "WACK -CheckReportOnly positive & 3 negative smoke tests OK"
       - name: Validate XML well-formedness (.xaml, .appxmanifest, app.manifest, and 35-locale .resw)
         shell: pwsh
         run: |

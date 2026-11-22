@@ -18,9 +18,11 @@ import re
 import struct
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
+import zlib
 from pathlib import Path
 
 EXPECTED_APP_VERSION = "0.1.0-beta.1"
@@ -35,7 +37,9 @@ BARE_GUID_RE = re.compile(
 )
 QUAD_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$", re.ASCII)
 IDENTITY_NAME_RE = re.compile(r"^[A-Za-z0-9.-]{3,50}$")
-RDN_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?\d+(?:\.\d+)+)\s*=\s*\S.*$")
+RDN_KEY_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?\d+(?:\.\d+)+)$")
+HEX_RDN_VAL_RE = re.compile(r"^#(?:[0-9A-Fa-f]{2})+$")
+FORBIDDEN_UNQUOTED_RDN_CHARS: frozenset[str] = frozenset({'"', ";", "<", ">", "`", "$", "|", "&"})
 
 APPX_NS = "{http://schemas.microsoft.com/appx/manifest/foundation/windows10}"
 BUNDLE_NS = "{http://schemas.microsoft.com/appx/2013/bundle}"
@@ -577,7 +581,36 @@ assert mod.DllCanUnloadNow() == 0, "expected S_OK after releasing all COM instan
 """
 
 
+def _pe_machine_to_arch(pe_bytes: bytes) -> str | None:
+    """Return 'x64' or 'arm64' for a PE32+ executable, or None for PE32 (32-bit) / non-PE bytes."""
+    try:
+        pe = parse_pe64_bytes(pe_bytes, "<python>")
+    except ValueError:
+        return None
+    machine = pe.get("machine")
+    if machine == IMAGE_FILE_MACHINE_AMD64:
+        return "x64"
+    if machine == IMAGE_FILE_MACHINE_ARM64:
+        return "arm64"
+    return None
+
+
 def _python_host_arch() -> str | None:
+    if sys.platform == "win32":
+        exe = Path(sys.executable) if sys.executable else None
+        if exe is not None and exe.is_file():
+            try:
+                exe_bytes = exe.read_bytes()
+                if len(exe_bytes) >= 0x40 and exe_bytes[:2] == b"MZ":
+                    return _pe_machine_to_arch(exe_bytes)
+            except OSError:
+                pass
+        plat = sysconfig.get_platform().lower()
+        if plat == "win-amd64":
+            return "x64"
+        if plat == "win-arm64":
+            return "arm64"
+        return None
     machine = platform.machine().lower()
     if machine in ("amd64", "x86_64"):
         return "x64"
@@ -613,7 +646,8 @@ def _validate_msix_version_quad(version: str, label: str, *, store_mode: bool) -
             )
 
 
-def _validate_x500_publisher(publisher: str, label: str) -> None:
+def _parse_x500_publisher(publisher: str, label: str) -> list[tuple[str, str]]:
+    """Parse and strictly validate an RFC 2253 X.500 Publisher DN, returning (KEY_UPPER, unescaped_value) pairs."""
     if not isinstance(publisher, str) or not publisher.strip():
         raise ValueError(f"{label}: Publisher must be a non-empty X.500 CN=... distinguished name")
     if len(publisher) > 8192:
@@ -659,17 +693,109 @@ def _validate_x500_publisher(publisher: str, label: str) -> None:
         raise ValueError(f"{label}: malformed X.500 Publisher {publisher!r} (unterminated quote/escape)")
     rdns.append("".join(buf).strip())
 
+    parsed: list[tuple[str, str]] = []
     has_cn = False
     for rdn in rdns:
-        if not rdn or not RDN_RE.fullmatch(rdn):
+        if not rdn or "=" not in rdn:
             raise ValueError(
                 f"{label}: malformed X.500 Publisher RDN {rdn!r} in {publisher!r} (expected e.g. 'CN=...')"
             )
-        key, val = rdn.split("=", 1)
-        if key.strip().upper() == "CN" and val.strip():
+        raw_key, raw_val = rdn.split("=", 1)
+        key = raw_key.strip()
+        val = raw_val.strip()
+        if not RDN_KEY_RE.fullmatch(key) or not val:
+            raise ValueError(
+                f"{label}: malformed X.500 Publisher RDN {rdn!r} in {publisher!r} (expected e.g. 'CN=...')"
+            )
+
+        if val.startswith('"'):
+            if len(val) < 2:
+                raise ValueError(
+                    f"{label}: malformed quoted X.500 Publisher RDN {rdn!r} in {publisher!r}"
+                )
+            chars: list[str] = []
+            q_escaped = False
+            closed = False
+            for idx in range(1, len(val)):
+                c = val[idx]
+                if q_escaped:
+                    chars.append(c)
+                    q_escaped = False
+                    continue
+                if c == "\\":
+                    q_escaped = True
+                    continue
+                if c == '"':
+                    if idx != len(val) - 1:
+                        raise ValueError(
+                            f"{label}: unexpected trailing characters after closing quote in RDN {rdn!r}"
+                        )
+                    closed = True
+                    break
+                chars.append(c)
+            if not closed or q_escaped:
+                raise ValueError(
+                    f"{label}: unterminated quoted X.500 Publisher RDN {rdn!r} in {publisher!r}"
+                )
+            decoded_val = "".join(chars).strip()
+            if not decoded_val:
+                raise ValueError(f"{label}: empty quoted X.500 Publisher RDN value in {rdn!r}")
+        elif val.startswith("#"):
+            if not HEX_RDN_VAL_RE.fullmatch(val):
+                raise ValueError(
+                    f"{label}: invalid hex X.500 Publisher RDN value {val!r} in {publisher!r} "
+                    "(leading '#' requires even-length hexadecimal bytes)"
+                )
+            decoded_val = val.lower()
+        else:
+            chars = []
+            u_escaped = False
+            for c in val:
+                if u_escaped:
+                    chars.append(c)
+                    u_escaped = False
+                    continue
+                if c == "\\":
+                    u_escaped = True
+                    continue
+                if c in FORBIDDEN_UNQUOTED_RDN_CHARS:
+                    raise ValueError(
+                        f"{label}: forbidden unescaped character {c!r} in unquoted X.500 RDN {rdn!r}"
+                    )
+                chars.append(c)
+            if u_escaped:
+                raise ValueError(f"{label}: trailing escape in X.500 Publisher RDN {rdn!r}")
+            decoded_val = "".join(chars).strip()
+            if not decoded_val:
+                raise ValueError(f"{label}: empty X.500 Publisher RDN value in {rdn!r}")
+
+        key_upper = key.upper()
+        if key_upper == "CN" and decoded_val:
             has_cn = True
+        parsed.append((key_upper, decoded_val))
+
     if not has_cn:
         raise ValueError(f"{label}: X.500 Publisher {publisher!r} must include a non-empty 'CN=' attribute")
+    return parsed
+
+
+def _validate_x500_publisher(publisher: str, label: str) -> None:
+    _parse_x500_publisher(publisher, label)
+
+
+def is_placeholder_test_identity(name: str, publisher: str) -> bool:
+    """Return True if Name or Publisher matches the temporary CN=TotalDrop / TotalDrop.TotalDrop test identity."""
+    if isinstance(name, str) and name.strip().lower() == "totaldrop.totaldrop":
+        return True
+    try:
+        parsed_rdns = _parse_x500_publisher(publisher, "Publisher")
+    except ValueError:
+        return False
+    if len(parsed_rdns) == 1:
+        key, val = parsed_rdns[0]
+        if key == "CN" and val.strip().lower() == "totaldrop":
+            return True
+    return False
 
 
 def _validate_identity_store_policy(
@@ -691,11 +817,18 @@ def _validate_identity_store_policy(
             f"{label}: Identity/@Version mismatch: {version!r} != {expected_version!r}"
         )
     if store_mode and not allow_test_identity:
-        if publisher == "CN=TotalDrop" or name == "TotalDrop.TotalDrop":
+        if is_placeholder_test_identity(name, publisher):
             raise ValueError(
                 f"{label}: Store-mode build refuses placeholder test identity "
                 f"(Name={name!r}, Publisher={publisher!r}); supply Partner Center identity or pass --allow-test-identity"
             )
+
+
+def _read_zip_member(zf: zipfile.ZipFile, member: str, label: str) -> bytes:
+    try:
+        return zf.read(member)
+    except (zlib.error, zipfile.BadZipFile, RuntimeError, EOFError) as exc:
+        raise ValueError(f"{label}: corrupted ZIP member {member!r}: {exc}") from exc
 
 
 def _check_opc_zip_entries(
@@ -705,32 +838,77 @@ def _check_opc_zip_entries(
     flat_root_only: bool = False,
     case_sensitive_unique_paths: tuple[str, ...] = (),
 ) -> list[str]:
-    bad_member = zf.testzip()
+    try:
+        bad_member = zf.testzip()
+    except (zlib.error, zipfile.BadZipFile, RuntimeError, EOFError) as exc:
+        raise ValueError(f"{label}: corrupted ZIP archive: {exc}") from exc
     if bad_member is not None:
         raise ValueError(f"{label}: corrupted ZIP member {bad_member!r}")
 
     raw_names = zf.namelist()
     seen_exact: set[str] = set()
-    lower_counts: dict[str, int] = {}
+    seen_lower: dict[str, str] = {}
+    seen_files: dict[str, str] = {}
+    seen_dirs: dict[str, str] = {}
     for name in raw_names:
         if name in seen_exact:
             raise ValueError(f"{label}: duplicate ZIP entry {name!r}")
         seen_exact.add(name)
-        lower_name = name.lower()
-        lower_counts[lower_name] = lower_counts.get(lower_name, 0) + 1
 
-        if not name or name.startswith("/") or "\\" in name:
+        if not name or name.startswith("/") or "\\" in name or ":" in name:
             raise ValueError(f"{label}: unsafe OPC/ZIP entry path {name!r}")
         if any(ord(ch) < 0x20 or ord(ch) > 0x7E for ch in name):
             raise ValueError(f"{label}: non-ASCII or control char in ZIP entry name {name!r}")
+
+        is_dir = name.endswith("/")
         parts = name.split("/")
-        if ".." in parts:
-            raise ValueError(f"{label}: path traversal component in ZIP entry {name!r}")
+        check_parts = parts[:-1] if is_dir else parts
+        if not check_parts:
+            raise ValueError(f"{label}: empty OPC/ZIP entry path {name!r}")
+        if ".." in check_parts or "." in check_parts:
+            raise ValueError(f"{label}: unsafe relative/traversal path component in ZIP entry {name!r}")
+        if "" in check_parts:
+            raise ValueError(f"{label}: empty path segment in ZIP entry {name!r}")
         if flat_root_only and ("/" in name):
             raise ValueError(f"{label}: nested directory entry {name!r} not permitted (flat root files only)")
 
+        lower_name = name.lower()
+        if lower_name in seen_lower:
+            raise ValueError(
+                f"{label}: case-insensitive duplicate OPC/ZIP entry {name!r} "
+                f"(conflicts with {seen_lower[lower_name]!r})"
+            )
+        seen_lower[lower_name] = name
+
+        lower_parts = [p.lower() for p in check_parts]
+        for depth in range(1, len(lower_parts)):
+            parent_dir = "/".join(lower_parts[:depth])
+            if parent_dir in seen_files:
+                raise ValueError(
+                    f"{label}: colliding OPC/ZIP file/directory entry {name!r} "
+                    f"(conflicts with file {seen_files[parent_dir]!r})"
+                )
+            seen_dirs.setdefault(parent_dir, name)
+
+        norm_key = "/".join(lower_parts)
+        if is_dir:
+            if norm_key in seen_files:
+                raise ValueError(
+                    f"{label}: colliding OPC/ZIP file/directory entry {name!r} "
+                    f"(conflicts with file {seen_files[norm_key]!r})"
+                )
+            seen_dirs.setdefault(norm_key, name)
+        else:
+            if norm_key in seen_dirs:
+                raise ValueError(
+                    f"{label}: colliding OPC/ZIP file/directory entry {name!r} "
+                    f"(conflicts with directory prefix from {seen_dirs[norm_key]!r})"
+                )
+            seen_files[norm_key] = name
+
     for critical_path in case_sensitive_unique_paths:
-        if lower_counts.get(critical_path.lower(), 0) > 1:
+        matches = [n for n in raw_names if n.lower() == critical_path.lower()]
+        if len(matches) > 1:
             raise ValueError(
                 f"{label}: case-insensitive duplicate critical manifest entry {critical_path!r}"
             )
@@ -1500,7 +1678,7 @@ def verify_msix_archive(
         if forbidden_entries:
             raise ValueError(f"{label}: forbidden staging/key artifacts packed in MSIX: {forbidden_entries}")
 
-        manifest_raw = zf.read("AppxManifest.xml").decode("utf-8", errors="strict")
+        manifest_raw = _read_zip_member(zf, "AppxManifest.xml", label).decode("utf-8", errors="strict")
         if UNSIGNED_PACKAGE_OID in manifest_raw.lower():
             raise ValueError(
                 f"{label}: AppxManifest.xml contains forbidden unsigned-package OID {UNSIGNED_PACKAGE_OID}"
@@ -1533,9 +1711,9 @@ def verify_msix_archive(
         )
         verify_manifest_extensions(manifest_root)
 
-        ffi_bytes = zf.read("totaldrop_windows_ffi.dll")
-        ext_bytes = zf.read("totaldrop_explorer_ext.dll")
-        exe_bytes = zf.read("totaldrop-winui.exe")
+        ffi_bytes = _read_zip_member(zf, "totaldrop_windows_ffi.dll", label)
+        ext_bytes = _read_zip_member(zf, "totaldrop_explorer_ext.dll", label)
+        exe_bytes = _read_zip_member(zf, "totaldrop-winui.exe", label)
 
         ffi_pe = parse_pe64_bytes(ffi_bytes, f"{label}:totaldrop_windows_ffi.dll")
         ext_pe = parse_pe64_bytes(ext_bytes, f"{label}:totaldrop_explorer_ext.dll")
@@ -1667,7 +1845,9 @@ def verify_msixbundle_archive(
         if bad_entries:
             raise ValueError(f"{label}: forbidden key/symbol/staging files inside .msixbundle: {bad_entries}")
 
-        manifest_raw = zf.read("AppxMetadata/AppxBundleManifest.xml").decode("utf-8", errors="strict")
+        manifest_raw = _read_zip_member(zf, "AppxMetadata/AppxBundleManifest.xml", label).decode(
+            "utf-8", errors="strict"
+        )
         if UNSIGNED_PACKAGE_OID in manifest_raw.lower():
             raise ValueError(
                 f"{label}: AppxBundleManifest.xml contains forbidden unsigned-package OID {UNSIGNED_PACKAGE_OID}"
@@ -1765,7 +1945,7 @@ def verify_msixbundle_archive(
         inner_results: dict[str, dict[str, object]] = {}
         for arch in ("x64", "arm64"):
             pkg_file, _ = app_packages_by_arch[arch]
-            inner_bytes = zf.read(pkg_file)
+            inner_bytes = _read_zip_member(zf, pkg_file, label)
             res = verify_msix_archive(
                 inner_bytes,
                 f"{label}/{pkg_file}",
@@ -1883,7 +2063,7 @@ def verify_msixupload_archive(
             )
 
         bundle_name = bundles[0]
-        bundle_bytes = zf.read(bundle_name)
+        bundle_bytes = _read_zip_member(zf, bundle_name, label)
         bundle_sha = hashlib.sha256(bundle_bytes).hexdigest()
         if expected_bundle_path is not None:
             disk_bytes = expected_bundle_path.read_bytes()
@@ -1909,14 +2089,15 @@ def verify_msixupload_archive(
 
         combined_pdbs: set[str] = set()
         for sym_name in sorted(appxsyms):
-            combined_pdbs |= _verify_appxsym_bytes(zf.read(sym_name), f"{label}/{sym_name}")
-
-        missing_pdbs = sorted(REQUIRED_SYMBOL_PDBS - combined_pdbs)
-        if missing_pdbs:
-            raise ValueError(
-                f"{label}: .appxsym archive(s) missing required PDB symbol(s): {missing_pdbs} "
-                f"(present={sorted(combined_pdbs)})"
-            )
+            sym_bytes = _read_zip_member(zf, sym_name, label)
+            sym_pdbs = _verify_appxsym_bytes(sym_bytes, f"{label}/{sym_name}")
+            missing_pdbs = sorted(REQUIRED_SYMBOL_PDBS - sym_pdbs)
+            if missing_pdbs:
+                raise ValueError(
+                    f"{label}/{sym_name}: .appxsym archive missing required PDB symbol(s): {missing_pdbs} "
+                    f"(present={sorted(sym_pdbs)})"
+                )
+            combined_pdbs |= sym_pdbs
 
     return {
         "bundle_name": bundle_name,
@@ -2083,6 +2264,29 @@ def _build_synthetic_pe64(
     return bytes(hdr) + bytes(sec)
 
 
+def _xml_attr_escape(value: str) -> str:
+    return (
+        value.replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _build_synthetic_pe32(machine: int = 0x014C) -> bytes:
+    """Build a minimal 32-bit PE32 (0x010B) header for host-architecture guard self-tests."""
+    hdr = bytearray(0x200)
+    hdr[0:2] = b"MZ"
+    e_lfanew = 0x80
+    struct.pack_into("<I", hdr, 0x3C, e_lfanew)
+    hdr[e_lfanew : e_lfanew + 4] = b"PE\x00\x00"
+    coff_off = e_lfanew + 4
+    struct.pack_into("<HHIIIHH", hdr, coff_off, machine, 0, 0, 0, 0, 224, 0x0102)
+    opt_off = coff_off + 20
+    struct.pack_into("<H", hdr, opt_off, 0x010B)
+    return bytes(hdr)
+
+
 def _patch_manifest_xml(
     template_xml: str,
     *,
@@ -2094,13 +2298,20 @@ def _patch_manifest_xml(
     drop_run_full_trust: bool = False,
 ) -> bytes:
     xml = template_xml
-    xml = re.sub(r'Name="TotalDrop\.TotalDrop"', f'Name="{name}"', xml, count=1)
-    xml = re.sub(r'Publisher="CN=TotalDrop"', f'Publisher="{publisher}"', xml, count=1)
-    xml = re.sub(r'Version="[^"]+"', f'Version="{version}"', xml, count=1)
-    xml = re.sub(r'ProcessorArchitecture="[^"]+"', f'ProcessorArchitecture="{arch}"', xml, count=1)
+    xml = re.sub(r'Name="TotalDrop\.TotalDrop"', lambda _: f'Name="{_xml_attr_escape(name)}"', xml, count=1)
+    xml = re.sub(
+        r'Publisher="CN=TotalDrop"', lambda _: f'Publisher="{_xml_attr_escape(publisher)}"', xml, count=1
+    )
+    xml = re.sub(r'Version="[^"]+"', lambda _: f'Version="{_xml_attr_escape(version)}"', xml, count=1)
+    xml = re.sub(
+        r'ProcessorArchitecture="[^"]+"',
+        lambda _: f'ProcessorArchitecture="{_xml_attr_escape(arch)}"',
+        xml,
+        count=1,
+    )
     xml = re.sub(
         r"<PublisherDisplayName>[^<]*</PublisherDisplayName>",
-        f"<PublisherDisplayName>{publisher_display_name}</PublisherDisplayName>",
+        lambda _: f"<PublisherDisplayName>{_xml_attr_escape(publisher_display_name)}</PublisherDisplayName>",
         xml,
         count=1,
     )
@@ -2119,6 +2330,7 @@ def _make_synthetic_msix(
     publisher_display_name: str = "TotalDrop",
     ext_machine_override: int | None = None,
     drop_run_full_trust: bool = False,
+    extra_entries: list[tuple[str, bytes]] | None = None,
 ) -> bytes:
     machine = IMAGE_FILE_MACHINE_AMD64 if arch == "x64" else IMAGE_FILE_MACHINE_ARM64
     is_x64 = arch == "x64"
@@ -2169,6 +2381,9 @@ def _make_synthetic_msix(
                 include_icon_101=True,
             ),
         )
+        if extra_entries:
+            for extra_name, extra_bytes in extra_entries:
+                zf.writestr(extra_name, extra_bytes)
     return buf.getvalue()
 
 
@@ -2181,15 +2396,18 @@ def _make_synthetic_bundle(
     duplicate_identity: bool = False,
     duplicate_manifest_entry: bool = False,
 ) -> bytes:
+    esc_name = _xml_attr_escape(name)
+    esc_pub = _xml_attr_escape(publisher)
+    esc_ver = _xml_attr_escape(version)
     pkg_xml = "\n".join(
-        f'    <Package Type="application" Version="{p_ver}" Architecture="{p_arch}" FileName="{p_file}" />'
+        f'    <Package Type="application" Version="{_xml_attr_escape(p_ver)}" Architecture="{_xml_attr_escape(p_arch)}" FileName="{_xml_attr_escape(p_file)}" />'
         for p_arch, p_ver, p_file, _ in packages
     )
-    extra_id = f'\n  <Identity Name="{name}" Publisher="{publisher}" Version="{version}" />' if duplicate_identity else ""
+    extra_id = f'\n  <Identity Name="{esc_name}" Publisher="{esc_pub}" Version="{esc_ver}" />' if duplicate_identity else ""
     bundle_manifest = (
         '<?xml version="1.0" encoding="utf-8"?>\n'
         '<Bundle SchemaVersion="5.0" xmlns="http://schemas.microsoft.com/appx/2013/bundle">\n'
-        f'  <Identity Name="{name}" Publisher="{publisher}" Version="{version}" />{extra_id}\n'
+        f'  <Identity Name="{esc_name}" Publisher="{esc_pub}" Version="{esc_ver}" />{extra_id}\n'
         "  <Packages>\n"
         f"{pkg_xml}\n"
         "  </Packages>\n"
@@ -2225,7 +2443,7 @@ def _make_synthetic_upload(entries: list[tuple[str, bytes]]) -> bytes:
 
 
 def run_self_test_bundle() -> int:
-    """Run 16 positive and negative pure-Python synthetic self-tests against the real verifier."""
+    """Run 22 positive and negative pure-Python synthetic self-tests against the real verifier."""
     repo_root = Path(__file__).resolve().parent.parent
     x64_tpl = (repo_root / "target-x86_64" / "Package.x64.appxmanifest").read_text(encoding="utf-8")
     arm64_tpl = (repo_root / "target-arm64" / "Package.arm64.appxmanifest").read_text(encoding="utf-8")
@@ -2636,7 +2854,151 @@ def run_self_test_bundle() -> int:
             "runFullTrust",
         )
 
-    print("self-test-bundle OK: 16/16 positive & negative bundle/msixupload/store-mode checks passed.")
+        # Case 17: PE binary host architecture detection (AMD64 -> x64, ARM64 -> arm64, PE32 0x010B -> None).
+        pe_x64 = _build_synthetic_pe64(machine=IMAGE_FILE_MACHINE_AMD64, is_dll=False)
+        pe_arm64 = _build_synthetic_pe64(machine=IMAGE_FILE_MACHINE_ARM64, is_dll=False)
+        pe_x86 = _build_synthetic_pe32(machine=0x014C)
+        assert _pe_machine_to_arch(pe_x64) == "x64", "expected AMD64 PE32+ -> 'x64'"
+        assert _pe_machine_to_arch(pe_arm64) == "arm64", "expected ARM64 PE32+ -> 'arm64'"
+        assert _pe_machine_to_arch(pe_x86) is None, "expected 32-bit PE32 (0x010B) -> None"
+        assert _pe_machine_to_arch(b"not-a-pe") is None, "expected non-PE bytes -> None"
+
+        # Case 18: OPC archive-wide case-shadowing DLL & dot-segment / empty-segment / colon path bypasses.
+        arm64_case_shadow = _make_synthetic_msix(
+            arm64_tpl,
+            arch="arm64",
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            extra_entries=[("TOTALDROP_EXPLORER_EXT.DLL", pe_x64)],
+        )
+        bundle_case_shadow = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_case_shadow),
+            ],
+        )
+        expect_fail(
+            "case-18a-opc-case-shadow-dll",
+            lambda: verify_msixbundle_archive(
+                bundle_case_shadow, "case-shadow.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "case-insensitive duplicate",
+        )
+        for sub_id, bad_entry, expected_err in (
+            ("18b-dot-segment", "./AppxManifest.xml", "relative/traversal"),
+            ("18c-empty-segment", "Assets//extra.png", "empty path segment"),
+            ("18d-colon-path", "C:evil.dll", "unsafe OPC/ZIP"),
+        ):
+            arm64_bad_path = _make_synthetic_msix(
+                arm64_tpl,
+                arch="arm64",
+                name=store_name,
+                publisher=store_pub,
+                version=store_ver,
+                extra_entries=[(bad_entry, b"<Package/>")],
+            )
+            bundle_bad_path = _make_synthetic_bundle(
+                name=store_name,
+                publisher=store_pub,
+                version=store_ver,
+                packages=[
+                    ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                    ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_bad_path),
+                ],
+            )
+            expect_fail(
+                f"case-{sub_id}",
+                lambda b=bundle_bad_path: verify_msixbundle_archive(
+                    b, f"{sub_id}.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+                ),
+                expected_err,
+            )
+
+        # Case 19: Per-archive .appxsym PDB completeness (complete x64.appxsym + incomplete arm64.appxsym).
+        asym_sym_upload = tmp_dir / "asym-pdb.msixupload"
+        asym_sym_upload.write_bytes(
+            _make_synthetic_upload(
+                [
+                    (bundle_ok_path.name, bundle_ok_bytes),
+                    (f"TotalDrop_{store_ver}_x64.appxsym", sym_ok),
+                    (f"TotalDrop_{store_ver}_arm64.appxsym", sym_incomplete),
+                ]
+            )
+        )
+        expect_fail(
+            "case-19-per-appxsym-pdb-completeness",
+            lambda: verify_msixupload_archive(
+                asym_sym_upload, expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "arm64.appxsym",
+        )
+
+        # Case 20: Corrupted deflate stream (invalid deflate block) produces clean ValueError, never raw zlib.error.
+        corrupt_buf = bytearray(bundle_ok_bytes)
+        with zipfile.ZipFile(io.BytesIO(bundle_ok_bytes), "r") as zf_inspect:
+            info = zf_inspect.getinfo("AppxMetadata/AppxBundleManifest.xml")
+            l_name_len, l_extra_len = struct.unpack_from("<HH", bundle_ok_bytes, info.header_offset + 26)
+            data_off = info.header_offset + 30 + l_name_len + l_extra_len
+            # Overwrite first deflate bytes with 0xFF (invalid block type 11 in RFC 1951 -> guaranteed zlib.error).
+            for i in range(min(8, info.compress_size)):
+                corrupt_buf[data_off + i] = 0xFF
+        expect_fail(
+            "case-20-corrupt-deflate",
+            lambda: verify_msixbundle_archive(
+                bytes(corrupt_buf), "corrupt-deflate.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "corrupted ZIP",
+        )
+
+        # Case 21: Normalized placeholder identity variants rejected under strict --store-mode.
+        for variant_id, v_name, v_pub in (
+            ("21a-space-cn", store_name, "CN = TotalDrop"),
+            ("21b-lower-cn", store_name, "cn=totaldrop"),
+            ("21c-quoted-cn", store_name, 'CN="TotalDrop"'),
+            ("21d-lower-name", "totaldrop.totaldrop", store_pub),
+        ):
+            vx = _make_synthetic_msix(x64_tpl, arch="x64", name=v_name, publisher=v_pub, version=store_ver)
+            va = _make_synthetic_msix(arm64_tpl, arch="arm64", name=v_name, publisher=v_pub, version=store_ver)
+            vb = _make_synthetic_bundle(
+                name=v_name,
+                publisher=v_pub,
+                version=store_ver,
+                packages=[
+                    ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", vx),
+                    ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", va),
+                ],
+            )
+            expect_fail(
+                f"case-{variant_id}",
+                lambda b=vb: verify_msixbundle_archive(
+                    b, f"{variant_id}.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+                ),
+                "placeholder",
+            )
+
+        # Case 22: Strict RFC 2253 X.500 publisher hardening (shell/quote/Bidi injection rejected; quoted comma accepted).
+        _validate_x500_publisher('CN=Ozan Özdil, O="TotalDrop, Inc.", C=TR', "selftest-valid-x500")
+        _validate_x500_publisher("CN=11111111-2222-3333-4444-555555555555", "selftest-valid-guid")
+        for bad_pub in (
+            'CN=Foo"; rm -rf / #',
+            'CN="Foo"; rm -rf /',
+            "CN=Foo; rm -rf /",
+            "CN=Foo, NotAnRdn",
+            "CN=Foo\u202eBar",
+            "CN=Foo$(id)",
+            "CN=Foo`id`",
+            "CN=#nothex",
+        ):
+            expect_fail(
+                f"case-22-bad-x500-{bad_pub!r}",
+                lambda p=bad_pub: _validate_x500_publisher(p, "selftest-bad-x500"),
+            )
+
+    print("self-test-bundle OK: 22/22 positive & negative bundle/msixupload/store-mode checks passed.")
     return 0
 
 
@@ -2738,7 +3100,16 @@ def main(argv: list[str] | None = None) -> int:
                 f"appxsym={u_res['appxsym_count']}, pdbs={len(u_res['pdb_names'])}, "  # type: ignore[arg-type]
                 "zero bare .msix & zero signing keys verified)."
             )
-    except (ValueError, ET.ParseError, zipfile.BadZipFile, subprocess.CalledProcessError, OSError) as exc:
+    except (
+        ValueError,
+        ET.ParseError,
+        zipfile.BadZipFile,
+        zlib.error,
+        RuntimeError,
+        EOFError,
+        subprocess.CalledProcessError,
+        OSError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

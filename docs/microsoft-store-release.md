@@ -102,7 +102,8 @@ This exercises the full dual-architecture `x64` + `ARM64` Native AOT + `MakePri.
 2. Open a reviewed PR to `main` (approved by `@sadikkuzu` with 100% green `CI`, including both `windows-x64-msix` and `windows-arm64-msix`) updating:
    - `target-x86_64/Package.x64.appxmanifest` and `target-arm64/Package.arm64.appxmanifest` with exact case-sensitive Partner Center `Identity/@Name`, `Identity/@Publisher` (`CN=<GUID>`), `Properties/PublisherDisplayName`, and monotonic Store `Identity/@Version` (`Major >= 1`, `Revision == 0`).
    - `ui-winui3-fluent2/app.manifest`, `ui-winui3-fluent2/TotalDrop.WinUI.csproj`, `target-x86_64/build-x64.ps1`, and `target-arm64/build-arm64.ps1` to match the release version.
-   - Verify `python3 tools/check-versions.py --store --require-store-identity` exits `0`.
+   - All companion version-checked files enforced by `tools/check-versions.py` and `tools/verify-msix-artifact.py`: `crates/totaldrop-windows-ffi/{Cargo.toml,src/lib.rs}`, `crates/totaldrop-explorer-ext/Cargo.toml`, `ui-winui3-fluent2/MainWindow.xaml.cs`, `tools/check-versions.py`, `tools/verify-msix-artifact.py`, `subplatforms/*` (`RECIPE.toml`, `build.sh`, `verify.sh`), `target-*/winget/*.yaml`, and `.github/workflows/{ci,pkg-*}.yml`.
+   - Verify both `python3 tools/check-versions.py` and `python3 tools/check-versions.py --store --require-store-identity` exit `0`.
 3. Tag the merged `main` commit (`git tag -s windows-v<semver> <main-sha> && git push origin windows-v<semver>`).
 4. `windows-release.yml` enforces `git merge-base --is-ancestor "$GITHUB_SHA" origin/main`, confirms the tag matches `TotalDrop.WinUI.csproj <Version>`, runs `check-versions.py --store --require-store-identity`, builds and verifies `TotalDrop-<msix-ver>.msixbundle` and `TotalDrop-<msix-ver>.msixupload`, generates Sigstore OIDC build provenance (`actions/attest-build-provenance`), and uploads `totaldrop-windows-store-submission`.
 5. Download `totaldrop-windows-store-submission` on a maintainer workstation, verify `sha256sum -c SHA256SUMS` and `gh attestation verify dist/store/TotalDrop-<msix-ver>.msixupload --repo totaldrop-app/totaldrop-windows`, and run local WACK certification before uploading to Partner Center.
@@ -129,7 +130,7 @@ pwsh -NoProfile -File .\tools\run-wack.ps1 `
 1. Verifies non-Session 0 interactive desktop, UAC `EnableLUA == 1`, and physical display resolution via Win32 `EnumDisplaySettingsW`.
 2. Locates `appcert.exe` via Windows Kits registry `KitsRoot10`, standard SDK paths, or `PATH`.
 3. Deletes any stale report, runs `appcert.exe reset` cleanly before `appcert.exe test -appxpackagepath <pkg> -reportoutputpath <xml>`.
-4. Parses the XML with DTD processing prohibited (`XmlResolver = $null`) and fails non-zero unless `<REPORT OVERALL_RESULT="PASS">` AND zero `<TEST RESULT="FAIL">` elements exist, printing every failing test name explicitly.
+4. Parses the XML with DTD processing prohibited (`XmlResolver = $null`, catching `XmlException` cleanly) and fails non-zero unless `<REPORT OVERALL_RESULT="PASS">`, at least one `<TEST>` element exists, and every `<TEST>` result (matched case-insensitively) is in the explicit allowlist (`PASS`, `NOT APPLICABLE`, `SKIPPED`), printing every non-passing test name and raw result explicitly.
 
 ---
 
@@ -195,7 +196,7 @@ Every PR below follows standard TotalDrop governance (100% English issue, branch
    - Add an explicit Windows `rescap:runFullTrust` entry stating that the MSIX runs at Medium Integrity Level without an AppContainer filesystem/process sandbox (contrasted with Linux Flatpak isolation in `T15`).
 2. **`docs/tasarim.md`:**
    - Add the Windows 11 platform row (WinUI 3 Fluent 2, `MicaBackdrop` -> `DesktopAcrylicBackdrop` -> solid surface fallback, `ExtendsContentIntoTitleBar`, `UISettings`/`AccessibilitySettings`/`ThemeSettings`).
-   - Add Windows `SendPage.xaml` / `ReceivePage.xaml` (`UISettings.AnimationsEnabled` reduced-motion gate) to the Motion section.
+   - Add Windows `ui-winui3-fluent2/Views/SendPage.xaml(.cs)`, `ui-winui3-fluent2/Views/ReceivePage.xaml(.cs)`, and `ui-winui3-fluent2/MainWindow.xaml.cs` (`UISettings.AnimationsEnabled` reduced-motion gate) to the Motion section.
 3. **`README.md` & 34 `docs/readme/README.<tag>.md`:**
    - Promote Windows out of `"Coming"` with the live Microsoft Store link (`x64` & `ARM64`) and `winget install --source msstore <9N...>`, translate all 34 READMEs, and validate with zero errors and zero warnings:
      ```bash

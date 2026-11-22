@@ -253,6 +253,54 @@ function Resolve-WindowsKitTool {
     throw "Required Windows SDK tool '$ToolName' not found in Windows Kits 10, NuGet BuildTools, or PATH."
 }
 
+function Resolve-PythonCommand {
+    $candidates = @(
+        @{ Exe = "python3"; PrefixArgs = @() },
+        @{ Exe = "python";  PrefixArgs = @() },
+        @{ Exe = "py";      PrefixArgs = @("-3") }
+    )
+
+    foreach ($cand in $candidates) {
+        $cmds = @(Get-Command $cand.Exe -All -CommandType Application -ErrorAction SilentlyContinue)
+        foreach ($cmd in $cmds) {
+            $src = [string]$cmd.Source
+            if ([string]::IsNullOrWhiteSpace($src)) {
+                continue
+            }
+            # Skip Windows 11 Microsoft Store App Execution Alias stubs (%LOCALAPPDATA%\Microsoft\WindowsApps\python*.exe).
+            if ($src -match '(?i)[\\/]Microsoft[\\/]WindowsApps[\\/]python[^\\/]*\.exe$') {
+                continue
+            }
+            $probeArgs = @($cand.PrefixArgs) + @(
+                "-c",
+                "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}'); raise SystemExit(0 if sys.version_info >= (3, 10) else 2)"
+            )
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                $verOut = (& $src @probeArgs 2>$null | Out-String).Trim()
+                $probeExit = $LASTEXITCODE
+            }
+            catch {
+                $probeExit = -1
+                $verOut = ""
+            }
+            finally {
+                $ErrorActionPreference = $prevEap
+            }
+            if ($probeExit -eq 0) {
+                return [PSCustomObject]@{
+                    Executable = $src
+                    PrefixArgs = @($cand.PrefixArgs)
+                    Version    = $verOut
+                }
+            }
+        }
+    }
+
+    throw "Python >= 3.10 is required to run tools/verify-msix-artifact.py (checked python3, python, and py -3, skipping WindowsApps Store alias stubs)."
+}
+
 function New-DeterministicZipArchive {
     param(
         [Parameter(Mandatory = $true)]
@@ -400,7 +448,10 @@ if (-not $SkipVerify) {
             $verifyArgs += "--allow-test-identity"
         }
     }
-    & python3 @verifyArgs
+    $pythonCmd = Resolve-PythonCommand
+    Write-Host "    Python:   $($pythonCmd.Executable) ($($pythonCmd.Version))"
+    $allVerifyArgs = @($pythonCmd.PrefixArgs) + $verifyArgs
+    & $pythonCmd.Executable @allVerifyArgs
     if ($LASTEXITCODE -ne 0) {
         throw "tools/verify-msix-artifact.py failed with exit code $LASTEXITCODE"
     }

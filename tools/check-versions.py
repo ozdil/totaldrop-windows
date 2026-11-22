@@ -26,7 +26,9 @@ BARE_GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 IDENTITY_NAME_RE = re.compile(r"^[A-Za-z0-9.-]{3,50}$")
-RDN_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?\d+(?:\.\d+)+)\s*=\s*\S.*$")
+RDN_KEY_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?\d+(?:\.\d+)+)$")
+HEX_RDN_VAL_RE = re.compile(r"^#(?:[0-9A-Fa-f]{2})+$")
+FORBIDDEN_UNQUOTED_RDN_CHARS: frozenset[str] = frozenset({'"', ";", "<", ">", "`", "$", "|", "&"})
 QUAD_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$", re.ASCII)
 
 # Split forbidden literals so this script never matches itself if scanned naively.
@@ -94,13 +96,12 @@ def validate_store_msix_version(version: str, label: str, errors: list[str]) -> 
     return validate_msix_version_quad(version, label, errors, require_store_rules=True)
 
 
-def validate_x500_publisher(publisher: str, label: str, errors: list[str]) -> bool:
+def parse_x500_publisher(publisher: str, label: str) -> list[tuple[str, str]]:
+    """Parse and strictly validate an RFC 2253 X.500 Publisher DN, returning (KEY_UPPER, unescaped_value) pairs."""
     if not isinstance(publisher, str) or not publisher.strip():
-        errors.append(f"{label}: Publisher must be a non-empty X.500 CN=... distinguished name")
-        return False
+        raise ValueError(f"{label}: Publisher must be a non-empty X.500 CN=... distinguished name")
     if len(publisher) > 8192:
-        errors.append(f"{label}: Publisher exceeds 8192 characters")
-        return False
+        raise ValueError(f"{label}: Publisher exceeds 8192 characters")
 
     for ch in publisher:
         cp = ord(ch)
@@ -111,16 +112,14 @@ def validate_x500_publisher(publisher: str, label: str, errors: list[str]) -> bo
             or 0x2066 <= cp <= 0x2069
             or cp == 0x061C
         ):
-            errors.append(
+            raise ValueError(
                 f"{label}: Publisher contains forbidden control or Bidi override character U+{cp:04X}"
             )
-            return False
 
     if UNSIGNED_PACKAGE_OID in publisher.lower():
-        errors.append(
+        raise ValueError(
             f"{label}: Publisher contains forbidden unsigned-package OID {UNSIGNED_PACKAGE_OID}"
         )
-        return False
 
     rdns: list[str] = []
     buf: list[str] = []
@@ -146,27 +145,122 @@ def validate_x500_publisher(publisher: str, label: str, errors: list[str]) -> bo
         buf.append(ch)
 
     if in_quotes or escaped:
-        errors.append(f"{label}: malformed X.500 Publisher {publisher!r} (unterminated quote or escape)")
-        return False
+        raise ValueError(
+            f"{label}: malformed X.500 Publisher {publisher!r} (unterminated quote or escape)"
+        )
     rdns.append("".join(buf).strip())
 
+    parsed: list[tuple[str, str]] = []
     has_cn = False
     for rdn in rdns:
-        if not rdn or not RDN_RE.fullmatch(rdn):
-            errors.append(
+        if not rdn or "=" not in rdn:
+            raise ValueError(
                 f"{label}: malformed X.500 Publisher RDN {rdn!r} in {publisher!r} (expected e.g. 'CN=...')"
             )
-            return False
-        key, val = rdn.split("=", 1)
-        if key.strip().upper() == "CN" and val.strip():
+        raw_key, raw_val = rdn.split("=", 1)
+        key = raw_key.strip()
+        val = raw_val.strip()
+        if not RDN_KEY_RE.fullmatch(key) or not val:
+            raise ValueError(
+                f"{label}: malformed X.500 Publisher RDN {rdn!r} in {publisher!r} (expected e.g. 'CN=...')"
+            )
+
+        if val.startswith('"'):
+            if len(val) < 2:
+                raise ValueError(
+                    f"{label}: malformed quoted X.500 Publisher RDN {rdn!r} in {publisher!r}"
+                )
+            chars: list[str] = []
+            q_escaped = False
+            closed = False
+            for idx in range(1, len(val)):
+                c = val[idx]
+                if q_escaped:
+                    chars.append(c)
+                    q_escaped = False
+                    continue
+                if c == "\\":
+                    q_escaped = True
+                    continue
+                if c == '"':
+                    if idx != len(val) - 1:
+                        raise ValueError(
+                            f"{label}: unexpected trailing characters after closing quote in RDN {rdn!r}"
+                        )
+                    closed = True
+                    break
+                chars.append(c)
+            if not closed or q_escaped:
+                raise ValueError(
+                    f"{label}: unterminated quoted X.500 Publisher RDN {rdn!r} in {publisher!r}"
+                )
+            decoded_val = "".join(chars).strip()
+            if not decoded_val:
+                raise ValueError(f"{label}: empty quoted X.500 Publisher RDN value in {rdn!r}")
+        elif val.startswith("#"):
+            if not HEX_RDN_VAL_RE.fullmatch(val):
+                raise ValueError(
+                    f"{label}: invalid hex X.500 Publisher RDN value {val!r} in {publisher!r} "
+                    "(leading '#' requires even-length hexadecimal bytes)"
+                )
+            decoded_val = val.lower()
+        else:
+            chars = []
+            u_escaped = False
+            for c in val:
+                if u_escaped:
+                    chars.append(c)
+                    u_escaped = False
+                    continue
+                if c == "\\":
+                    u_escaped = True
+                    continue
+                if c in FORBIDDEN_UNQUOTED_RDN_CHARS:
+                    raise ValueError(
+                        f"{label}: forbidden unescaped character {c!r} in unquoted X.500 RDN {rdn!r}"
+                    )
+                chars.append(c)
+            if u_escaped:
+                raise ValueError(f"{label}: trailing escape in X.500 Publisher RDN {rdn!r}")
+            decoded_val = "".join(chars).strip()
+            if not decoded_val:
+                raise ValueError(f"{label}: empty X.500 Publisher RDN value in {rdn!r}")
+
+        key_upper = key.upper()
+        if key_upper == "CN" and decoded_val:
             has_cn = True
+        parsed.append((key_upper, decoded_val))
 
     if not has_cn:
-        errors.append(
+        raise ValueError(
             f"{label}: X.500 Publisher {publisher!r} must include a non-empty 'CN=' attribute"
         )
+    return parsed
+
+
+def validate_x500_publisher(publisher: str, label: str, errors: list[str]) -> bool:
+    try:
+        parse_x500_publisher(publisher, label)
+    except ValueError as exc:
+        errors.append(str(exc))
         return False
     return True
+
+
+def is_placeholder_test_identity(name: str, publisher: str) -> bool:
+    """Return True if Name or Publisher matches the temporary CN=TotalDrop / TotalDrop.TotalDrop test identity."""
+    if isinstance(name, str) and name.strip().lower() == "totaldrop.totaldrop":
+        return True
+    try:
+        parsed_rdns = parse_x500_publisher(publisher, "Publisher")
+    except ValueError:
+        return False
+    if len(parsed_rdns) == 1:
+        key, val = parsed_rdns[0]
+        if key == "CN" and val.strip().lower() == "totaldrop":
+            return True
+    return False
+
 
 
 def check_core_bucket(repo_root: Path, errors: list[str]) -> None:
@@ -778,10 +872,7 @@ def check_cross_arch_identity_parity(
             )
 
     if require_store_rules:
-        is_placeholder = (
-            x64_info["publisher"] == "CN=TotalDrop"
-            or x64_info["name"] == "TotalDrop.TotalDrop"
-        )
+        is_placeholder = is_placeholder_test_identity(x64_info["name"], x64_info["publisher"])
         if is_placeholder:
             if require_store_identity:
                 errors.append(

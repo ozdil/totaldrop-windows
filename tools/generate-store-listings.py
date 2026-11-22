@@ -20,6 +20,7 @@ import struct
 import sys
 import unicodedata
 import xml.etree.ElementTree as ET
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +48,14 @@ SCREENSHOT_MIN_COUNT = 1
 SCREENSHOT_MAX_COUNT = 10
 SCREENSHOT_MAX_BYTES = 50 * 1024 * 1024
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-PNG_IHDR_PREFIX = b"\x00\x00\x00\rIHDR"
+PNG_MIN_BYTES = 45  # 8-byte signature + 25-byte IHDR + 12-byte IEND
+PNG_VALID_BIT_DEPTHS: dict[int, frozenset[int]] = {
+    0: frozenset({1, 2, 4, 8, 16}),  # Greyscale
+    2: frozenset({8, 16}),  # Truecolour (RGB)
+    3: frozenset({1, 2, 4, 8}),  # Indexed-colour
+    4: frozenset({8, 16}),  # Greyscale with alpha
+    6: frozenset({8, 16}),  # Truecolour with alpha (RGBA)
+}
 
 # Exact 35 canonical TotalDrop locales mapped to official Microsoft Store listing language codes.
 CANONICAL_STORE_LOCALES: tuple[tuple[str, str, str], ...] = (
@@ -145,12 +153,12 @@ PROHIBITED_WORD_TERMS: tuple[str, ...] = (
     "AppContainer",
 )
 PROHIBITED_WORD_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
-    (term, re.compile(rf"(?<!\w){re.escape(term)}(?!\w)", re.IGNORECASE))
+    (term, re.compile(rf"(?<![A-Za-z0-9]){re.escape(term)}(?![A-Za-z0-9])", re.IGNORECASE))
     for term in PROHIBITED_WORD_TERMS
 )
 PROHIBITED_EXT_TERMS: tuple[str, ...] = (".pkg", ".deb", ".rpm")
 PROHIBITED_EXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
-    (ext, re.compile(rf"(?:^|[^A-Za-z0-9_]){re.escape(ext)}(?![A-Za-z0-9_])", re.IGNORECASE))
+    (ext, re.compile(rf"{re.escape(ext)}(?![A-Za-z0-9])", re.IGNORECASE))
     for ext in PROHIBITED_EXT_TERMS
 )
 HTML_TAG_RE = re.compile(r"<[A-Za-z/!]")
@@ -261,15 +269,85 @@ def inspect_png(path: Path, rel_label: str) -> tuple[dict[str, Any] | None, str 
         return None, f"{rel_label}: screenshot file not found"
     raw = path.read_bytes()
     size = len(raw)
-    if size < 24:
-        return None, f"{rel_label}: file truncated ({size} bytes < 24-byte PNG header)"
+    if size < PNG_MIN_BYTES:
+        return None, f"{rel_label}: file truncated ({size} bytes < {PNG_MIN_BYTES}-byte minimum PNG size)"
     if size > SCREENSHOT_MAX_BYTES:
         return None, f"{rel_label}: screenshot size {size} exceeds {SCREENSHOT_MAX_BYTES} bytes (50 MiB)"
     if raw[:8] != PNG_SIGNATURE:
         return None, f"{rel_label}: invalid PNG signature {raw[:8]!r} (must be PNG, not JPEG/other format)"
-    if raw[8:16] != PNG_IHDR_PREFIX:
-        return None, f"{rel_label}: missing/invalid PNG IHDR chunk header"
-    width, height = struct.unpack(">II", raw[16:24])
+
+    pos = 8
+    chunk_index = 0
+    width = 0
+    height = 0
+    idat_count = 0
+    seen_iend = False
+
+    while pos < size:
+        if seen_iend:
+            return None, f"{rel_label}: trailing garbage bytes ({size - pos} bytes) after PNG IEND chunk"
+        if pos + 12 > size:
+            return None, f"{rel_label}: truncated PNG chunk header at offset {pos}"
+        chunk_len = struct.unpack_from(">I", raw, pos)[0]
+        chunk_type = raw[pos + 4 : pos + 8]
+        data_start = pos + 8
+        data_end = data_start + chunk_len
+        crc_end = data_end + 4
+        if chunk_len > 0x7FFF_FFFF or crc_end > size:
+            return None, f"{rel_label}: truncated PNG chunk {chunk_type!r} (len={chunk_len}) at offset {pos}"
+        if not all((0x41 <= b <= 0x5A) or (0x61 <= b <= 0x7A) for b in chunk_type):
+            return None, f"{rel_label}: invalid non-ASCII PNG chunk type {chunk_type!r} at offset {pos}"
+
+        expected_crc = struct.unpack_from(">I", raw, data_end)[0]
+        actual_crc = zlib.crc32(raw[pos + 4 : data_end]) & 0xFFFF_FFFF
+        if actual_crc != expected_crc:
+            return (
+                None,
+                f"{rel_label}: PNG chunk {chunk_type.decode('ascii')} CRC32 mismatch "
+                f"(expected {expected_crc:#010x}, got {actual_crc:#010x})",
+            )
+
+        if chunk_index == 0:
+            if chunk_type != b"IHDR" or chunk_len != 13:
+                return (
+                    None,
+                    f"{rel_label}: first PNG chunk must be 13-byte IHDR (got {chunk_type!r}, len={chunk_len})",
+                )
+            width, height, bit_depth, color_type, compression, filter_method, interlace = struct.unpack_from(
+                ">IIBBBBB", raw, data_start
+            )
+            allowed_depths = PNG_VALID_BIT_DEPTHS.get(color_type)
+            if allowed_depths is None or bit_depth not in allowed_depths:
+                return (
+                    None,
+                    f"{rel_label}: invalid PNG IHDR color_type={color_type}, bit_depth={bit_depth}",
+                )
+            if compression != 0 or filter_method != 0 or interlace not in (0, 1):
+                return (
+                    None,
+                    f"{rel_label}: invalid PNG IHDR compression={compression}, "
+                    f"filter={filter_method}, interlace={interlace}",
+                )
+        else:
+            if chunk_type == b"IHDR":
+                return None, f"{rel_label}: duplicate PNG IHDR chunk at offset {pos}"
+            if chunk_type == b"IDAT":
+                idat_count += 1
+            elif chunk_type == b"IEND":
+                if chunk_len != 0:
+                    return None, f"{rel_label}: PNG IEND chunk must have length 0 (got {chunk_len})"
+                seen_iend = True
+
+        pos = crc_end
+        chunk_index += 1
+
+    if chunk_index == 0:
+        return None, f"{rel_label}: PNG contains zero chunks"
+    if idat_count < 1:
+        return None, f"{rel_label}: PNG contains zero IDAT image data chunks"
+    if not seen_iend or pos != size:
+        return None, f"{rel_label}: PNG missing terminating IEND chunk at EOF"
+
     if width < SCREENSHOT_MIN_WIDTH or height < SCREENSHOT_MIN_HEIGHT:
         return (
             None,
@@ -303,6 +381,7 @@ def collect_screenshots(screenshots_dir: Path) -> tuple[dict[str, list[dict[str,
     if not screenshots_dir.is_dir():
         return {}, [f"screenshots directory not found: {screenshots_dir}"]
 
+    root_resolved = screenshots_dir.resolve()
     children = sorted(screenshots_dir.iterdir(), key=lambda p: p.name)
     if not children:
         return {}, [f"screenshots directory is empty: {screenshots_dir}"]
@@ -314,10 +393,14 @@ def collect_screenshots(screenshots_dir: Path) -> tuple[dict[str, list[dict[str,
         valid_entries: list[dict[str, Any]] = []
         for fpath in sorted(files, key=lambda p: p.name):
             rel = fpath.relative_to(screenshots_dir).as_posix()
+            resolved = fpath.resolve()
+            if not resolved.is_relative_to(root_resolved) or resolved == root_resolved:
+                errors.append(f"{context}: screenshot path {rel!r} escapes --screenshots-dir")
+                continue
             if fpath.suffix.lower() != ".png":
                 errors.append(f"{context}: non-PNG file {rel!r} is not permitted for Store screenshots")
                 continue
-            meta, err = inspect_png(fpath, rel)
+            meta, err = inspect_png(resolved, rel)
             if err is not None:
                 errors.append(f"{context}: {err}")
             elif meta is not None:
@@ -489,30 +572,22 @@ def render_csv_bytes(doc: dict[str, Any]) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
-def _load_forbidden_arb_strings(l10n_dir: Path) -> dict[str, list[tuple[str, str]]]:
-    """Load localized values of forbidden non-Windows ARB keys strictly for anti-leakage verification."""
-    out: dict[str, list[tuple[str, str]]] = {}
-    en_forbidden: list[tuple[str, str]] = []
-    en_path = arb_path_for_locale(l10n_dir, TEMPLATE_LOCALE)
-    if en_path.is_file():
-        en_data = parse_json_no_duplicates(en_path.read_text(encoding="utf-8"), en_path.name)
+def _load_forbidden_arb_strings(l10n_dir: Path) -> list[tuple[str, str]]:
+    """Load deduplicated values of forbidden non-Windows ARB keys across all app_*.arb catalogs."""
+    app_dir = l10n_dir / "app"
+    seen: set[tuple[str, str]] = set()
+    out: list[tuple[str, str]] = []
+    if not app_dir.is_dir():
+        return out
+    for arb_path in sorted(app_dir.glob("app_*.arb")):
+        data = parse_json_no_duplicates(arb_path.read_text(encoding="utf-8"), arb_path.name)
         for fk in FORBIDDEN_ARB_KEYS:
-            val = en_data.get(fk)
+            val = data.get(fk)
             if isinstance(val, str) and val.strip():
-                en_forbidden.append((fk, val.strip()))
-
-    for tag in CANONICAL_TAGS:
-        entries: list[tuple[str, str]] = list(en_forbidden)
-        loc_path = arb_path_for_locale(l10n_dir, tag)
-        if loc_path.is_file():
-            loc_data = parse_json_no_duplicates(loc_path.read_text(encoding="utf-8"), loc_path.name)
-            for fk in FORBIDDEN_ARB_KEYS:
-                val = loc_data.get(fk)
-                if isinstance(val, str) and val.strip():
-                    pair = (fk, val.strip())
-                    if pair not in entries:
-                        entries.append(pair)
-        out[tag] = entries
+                pair = (fk, val.strip())
+                if pair not in seen:
+                    seen.add(pair)
+                    out.append(pair)
     return out
 
 
@@ -574,10 +649,15 @@ def validate_document(
             entries.append((loc, item))
     elif isinstance(raw_listings, dict):
         for loc, item in raw_listings.items():
+            loc_str = str(loc)
             if not isinstance(item, dict):
                 errors.append(f"listings[{loc!r}]: entry must be a JSON object")
                 continue
-            entries.append((str(loc), item))
+            if "locale" in item and item.get("locale") != loc_str:
+                errors.append(
+                    f"listings[{loc_str!r}]: inner `locale` {item.get('locale')!r} does not match key {loc_str!r}"
+                )
+            entries.append((loc_str, item))
     else:
         return ["document missing valid `listings` list or object"]
 
@@ -595,7 +675,7 @@ def validate_document(
             f"incomplete 35-locale Store catalog (found {len(seen_locales)}/35); missing locales: {missing_locales}"
         )
 
-    forbidden_by_locale = _load_forbidden_arb_strings(l10n_dir)
+    forbidden_strings = _load_forbidden_arb_strings(l10n_dir)
 
     any_screenshots_present = any(
         isinstance(item.get("Screenshots"), list) and len(item.get("Screenshots", [])) > 0
@@ -607,19 +687,21 @@ def validate_document(
         or any_screenshots_present
         or screenshots_dir is not None
     )
+    screenshots_root_resolved = screenshots_dir.resolve() if screenshots_dir is not None else None
 
     for loc, item in entries:
         expected_store_code = STORE_LANGUAGE_ALLOWLIST.get(loc)
-        if expected_store_code is not None and "storeLanguageCode" in item:
-            if item.get("storeLanguageCode") != expected_store_code:
+        if expected_store_code is not None:
+            actual_store_code = item.get("storeLanguageCode")
+            if not isinstance(actual_store_code, str) or actual_store_code != expected_store_code:
                 errors.append(
-                    f"locale {loc}: storeLanguageCode {item.get('storeLanguageCode')!r} != {expected_store_code!r}"
+                    f"locale {loc}: storeLanguageCode {actual_store_code!r} != {expected_store_code!r}"
                 )
 
-        if "dir" in item:
-            expected_dir = "rtl" if loc in RTL_LOCALES else "ltr"
-            if item.get("dir") != expected_dir:
-                errors.append(f"locale {loc}: dir {item.get('dir')!r} != {expected_dir!r}")
+        expected_dir = "rtl" if loc in RTL_LOCALES else "ltr"
+        actual_dir = item.get("dir")
+        if not isinstance(actual_dir, str) or actual_dir != expected_dir:
+            errors.append(f"locale {loc}: dir {actual_dir!r} != {expected_dir!r}")
 
         title = item.get("Title")
         if title != EXPECTED_TITLE:
@@ -636,8 +718,6 @@ def validate_document(
             errors.append(
                 f"locale {loc} SupportContact: expected {EXPECTED_SUPPORT_CONTACT!r}, got {support!r}"
             )
-
-        forbidden_strings = forbidden_by_locale.get(loc, [])
 
         short_desc = item.get("ShortDescription")
         if not isinstance(short_desc, str) or not short_desc.strip():
@@ -754,7 +834,13 @@ def validate_document(
                     errors.append(f"locale {loc} Screenshots[{idx}]: format must be 'png', got {fmt!r}")
                 w = shot.get("width")
                 h = shot.get("height")
-                if not isinstance(w, int) or not isinstance(h, int):
+                dims_valid_type = (
+                    isinstance(w, int)
+                    and not isinstance(w, bool)
+                    and isinstance(h, int)
+                    and not isinstance(h, bool)
+                )
+                if not dims_valid_type:
                     errors.append(f"locale {loc} Screenshots[{idx}]: width and height must be integers")
                 else:
                     if w < SCREENSHOT_MIN_WIDTH or h < SCREENSHOT_MIN_HEIGHT:
@@ -770,10 +856,56 @@ def validate_document(
                 rel_file = shot.get("file")
                 if not isinstance(rel_file, str) or not rel_file.strip():
                     errors.append(f"locale {loc} Screenshots[{idx}]: missing non-empty `file` path")
-                elif screenshots_dir is not None:
-                    _, shot_err = inspect_png(screenshots_dir / rel_file, rel_file)
-                    if shot_err is not None:
-                        errors.append(f"locale {loc} Screenshots[{idx}]: {shot_err}")
+                else:
+                    path_unsafe = (
+                        rel_file != rel_file.strip()
+                        or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in rel_file)
+                        or rel_file.startswith("/")
+                        or rel_file.startswith("\\")
+                        or "\\" in rel_file
+                        or ":" in rel_file
+                        or Path(rel_file).is_absolute()
+                        or any(part in ("", ".", "..") for part in rel_file.split("/"))
+                    )
+                    if path_unsafe:
+                        errors.append(
+                            f"locale {loc} Screenshots[{idx}]: unsafe screenshot relative path {rel_file!r} "
+                            "(absolute paths, drive colons, backslashes, and '.'/'..' segments are forbidden)"
+                        )
+                    elif screenshots_dir is not None and screenshots_root_resolved is not None:
+                        candidate = (screenshots_dir / rel_file).resolve()
+                        if not candidate.is_relative_to(screenshots_root_resolved) or candidate == screenshots_root_resolved:
+                            errors.append(
+                                f"locale {loc} Screenshots[{idx}]: screenshot path {rel_file!r} escapes --screenshots-dir"
+                            )
+                        else:
+                            meta, shot_err = inspect_png(candidate, rel_file)
+                            if shot_err is not None:
+                                errors.append(f"locale {loc} Screenshots[{idx}]: {shot_err}")
+                            elif meta is not None:
+                                if dims_valid_type and (meta["width"] != w or meta["height"] != h):
+                                    errors.append(
+                                        f"locale {loc} Screenshots[{idx}]: declared dimensions {w}x{h} "
+                                        f"!= actual PNG dimensions {meta['width']}x{meta['height']}"
+                                    )
+                                if "bytes" in shot:
+                                    decl_bytes = shot.get("bytes")
+                                    if (
+                                        isinstance(decl_bytes, bool)
+                                        or not isinstance(decl_bytes, int)
+                                        or decl_bytes != meta["bytes"]
+                                    ):
+                                        errors.append(
+                                            f"locale {loc} Screenshots[{idx}]: declared bytes {decl_bytes!r} "
+                                            f"!= actual PNG size {meta['bytes']}"
+                                        )
+                                if "sha256" in shot:
+                                    decl_sha = shot.get("sha256")
+                                    if not isinstance(decl_sha, str) or decl_sha.lower() != meta["sha256"]:
+                                        errors.append(
+                                            f"locale {loc} Screenshots[{idx}]: declared sha256 {decl_sha!r} "
+                                            f"!= actual PNG SHA-256 {meta['sha256']!r}"
+                                        )
 
     return errors
 

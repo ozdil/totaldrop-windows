@@ -99,7 +99,50 @@ function Assert-MsixVersionQuad {
     }
 }
 
-function Assert-X500Publisher {
+function Assert-NoControlOrBidiChars {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Value,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Label
+    )
+
+    foreach ($ch in $Value.ToCharArray()) {
+        $cp = [int][char]$ch
+        if ($cp -lt 0x20 -or $cp -eq 0x7F -or ($cp -ge 0x202A -and $cp -le 0x202E) -or ($cp -ge 0x2066 -and $cp -le 0x2069) -or $cp -eq 0x061C) {
+            throw "Invalid ${Label}: contains forbidden control or Bidi override character U+$($cp.ToString('X4'))."
+        }
+    }
+}
+
+function Read-XmlDocumentStrict {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter()]
+        [switch]$PreserveWhitespace
+    )
+
+    $doc = [System.Xml.XmlDocument]::new()
+    $doc.PreserveWhitespace = [bool]$PreserveWhitespace
+    $doc.XmlResolver = $null
+    $readerSettings = [System.Xml.XmlReaderSettings]::new()
+    $readerSettings.DtdProcessing = [System.Xml.DtdProcessing]::Prohibit
+    $readerSettings.XmlResolver = $null
+    $reader = [System.Xml.XmlReader]::Create($Path, $readerSettings)
+    try {
+        $doc.Load($reader)
+    }
+    finally {
+        $reader.Dispose()
+    }
+    return $doc
+}
+
+function ConvertFrom-X500Publisher {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Publisher
@@ -108,16 +151,12 @@ function Assert-X500Publisher {
     if ([string]::IsNullOrWhiteSpace($Publisher) -or $Publisher.Length -gt 8192) {
         throw "Invalid Publisher: must be a non-empty X.500 distinguished name (<= 8192 chars)."
     }
-    foreach ($ch in $Publisher.ToCharArray()) {
-        $cp = [int][char]$ch
-        if ($cp -lt 0x20 -or $cp -eq 0x7F -or ($cp -ge 0x202A -and $cp -le 0x202E) -or ($cp -ge 0x2066 -and $cp -le 0x2069) -or $cp -eq 0x061C) {
-            throw "Invalid Publisher '$Publisher': contains forbidden control or Bidi override character."
-        }
-    }
+    Assert-NoControlOrBidiChars -Value $Publisher -Label "Publisher"
     if ($Publisher.IndexOf($UnsignedPackageOid, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
         throw "Forbidden unsigned-package OID '$UnsignedPackageOid' detected in Publisher '$Publisher'."
     }
 
+    # Split RFC 2253 comma-separated RDNs while respecting double quotes and backslash escapes.
     $rdns = [System.Collections.Generic.List[string]]::new()
     $current = [System.Text.StringBuilder]::new()
     $inQuotes = $false
@@ -150,24 +189,135 @@ function Assert-X500Publisher {
     }
     $rdns.Add($current.ToString().Trim())
 
+    # Forbidden unescaped chars in unquoted RDN values: ", ;, <, >, `, $, |, &
+    $forbiddenUnquoted = @(
+        [char]0x22, [char]0x3B, [char]0x3C, [char]0x3E,
+        [char]0x60, [char]0x24, [char]0x7C, [char]0x26
+    )
+
+    $parsed = [System.Collections.Generic.List[object]]::new()
     $hasCn = $false
     foreach ($rdn in $rdns) {
         if ([string]::IsNullOrWhiteSpace($rdn)) {
             throw "Invalid X.500 Publisher '$Publisher': empty RDN segment."
         }
-        if ($rdn -notmatch '^(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?\d+(?:\.\d+)+)\s*=\s*\S.*$') {
+        $eqIdx = $rdn.IndexOf('=')
+        if ($eqIdx -lt 1) {
             throw "Invalid X.500 Publisher '$Publisher': malformed RDN '$rdn' (expected e.g. 'CN=...')."
         }
-        $eqIdx = $rdn.IndexOf('=')
         $key = $rdn.Substring(0, $eqIdx).Trim()
         $val = $rdn.Substring($eqIdx + 1).Trim()
-        if ($key.Equals("CN", [System.StringComparison]::OrdinalIgnoreCase) -and -not [string]::IsNullOrWhiteSpace($val)) {
+        if ($key -notmatch '^(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?\d+(?:\.\d+)+)$' -or [string]::IsNullOrWhiteSpace($val)) {
+            throw "Invalid X.500 Publisher '$Publisher': malformed RDN '$rdn' (expected e.g. 'CN=...')."
+        }
+
+        $decodedVal = ""
+        if ($val.StartsWith('"')) {
+            if ($val.Length -lt 2) {
+                throw "Invalid X.500 Publisher '$Publisher': malformed quoted RDN '$rdn'."
+            }
+            $sb = [System.Text.StringBuilder]::new()
+            $qEscaped = $false
+            $closed = $false
+            for ($i = 1; $i -lt $val.Length; $i++) {
+                $c = $val[$i]
+                if ($qEscaped) {
+                    [void]$sb.Append($c)
+                    $qEscaped = $false
+                    continue
+                }
+                if ($c -eq '\') {
+                    $qEscaped = $true
+                    continue
+                }
+                if ($c -eq '"') {
+                    if ($i -ne ($val.Length - 1)) {
+                        throw "Invalid X.500 Publisher '$Publisher': unexpected trailing characters after closing quote in RDN '$rdn'."
+                    }
+                    $closed = $true
+                    break
+                }
+                [void]$sb.Append($c)
+            }
+            if (-not $closed -or $qEscaped) {
+                throw "Invalid X.500 Publisher '$Publisher': unterminated quoted RDN '$rdn'."
+            }
+            $decodedVal = $sb.ToString().Trim()
+            if ([string]::IsNullOrWhiteSpace($decodedVal)) {
+                throw "Invalid X.500 Publisher '$Publisher': empty quoted RDN value in '$rdn'."
+            }
+        }
+        elseif ($val.StartsWith('#')) {
+            if ($val -notmatch '^#(?:[0-9A-Fa-f]{2})+$') {
+                throw "Invalid X.500 Publisher '$Publisher': invalid hex RDN value '$val' (leading '#' requires even-length hexadecimal bytes)."
+            }
+            $decodedVal = $val.ToLowerInvariant()
+        }
+        else {
+            $sb = [System.Text.StringBuilder]::new()
+            $uEscaped = $false
+            foreach ($c in $val.ToCharArray()) {
+                if ($uEscaped) {
+                    [void]$sb.Append($c)
+                    $uEscaped = $false
+                    continue
+                }
+                if ($c -eq '\') {
+                    $uEscaped = $true
+                    continue
+                }
+                if ($forbiddenUnquoted -contains $c) {
+                    throw "Invalid X.500 Publisher '$Publisher': forbidden unescaped character '$c' in unquoted RDN '$rdn'."
+                }
+                [void]$sb.Append($c)
+            }
+            if ($uEscaped) {
+                throw "Invalid X.500 Publisher '$Publisher': trailing escape in RDN '$rdn'."
+            }
+            $decodedVal = $sb.ToString().Trim()
+            if ([string]::IsNullOrWhiteSpace($decodedVal)) {
+                throw "Invalid X.500 Publisher '$Publisher': empty RDN value in '$rdn'."
+            }
+        }
+
+        $keyUpper = $key.ToUpperInvariant()
+        if ($keyUpper -eq "CN" -and -not [string]::IsNullOrWhiteSpace($decodedVal)) {
             $hasCn = $true
         }
+        $parsed.Add([PSCustomObject]@{ Key = $keyUpper; Value = $decodedVal })
     }
     if (-not $hasCn) {
         throw "Invalid X.500 Publisher '$Publisher': must include a non-empty 'CN=' attribute."
     }
+    return $parsed.ToArray()
+}
+
+function Assert-X500Publisher {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Publisher
+    )
+
+    [void](ConvertFrom-X500Publisher -Publisher $Publisher)
+}
+
+function Test-PlaceholderTestIdentity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$IdentityName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Publisher
+    )
+
+    if ($IdentityName.Trim().Equals("TotalDrop.TotalDrop", [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+    $rdns = @(ConvertFrom-X500Publisher -Publisher $Publisher)
+    if ($rdns.Count -eq 1 -and $rdns[0].Key -eq "CN" -and $rdns[0].Value.Trim().Equals("TotalDrop", [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+    return $false
 }
 
 function Resolve-WindowsKitTool {
@@ -316,9 +466,11 @@ $ScriptDir = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..")).Path
 $SourceManifestPath = Join-Path $ScriptDir "Package.arm64.appxmanifest"
 
-$preManifestDoc = [System.Xml.XmlDocument]::new()
-$preManifestDoc.XmlResolver = $null
-$preManifestDoc.Load($SourceManifestPath)
+Assert-NoControlOrBidiChars -Value $StoreIdentityName -Label "StoreIdentityName"
+Assert-NoControlOrBidiChars -Value $StorePublisher -Label "StorePublisher"
+Assert-NoControlOrBidiChars -Value $StorePublisherDisplayName -Label "StorePublisherDisplayName"
+
+$preManifestDoc = Read-XmlDocumentStrict -Path $SourceManifestPath
 $preNsMgr = [System.Xml.XmlNamespaceManager]::new($preManifestDoc.NameTable)
 $preNsMgr.AddNamespace("appx", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
 $preIdent = $preManifestDoc.SelectSingleNode("/appx:Package/appx:Identity", $preNsMgr)
@@ -343,6 +495,7 @@ $EffectivePublisherDisplayName = if (-not [string]::IsNullOrWhiteSpace($StorePub
     $prePubDisp.InnerText.Trim()
 }
 
+Assert-NoControlOrBidiChars -Value $EffectiveIdentityName -Label "IdentityName"
 if ($EffectiveIdentityName -notmatch '^[A-Za-z0-9.-]{3,50}$') {
     throw "Invalid Identity Name '$EffectiveIdentityName'. Expected 3..50 ASCII alphanumeric, dot, or hyphen characters."
 }
@@ -350,15 +503,10 @@ Assert-X500Publisher -Publisher $EffectivePublisher
 if ([string]::IsNullOrWhiteSpace($EffectivePublisherDisplayName) -or $EffectivePublisherDisplayName.Length -gt 256) {
     throw "Invalid PublisherDisplayName '$EffectivePublisherDisplayName'. Must be 1..256 characters."
 }
-foreach ($ch in $EffectivePublisherDisplayName.ToCharArray()) {
-    $cp = [int][char]$ch
-    if ($cp -lt 0x20 -or $cp -eq 0x7F) {
-        throw "Invalid PublisherDisplayName '$EffectivePublisherDisplayName': contains control characters."
-    }
-}
+Assert-NoControlOrBidiChars -Value $EffectivePublisherDisplayName -Label "PublisherDisplayName"
 
 if ($StoreMode) {
-    $isPlaceholderIdentity = ($EffectivePublisher -eq "CN=TotalDrop") -or ($EffectiveIdentityName -eq "TotalDrop.TotalDrop")
+    $isPlaceholderIdentity = Test-PlaceholderTestIdentity -IdentityName $EffectiveIdentityName -Publisher $EffectivePublisher
     if ($isPlaceholderIdentity -and -not $AllowTestIdentity) {
         throw "Refusing placeholder test identity (Name='$EffectiveIdentityName', Publisher='$EffectivePublisher') in -StoreMode. Supply Partner Center -StoreIdentityName / -StorePublisher or pass -AllowTestIdentity for dry-runs."
     }
@@ -518,10 +666,7 @@ Copy-Item `
     -LiteralPath $SourceManifestPath `
     -Destination $StagedManifest `
     -Force
-$manifestDoc = [System.Xml.XmlDocument]::new()
-$manifestDoc.PreserveWhitespace = $true
-$manifestDoc.XmlResolver = $null
-$manifestDoc.Load($StagedManifest)
+$manifestDoc = Read-XmlDocumentStrict -Path $StagedManifest -PreserveWhitespace
 $nsMgr = [System.Xml.XmlNamespaceManager]::new($manifestDoc.NameTable)
 $nsMgr.AddNamespace("appx", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
 $identityNode = $manifestDoc.SelectSingleNode("/appx:Package/appx:Identity", $nsMgr)

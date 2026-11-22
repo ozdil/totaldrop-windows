@@ -119,47 +119,91 @@ jobs:
             } >>"$GITHUB_OUTPUT"
           else
             python3 tools/check-versions.py
-            python3 tools/check-versions.py --store-version "$INPUT_STORE_MSIX_VERSION"
             python3 - <<'PY'
-          import os, re, sys
+          import importlib.util
+          import os
+          import re
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
 
-          app_ver = os.environ.get("INPUT_APP_VERSION", "").strip()
-          msix_ver = os.environ.get("INPUT_STORE_MSIX_VERSION", "").strip()
-          ident_name = os.environ.get("INPUT_IDENTITY_NAME", "").strip()
-          publisher = os.environ.get("INPUT_PUBLISHER", "").strip()
-          pub_disp = os.environ.get("INPUT_PUBLISHER_DISPLAY_NAME", "").strip()
+          raw_inputs = {
+              "app_version": os.environ.get("INPUT_APP_VERSION", ""),
+              "store_msix_version": os.environ.get("INPUT_STORE_MSIX_VERSION", ""),
+              "identity_name": os.environ.get("INPUT_IDENTITY_NAME", ""),
+              "publisher": os.environ.get("INPUT_PUBLISHER", ""),
+              "publisher_display_name": os.environ.get("INPUT_PUBLISHER_DISPLAY_NAME", ""),
+          }
+          for label, raw_val in raw_inputs.items():
+              for ch in raw_val:
+                  cp = ord(ch)
+                  if (
+                      cp < 0x20
+                      or cp == 0x7F
+                      or 0x202A <= cp <= 0x202E
+                      or 0x2066 <= cp <= 0x2069
+                      or cp == 0x061C
+                  ):
+                      raise SystemExit(
+                          f"error: {label} contains forbidden control, line break, NUL, or Bidi override character U+{cp:04X}"
+                      )
+
+          spec = importlib.util.spec_from_file_location("check_versions", Path("tools/check-versions.py"))
+          if spec is None or spec.loader is None:
+              raise SystemExit("error: unable to load tools/check-versions.py")
+          cv = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(cv)
+
+          app_ver = raw_inputs["app_version"].strip()
+          msix_ver = raw_inputs["store_msix_version"]
+          ident_name = raw_inputs["identity_name"].strip()
+          publisher = raw_inputs["publisher"].strip()
+          pub_disp = raw_inputs["publisher_display_name"].strip()
           allow_test = os.environ.get("INPUT_ALLOW_TEST_IDENTITY", "false").strip().lower() == "true"
 
-          unsigned_oid = "2.25.311729368913984317654407730594956997722"
-
-          for label, val in (
-              ("app_version", app_ver),
-              ("store_msix_version", msix_ver),
-              ("identity_name", ident_name),
-              ("publisher", publisher),
-              ("publisher_display_name", pub_disp),
-          ):
-              if "\n" in val or "\r" in val or "\x00" in val:
-                  raise SystemExit(f"error: {label} contains forbidden line break or NUL character")
-
+          ver_errors: list[str] = []
+          if not cv.validate_store_msix_version(msix_ver, "store_msix_version", ver_errors):
+              raise SystemExit(f"error: {ver_errors[0]}")
           if not re.fullmatch(r"[0-9A-Za-z.+-]{1,64}", app_ver):
               raise SystemExit(f"error: invalid app_version: {app_ver!r}")
-          if ident_name and not re.fullmatch(r"[A-Za-z0-9.-]{3,50}", ident_name):
+          if ident_name and not cv.IDENTITY_NAME_RE.fullmatch(ident_name):
               raise SystemExit(f"error: invalid identity_name: {ident_name!r}")
           if publisher:
-              if unsigned_oid in publisher.lower():
-                  raise SystemExit("error: publisher contains forbidden unsigned-package OID")
-              if any(ord(c) < 0x20 or ord(c) == 0x7F for c in publisher):
-                  raise SystemExit("error: publisher contains control characters")
-              if not re.search(r"(?:^|,)\s*CN\s*=\s*\S", publisher, re.IGNORECASE):
-                  raise SystemExit(f"error: publisher must contain an X.500 CN= attribute: {publisher!r}")
-          if pub_disp and (len(pub_disp) > 256 or any(ord(c) < 0x20 or ord(c) == 0x7F for c in pub_disp)):
-              raise SystemExit("error: invalid publisher_display_name")
-          if not allow_test:
-              if not ident_name or ident_name == "TotalDrop.TotalDrop":
-                  raise SystemExit("error: non-test release requires Partner Center identity_name")
-              if not publisher or publisher == "CN=TotalDrop":
-                  raise SystemExit("error: non-test release requires Partner Center publisher (CN=...)")
+              pub_errors: list[str] = []
+              if not cv.validate_x500_publisher(publisher, "publisher", pub_errors):
+                  raise SystemExit(f"error: {pub_errors[0]}")
+          if pub_disp and len(pub_disp) > 256:
+              raise SystemExit("error: invalid publisher_display_name (exceeds 256 characters)")
+
+          # Resolve effective identity: fall back to committed manifests when inputs are blank.
+          appx_ns = "{http://schemas.microsoft.com/appx/manifest/foundation/windows10}"
+          x64_ident = ET.parse("target-x86_64/Package.x64.appxmanifest").getroot().find(f"{appx_ns}Identity")
+          arm64_ident = ET.parse("target-arm64/Package.arm64.appxmanifest").getroot().find(f"{appx_ns}Identity")
+          if x64_ident is None or arm64_ident is None:
+              raise SystemExit("error: committed Package.{x64,arm64}.appxmanifest missing <Identity>")
+          m_x64_name = x64_ident.attrib.get("Name", "")
+          m_arm64_name = arm64_ident.attrib.get("Name", "")
+          m_x64_pub = x64_ident.attrib.get("Publisher", "")
+          m_arm64_pub = arm64_ident.attrib.get("Publisher", "")
+          if m_x64_name != m_arm64_name or m_x64_pub != m_arm64_pub:
+              raise SystemExit(
+                  "error: committed Package.x64.appxmanifest and Package.arm64.appxmanifest Identity mismatch "
+                  f"(x64=({m_x64_name!r}, {m_x64_pub!r}) vs arm64=({m_arm64_name!r}, {m_arm64_pub!r}))"
+              )
+
+          effective_name = ident_name or m_x64_name
+          effective_pub = publisher or m_x64_pub
+          if not cv.IDENTITY_NAME_RE.fullmatch(effective_name):
+              raise SystemExit(f"error: effective identity_name is invalid: {effective_name!r}")
+          eff_pub_errors: list[str] = []
+          if not cv.validate_x500_publisher(effective_pub, "effective publisher", eff_pub_errors):
+              raise SystemExit(f"error: {eff_pub_errors[0]}")
+
+          if not allow_test and cv.is_placeholder_test_identity(effective_name, effective_pub):
+              raise SystemExit(
+                  f"error: non-test release refuses placeholder test identity "
+                  f"(Name={effective_name!r}, Publisher={effective_pub!r}); "
+                  "supply Partner Center identity_name/publisher or commit real identity to Package.{x64,arm64}.appxmanifest"
+              )
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write(f"app_version={app_ver}\n")
@@ -169,6 +213,7 @@ jobs:
               fh.write(f"publisher_display_name={pub_disp}\n")
               fh.write(f"allow_test_identity={'true' if allow_test else 'false'}\n")
           PY
+            python3 tools/check-versions.py --store-version "$INPUT_STORE_MSIX_VERSION"
           fi
       - name: Run static Store, l10n, subplatform & bundle verifier gates
         shell: bash

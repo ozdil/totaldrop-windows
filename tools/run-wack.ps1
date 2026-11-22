@@ -178,6 +178,26 @@ function Assert-WackInteractivePreconditions {
     Write-Host "    WACK preconditions OK: SessionId=$sessionId, EnableLUA=1, Display=${width}x${height}"
 }
 
+function Get-XmlAttributeValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Xml.XmlNode]$Node,
+
+        [Parameter(Mandatory = $true)]
+        [string]$AttributeName
+    )
+
+    if ($null -eq $Node.Attributes) {
+        return $null
+    }
+    foreach ($attr in $Node.Attributes) {
+        if ($attr.Name.Equals($AttributeName, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return [string]$attr.Value
+        }
+    }
+    return $null
+}
+
 function Test-WackReportXml {
     param(
         [Parameter(Mandatory = $true)]
@@ -195,55 +215,74 @@ function Test-WackReportXml {
     $readerSettings.DtdProcessing = [System.Xml.DtdProcessing]::Prohibit
     $readerSettings.XmlResolver = $null
 
-    $reader = [System.Xml.XmlReader]::Create($ReportFile, $readerSettings)
     try {
-        $doc.Load($reader)
+        $reader = [System.Xml.XmlReader]::Create($ReportFile, $readerSettings)
+        try {
+            $doc.Load($reader)
+        }
+        finally {
+            $reader.Dispose()
+        }
     }
-    finally {
-        $reader.Dispose()
+    catch [System.Xml.XmlException] {
+        [Console]::Error.WriteLine("WACK error: malformed or unsafe XML report '$ReportFile': $($_.Exception.Message)")
+        return $false
     }
 
-    $reportNode = $doc.SelectSingleNode("/REPORT")
-    if ($null -eq $reportNode) {
+    $reportNode = $doc.DocumentElement
+    if ($null -eq $reportNode -or -not $reportNode.LocalName.Equals("REPORT", [System.StringComparison]::OrdinalIgnoreCase)) {
         [Console]::Error.WriteLine("WACK error: XML report is missing root <REPORT> element: $ReportFile")
         return $false
     }
 
-    $overallRaw = ""
-    if ($null -ne $reportNode.Attributes -and $null -ne $reportNode.Attributes["OVERALL_RESULT"]) {
-        $overallRaw = [string]$reportNode.Attributes["OVERALL_RESULT"].Value
+    $overallRaw = Get-XmlAttributeValue -Node $reportNode -AttributeName "OVERALL_RESULT"
+    if ($null -eq $overallRaw) {
+        $overallRaw = ""
     }
     $overall = $overallRaw.Trim().ToUpperInvariant()
 
-    $rawNodes = $doc.SelectNodes("//TEST")
-    $testNodes = if ($null -ne $rawNodes) { @($rawNodes) } else { @() }
+    $allElements = $doc.SelectNodes("//*")
+    $testNodes = [System.Collections.Generic.List[System.Xml.XmlNode]]::new()
+    if ($null -ne $allElements) {
+        foreach ($el in $allElements) {
+            if ($el.LocalName.Equals("TEST", [System.StringComparison]::OrdinalIgnoreCase)) {
+                $testNodes.Add($el)
+            }
+        }
+    }
+
+    $allowedTestResults = @("PASS", "NOT APPLICABLE", "SKIPPED")
     $failedTests = [System.Collections.Generic.List[string]]::new()
     foreach ($testNode in $testNodes) {
-        $resultRaw = ""
-        if ($null -ne $testNode.Attributes -and $null -ne $testNode.Attributes["RESULT"]) {
-            $resultRaw = [string]$testNode.Attributes["RESULT"].Value
+        $resultRaw = Get-XmlAttributeValue -Node $testNode -AttributeName "RESULT"
+        if ($null -eq $resultRaw) {
+            $resultRaw = ""
         }
         $resultNorm = $resultRaw.Trim().ToUpperInvariant()
-        if ($resultNorm -eq "FAIL" -or $resultNorm -eq "FAILED") {
-            $testName = ""
-            if ($null -ne $testNode.Attributes -and $null -ne $testNode.Attributes["NAME"]) {
-                $testName = [string]$testNode.Attributes["NAME"].Value
-            }
-            if ([string]::IsNullOrWhiteSpace($testName) -and $null -ne $testNode.Attributes -and $null -ne $testNode.Attributes["INDEX"]) {
-                $testName = "TEST#" + [string]$testNode.Attributes["INDEX"].Value
+        if ($allowedTestResults -notcontains $resultNorm) {
+            $testName = Get-XmlAttributeValue -Node $testNode -AttributeName "NAME"
+            if ([string]::IsNullOrWhiteSpace($testName)) {
+                $testIdx = Get-XmlAttributeValue -Node $testNode -AttributeName "INDEX"
+                if (-not [string]::IsNullOrWhiteSpace($testIdx)) {
+                    $testName = "TEST#" + $testIdx.Trim()
+                }
             }
             if ([string]::IsNullOrWhiteSpace($testName)) {
                 $testName = "<unnamed test>"
             }
-            $failedTests.Add($testName.Trim())
+            $displayResult = if ([string]::IsNullOrWhiteSpace($resultRaw)) { "<missing>" } else { $resultRaw.Trim() }
+            $failedTests.Add("$($testName.Trim()) (RESULT='$displayResult')")
         }
     }
 
-    $passed = ($overall -eq "PASS") -and ($failedTests.Count -eq 0)
+    $passed = ($overall -eq "PASS") -and ($testNodes.Count -ge 1) -and ($failedTests.Count -eq 0)
     if (-not $passed) {
         [Console]::Error.WriteLine("WACK report FAILED: $ReportFile (OVERALL_RESULT='$overallRaw', tests=$($testNodes.Count), failed=$($failedTests.Count))")
-        foreach ($failedName in $failedTests) {
-            [Console]::Error.WriteLine("WACK FAILED test: $failedName")
+        if ($testNodes.Count -lt 1) {
+            [Console]::Error.WriteLine("WACK error: report contains zero <TEST> elements")
+        }
+        foreach ($failedEntry in $failedTests) {
+            [Console]::Error.WriteLine("WACK FAILED test: $failedEntry")
         }
         return $false
     }
