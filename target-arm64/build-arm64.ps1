@@ -5,11 +5,13 @@
 
 <#
 .SYNOPSIS
-    Builds the isolated Windows 11 ARM64 slice of TotalDrop (Rust C ABI FFI
-    cdylib + WinUI 3 .NET 10 Native AOT executable + MakePri resources.pri +
-    strict makeappx.exe arm64 MSIX package) on GitHub's `windows-11-arm` runner,
-    and optionally bundles `x64` + `arm64` into a single `.msixbundle` for
-    Microsoft Store Partner Center submission (ADR 0016, #86).
+    Builds the isolated Windows 11 ARM64 slice of TotalDrop (Rust C ABI FFI +
+    Explorer COM cdylibs + WinUI 3 .NET 10 Native AOT executable + MakePri
+    resources.pri + strict makeappx.exe arm64 MSIX package, optional Store
+    identity projection and deterministic .appxsym symbols) on GitHub's
+    `windows-11-arm` runner, and optionally bundles `x64` + `arm64` into a
+    single `.msixbundle` for Microsoft Store Partner Center submission
+    (ADR 0016, #86).
 #>
 
 [CmdletBinding()]
@@ -25,11 +27,148 @@ param(
 
     [Parameter()]
     [Alias("SignEphemeralTestCert")]
-    [switch]$SelfSignEphemeral
+    [switch]$SelfSignEphemeral,
+
+    [Parameter()]
+    [string]$StoreIdentityName = "",
+
+    [Parameter()]
+    [string]$StorePublisher = "",
+
+    [Parameter()]
+    [string]$StorePublisherDisplayName = "",
+
+    [Parameter()]
+    [switch]$EmitSymbols,
+
+    [Parameter()]
+    [switch]$StoreMode,
+
+    [Parameter()]
+    [switch]$AllowTestIdentity
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+$UnsignedPackageOid = "2.25.311729368913984317654407730594956997722"
+
+function Resolve-SourceDateEpoch {
+    $raw = [System.Environment]::GetEnvironmentVariable("SOURCE_DATE_EPOCH")
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return [int64]1760000000
+    }
+    [int64]$parsed = 0
+    if (-not [int64]::TryParse($raw.Trim(), [ref]$parsed) -or $parsed -lt 315532800) {
+        throw "Invalid SOURCE_DATE_EPOCH '$raw'. Expected integer UNIX seconds >= 315532800 (1980-01-01T00:00:00Z)."
+    }
+    return $parsed
+}
+
+function Assert-MsixVersionQuad {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Value,
+
+        [Parameter()]
+        [switch]$RequireStoreRules
+    )
+
+    if ($Value -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+        throw "Invalid MSIX -Version '$Value'. Expected four-part numeric version (Major.Minor.Build.Revision)."
+    }
+    $parts = $Value.Split('.')
+    $nums = @()
+    foreach ($part in $parts) {
+        if ($part.Length -gt 1 -and $part.StartsWith('0')) {
+            throw "Invalid MSIX -Version '$Value': leading zeros are not permitted in version component '$part'."
+        }
+        [int]$num = 0
+        if (-not [int]::TryParse($part, [ref]$num) -or $num -lt 0 -or $num -gt 65535) {
+            throw "Invalid MSIX -Version '$Value': each component must be in 0..65535 (got '$part')."
+        }
+        $nums += $num
+    }
+    if ($RequireStoreRules) {
+        if ($nums[0] -lt 1) {
+            throw "Invalid Store MSIX -Version '$Value': Microsoft Store requires Major >= 1 (1..65535)."
+        }
+        if ($nums[3] -ne 0) {
+            throw "Invalid Store MSIX -Version '$Value': Microsoft Store requires Revision == 0 (4th component is reserved)."
+        }
+    }
+}
+
+function Assert-X500Publisher {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Publisher
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Publisher) -or $Publisher.Length -gt 8192) {
+        throw "Invalid Publisher: must be a non-empty X.500 distinguished name (<= 8192 chars)."
+    }
+    foreach ($ch in $Publisher.ToCharArray()) {
+        $cp = [int][char]$ch
+        if ($cp -lt 0x20 -or $cp -eq 0x7F -or ($cp -ge 0x202A -and $cp -le 0x202E) -or ($cp -ge 0x2066 -and $cp -le 0x2069) -or $cp -eq 0x061C) {
+            throw "Invalid Publisher '$Publisher': contains forbidden control or Bidi override character."
+        }
+    }
+    if ($Publisher.IndexOf($UnsignedPackageOid, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "Forbidden unsigned-package OID '$UnsignedPackageOid' detected in Publisher '$Publisher'."
+    }
+
+    $rdns = [System.Collections.Generic.List[string]]::new()
+    $current = [System.Text.StringBuilder]::new()
+    $inQuotes = $false
+    $escaped = $false
+    foreach ($ch in $Publisher.ToCharArray()) {
+        if ($escaped) {
+            [void]$current.Append($ch)
+            $escaped = $false
+            continue
+        }
+        if ($ch -eq '\') {
+            [void]$current.Append($ch)
+            $escaped = $true
+            continue
+        }
+        if ($ch -eq '"') {
+            $inQuotes = -not $inQuotes
+            [void]$current.Append($ch)
+            continue
+        }
+        if ($ch -eq ',' -and -not $inQuotes) {
+            $rdns.Add($current.ToString().Trim())
+            [void]$current.Clear()
+            continue
+        }
+        [void]$current.Append($ch)
+    }
+    if ($inQuotes -or $escaped) {
+        throw "Invalid X.500 Publisher '$Publisher': unterminated quote or escape sequence."
+    }
+    $rdns.Add($current.ToString().Trim())
+
+    $hasCn = $false
+    foreach ($rdn in $rdns) {
+        if ([string]::IsNullOrWhiteSpace($rdn)) {
+            throw "Invalid X.500 Publisher '$Publisher': empty RDN segment."
+        }
+        if ($rdn -notmatch '^(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?\d+(?:\.\d+)+)\s*=\s*\S.*$') {
+            throw "Invalid X.500 Publisher '$Publisher': malformed RDN '$rdn' (expected e.g. 'CN=...')."
+        }
+        $eqIdx = $rdn.IndexOf('=')
+        $key = $rdn.Substring(0, $eqIdx).Trim()
+        $val = $rdn.Substring($eqIdx + 1).Trim()
+        if ($key.Equals("CN", [System.StringComparison]::OrdinalIgnoreCase) -and -not [string]::IsNullOrWhiteSpace($val)) {
+            $hasCn = $true
+        }
+    }
+    if (-not $hasCn) {
+        throw "Invalid X.500 Publisher '$Publisher': must include a non-empty 'CN=' attribute."
+    }
+}
 
 function Resolve-WindowsKitTool {
     param(
@@ -42,11 +181,25 @@ function Resolve-WindowsKitTool {
 
     $archOrder = if ($PreferredArch -eq "arm64") { @("arm64", "x64") } else { @("x64", "arm64") }
 
-    $kitsBin = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
-    if (Test-Path -LiteralPath $kitsBin) {
-        $versionDirs = Get-ChildItem -LiteralPath $kitsBin -Directory -ErrorAction SilentlyContinue |
+    $kitBinRoots = [System.Collections.Generic.List[string]]::new()
+    $winSdkDir = [System.Environment]::GetEnvironmentVariable("WindowsSdkDir")
+    if (-not [string]::IsNullOrWhiteSpace($winSdkDir)) {
+        $kitBinRoots.Add((Join-Path $winSdkDir "bin"))
+    }
+    foreach ($pfVar in @("ProgramFiles(x86)", "ProgramFiles")) {
+        $pfRoot = [System.Environment]::GetEnvironmentVariable($pfVar)
+        if (-not [string]::IsNullOrWhiteSpace($pfRoot)) {
+            $kitBinRoots.Add((Join-Path $pfRoot "Windows Kits\10\bin"))
+        }
+    }
+
+    foreach ($kitsBin in $kitBinRoots) {
+        if (-not (Test-Path -LiteralPath $kitsBin)) {
+            continue
+        }
+        $versionDirs = @(Get-ChildItem -LiteralPath $kitsBin -Directory -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
-            Sort-Object { [version]$_.Name } -Descending
+            Sort-Object { [version]$_.Name } -Descending)
         foreach ($vDir in $versionDirs) {
             foreach ($arch in $archOrder) {
                 $candidate = Join-Path $vDir.FullName "$arch\$ToolName"
@@ -57,26 +210,31 @@ function Resolve-WindowsKitTool {
         }
     }
 
-    $nugetRoot = if (-not [string]::IsNullOrWhiteSpace($env:NUGET_PACKAGES)) {
-        $env:NUGET_PACKAGES
-    } else {
-        Join-Path $env:USERPROFILE ".nuget\packages"
+    $nugetEnv = [System.Environment]::GetEnvironmentVariable("NUGET_PACKAGES")
+    $userProfileEnv = [System.Environment]::GetEnvironmentVariable("USERPROFILE")
+    $nugetRoot = ""
+    if (-not [string]::IsNullOrWhiteSpace($nugetEnv)) {
+        $nugetRoot = $nugetEnv
+    } elseif (-not [string]::IsNullOrWhiteSpace($userProfileEnv)) {
+        $nugetRoot = Join-Path $userProfileEnv ".nuget\packages"
     }
-    $btRoot = Join-Path $nugetRoot "microsoft.windows.sdk.buildtools"
-    if (Test-Path -LiteralPath $btRoot) {
-        $pkgDirs = Get-ChildItem -LiteralPath $btRoot -Directory -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending
-        foreach ($pkgDir in $pkgDirs) {
-            $binRoot = Join-Path $pkgDir.FullName "bin"
-            if (-not (Test-Path -LiteralPath $binRoot)) { continue }
-            $sdkDirs = Get-ChildItem -LiteralPath $binRoot -Directory -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
-                Sort-Object { [version]$_.Name } -Descending
-            foreach ($sdkDir in $sdkDirs) {
-                foreach ($arch in $archOrder) {
-                    $candidate = Join-Path $sdkDir.FullName "$arch\$ToolName"
-                    if (Test-Path -LiteralPath $candidate) {
-                        return $candidate
+    if (-not [string]::IsNullOrWhiteSpace($nugetRoot)) {
+        $btRoot = Join-Path $nugetRoot "microsoft.windows.sdk.buildtools"
+        if (Test-Path -LiteralPath $btRoot) {
+            $pkgDirs = @(Get-ChildItem -LiteralPath $btRoot -Directory -ErrorAction SilentlyContinue |
+                Sort-Object Name -Descending)
+            foreach ($pkgDir in $pkgDirs) {
+                $binRoot = Join-Path $pkgDir.FullName "bin"
+                if (-not (Test-Path -LiteralPath $binRoot)) { continue }
+                $sdkDirs = @(Get-ChildItem -LiteralPath $binRoot -Directory -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
+                    Sort-Object { [version]$_.Name } -Descending)
+                foreach ($sdkDir in $sdkDirs) {
+                    foreach ($arch in $archOrder) {
+                        $candidate = Join-Path $sdkDir.FullName "$arch\$ToolName"
+                        if (Test-Path -LiteralPath $candidate) {
+                            return $candidate
+                        }
                     }
                 }
             }
@@ -91,8 +249,121 @@ function Resolve-WindowsKitTool {
     throw "Required Windows SDK tool '$ToolName' not found in Windows Kits 10, NuGet BuildTools, or PATH."
 }
 
+function New-DeterministicZipArchive {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationPath,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$EntryMap,
+
+        [Parameter(Mandatory = $true)]
+        [int64]$EpochSeconds
+    )
+
+    Add-Type -AssemblyName System.IO.Compression
+    if (Test-Path -LiteralPath $DestinationPath) {
+        Remove-Item -LiteralPath $DestinationPath -Force
+    }
+    $sortedNames = [System.Collections.Generic.List[string]]::new()
+    foreach ($key in $EntryMap.Keys) {
+        $sortedNames.Add([string]$key)
+    }
+    $sortedNames.Sort([System.StringComparer]::Ordinal)
+
+    # Use UTC DateTimeOffset directly so ZIP DOS timestamps are timezone-independent.
+    $zipTimestamp = [System.DateTimeOffset]::FromUnixTimeSeconds($EpochSeconds)
+    $fs = [System.IO.File]::Open($DestinationPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+    try {
+        $archive = [System.IO.Compression.ZipArchive]::new($fs, [System.IO.Compression.ZipArchiveMode]::Create, $false)
+        try {
+            foreach ($entryName in $sortedNames) {
+                $sourceFile = [string]$EntryMap[$entryName]
+                $entry = $archive.CreateEntry($entryName, [System.IO.Compression.CompressionLevel]::Optimal)
+                $entry.LastWriteTime = $zipTimestamp
+                $entry.ExternalAttributes = 0
+                $srcStream = [System.IO.File]::OpenRead($sourceFile)
+                try {
+                    $dstStream = $entry.Open()
+                    try {
+                        $srcStream.CopyTo($dstStream)
+                    }
+                    finally {
+                        $dstStream.Dispose()
+                    }
+                }
+                finally {
+                    $srcStream.Dispose()
+                }
+            }
+        }
+        finally {
+            $archive.Dispose()
+        }
+    }
+    finally {
+        $fs.Dispose()
+    }
+    [System.IO.File]::SetLastWriteTimeUtc($DestinationPath, $zipTimestamp.UtcDateTime)
+}
+
+$SourceDateEpoch = Resolve-SourceDateEpoch
+$EpochUtc = [System.DateTimeOffset]::FromUnixTimeSeconds($SourceDateEpoch).UtcDateTime
+
+Assert-MsixVersionQuad -Value $Version -RequireStoreRules:$StoreMode
+
 $ScriptDir = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..")).Path
+$SourceManifestPath = Join-Path $ScriptDir "Package.arm64.appxmanifest"
+
+$preManifestDoc = [System.Xml.XmlDocument]::new()
+$preManifestDoc.XmlResolver = $null
+$preManifestDoc.Load($SourceManifestPath)
+$preNsMgr = [System.Xml.XmlNamespaceManager]::new($preManifestDoc.NameTable)
+$preNsMgr.AddNamespace("appx", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
+$preIdent = $preManifestDoc.SelectSingleNode("/appx:Package/appx:Identity", $preNsMgr)
+$prePubDisp = $preManifestDoc.SelectSingleNode("/appx:Package/appx:Properties/appx:PublisherDisplayName", $preNsMgr)
+if ($null -eq $preIdent -or $null -eq $prePubDisp) {
+    throw "Source manifest $SourceManifestPath is missing /Package/Identity or /Package/Properties/PublisherDisplayName."
+}
+
+$EffectiveIdentityName = if (-not [string]::IsNullOrWhiteSpace($StoreIdentityName)) {
+    $StoreIdentityName.Trim()
+} else {
+    $preIdent.GetAttribute("Name")
+}
+$EffectivePublisher = if (-not [string]::IsNullOrWhiteSpace($StorePublisher)) {
+    $StorePublisher.Trim()
+} else {
+    $preIdent.GetAttribute("Publisher")
+}
+$EffectivePublisherDisplayName = if (-not [string]::IsNullOrWhiteSpace($StorePublisherDisplayName)) {
+    $StorePublisherDisplayName.Trim()
+} else {
+    $prePubDisp.InnerText.Trim()
+}
+
+if ($EffectiveIdentityName -notmatch '^[A-Za-z0-9.-]{3,50}$') {
+    throw "Invalid Identity Name '$EffectiveIdentityName'. Expected 3..50 ASCII alphanumeric, dot, or hyphen characters."
+}
+Assert-X500Publisher -Publisher $EffectivePublisher
+if ([string]::IsNullOrWhiteSpace($EffectivePublisherDisplayName) -or $EffectivePublisherDisplayName.Length -gt 256) {
+    throw "Invalid PublisherDisplayName '$EffectivePublisherDisplayName'. Must be 1..256 characters."
+}
+foreach ($ch in $EffectivePublisherDisplayName.ToCharArray()) {
+    $cp = [int][char]$ch
+    if ($cp -lt 0x20 -or $cp -eq 0x7F) {
+        throw "Invalid PublisherDisplayName '$EffectivePublisherDisplayName': contains control characters."
+    }
+}
+
+if ($StoreMode) {
+    $isPlaceholderIdentity = ($EffectivePublisher -eq "CN=TotalDrop") -or ($EffectiveIdentityName -eq "TotalDrop.TotalDrop")
+    if ($isPlaceholderIdentity -and -not $AllowTestIdentity) {
+        throw "Refusing placeholder test identity (Name='$EffectiveIdentityName', Publisher='$EffectivePublisher') in -StoreMode. Supply Partner Center -StoreIdentityName / -StorePublisher or pass -AllowTestIdentity for dry-runs."
+    }
+}
+
 $ResolvedOutDir = if ([string]::IsNullOrWhiteSpace($OutputDir)) {
     Join-Path $RepoRoot "dist"
 } else {
@@ -108,26 +379,36 @@ $PriWorkDir = Join-Path $WorkRoot "pri-work-arm64"
 $BundleInputDir = Join-Path $WorkRoot "bundle-input"
 $OutMsixName = "TotalDrop_${Version}_arm64.msix"
 $OutMsix = Join-Path $ResolvedOutDir $OutMsixName
+$OutAppxSymName = "TotalDrop_${Version}_arm64.appxsym"
+$OutAppxSym = Join-Path $ResolvedOutDir $OutAppxSymName
 $X64Msix = Join-Path $ResolvedOutDir "TotalDrop_${Version}_x64.msix"
 $OutBundleName = "TotalDrop_${Version}_x64_arm64.msixbundle"
 $OutBundle = Join-Path $ResolvedOutDir $OutBundleName
-$FfiDll = Join-Path $RepoRoot "target\aarch64-pc-windows-msvc\release\totaldrop_windows_ffi.dll"
-$ExplorerExtDll = Join-Path $RepoRoot "target\aarch64-pc-windows-msvc\release\totaldrop_explorer_ext.dll"
+$TargetReleaseDir = Join-Path $RepoRoot "target\aarch64-pc-windows-msvc\release"
+$FfiDll = Join-Path $TargetReleaseDir "totaldrop_windows_ffi.dll"
+$ExplorerExtDll = Join-Path $TargetReleaseDir "totaldrop_explorer_ext.dll"
 
 Write-Host "==> [arm64 1/5] Building Rust totaldrop-windows-ffi & totaldrop-explorer-ext cdylibs (aarch64-pc-windows-msvc)..."
-$SavedRustFlags = $env:RUSTFLAGS
-$SavedEncodedRustFlags = $env:CARGO_ENCODED_RUSTFLAGS
+$SavedRustFlags = [System.Environment]::GetEnvironmentVariable("RUSTFLAGS")
+$SavedEncodedRustFlags = [System.Environment]::GetEnvironmentVariable("CARGO_ENCODED_RUSTFLAGS")
 Push-Location $RepoRoot
 try {
     Remove-Item Env:RUSTFLAGS -ErrorAction SilentlyContinue
     Remove-Item Env:CARGO_ENCODED_RUSTFLAGS -ErrorAction SilentlyContinue
-    cargo build `
-        --config (Join-Path $ScriptDir "cargo-config.toml") `
-        --target aarch64-pc-windows-msvc `
-        -p totaldrop-windows-ffi `
-        -p totaldrop-explorer-ext `
-        --release `
-        --locked
+    $cargoArgs = @(
+        "build",
+        "--config", (Join-Path $ScriptDir "cargo-config.toml"),
+        "--target", "aarch64-pc-windows-msvc",
+        "-p", "totaldrop-windows-ffi",
+        "-p", "totaldrop-explorer-ext",
+        "--release",
+        "--locked"
+    )
+    if ($EmitSymbols) {
+        # Override workspace [profile.release] strip=true so MSVC emits standalone PDBs with matching RSDS GUIDs.
+        $cargoArgs += @("--config", "profile.release.debug=true", "--config", "profile.release.strip=false")
+    }
+    & cargo @cargoArgs
     if ($LASTEXITCODE -ne 0) {
         throw "cargo build (totaldrop-windows-ffi / totaldrop-explorer-ext, aarch64-pc-windows-msvc) failed with exit code $LASTEXITCODE"
     }
@@ -166,13 +447,27 @@ try {
         throw "Expected .NET 10.0.x LTS SDK (pinned by ui-winui3-fluent2/global.json), got '$DotnetVersion'"
     }
 
-    dotnet publish TotalDrop.WinUI.csproj `
-        -r win-arm64 `
-        -c Release `
-        -p:Platform=ARM64 `
-        -p:PublishAot=true `
-        -p:WindowsAppSDKSelfContained=false `
-        -o $PublishDir
+    $publishArgs = @(
+        "publish",
+        "TotalDrop.WinUI.csproj",
+        "-r", "win-arm64",
+        "-c", "Release",
+        "-p:Platform=ARM64",
+        "-p:PublishAot=true",
+        "-p:WindowsAppSDKSelfContained=false",
+        "-p:AssemblyVersion=$Version",
+        "-p:FileVersion=$Version",
+        "-o", $PublishDir
+    )
+    if ($EmitSymbols) {
+        $publishArgs += @(
+            "-p:DebugSymbols=true",
+            "-p:DebugType=pdbonly",
+            "-p:StripSymbols=false",
+            "-p:CopyOutputSymbolsToPublishDirectory=true"
+        )
+    }
+    & dotnet @publishArgs
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish (win-arm64 Native AOT) failed with exit code $LASTEXITCODE"
     }
@@ -183,6 +478,8 @@ finally {
 
 $MakePriExe = Resolve-WindowsKitTool -ToolName "MakePri.exe" -PreferredArch "arm64"
 $MakeAppxExe = Resolve-WindowsKitTool -ToolName "makeappx.exe" -PreferredArch "arm64"
+Write-Host "    MakePri:  $MakePriExe"
+Write-Host "    MakeAppx: $MakeAppxExe"
 
 Write-Host "==> [arm64 3/5] Staging arm64 MSIX layout & compiling unified resources.pri..."
 if (Test-Path -LiteralPath $StagingDir) {
@@ -216,12 +513,9 @@ foreach ($requiredRel in @(
     }
 }
 
-if ($Version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
-    throw "Invalid MSIX -Version '$Version'. Expected four-part numeric version (Major.Minor.Build.Revision)."
-}
 $StagedManifest = Join-Path $StagingDir "AppxManifest.xml"
 Copy-Item `
-    -LiteralPath (Join-Path $ScriptDir "Package.arm64.appxmanifest") `
+    -LiteralPath $SourceManifestPath `
     -Destination $StagedManifest `
     -Force
 $manifestDoc = [System.Xml.XmlDocument]::new()
@@ -231,12 +525,32 @@ $manifestDoc.Load($StagedManifest)
 $nsMgr = [System.Xml.XmlNamespaceManager]::new($manifestDoc.NameTable)
 $nsMgr.AddNamespace("appx", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
 $identityNode = $manifestDoc.SelectSingleNode("/appx:Package/appx:Identity", $nsMgr)
-if ($null -eq $identityNode) {
-    throw "Staged AppxManifest.xml is missing /Package/Identity."
+$pubDisplayNode = $manifestDoc.SelectSingleNode("/appx:Package/appx:Properties/appx:PublisherDisplayName", $nsMgr)
+if ($null -eq $identityNode -or $null -eq $pubDisplayNode) {
+    throw "Staged AppxManifest.xml is missing /Package/Identity or /Package/Properties/PublisherDisplayName."
 }
+$manifestChanged = $false
 if ($identityNode.GetAttribute("Version") -ne $Version) {
     Write-Host "    Patching staged AppxManifest.xml Identity/@Version: $($identityNode.GetAttribute('Version')) -> $Version"
     $identityNode.SetAttribute("Version", $Version)
+    $manifestChanged = $true
+}
+if ($identityNode.GetAttribute("Name") -ne $EffectiveIdentityName) {
+    Write-Host "    Patching staged AppxManifest.xml Identity/@Name: $($identityNode.GetAttribute('Name')) -> $EffectiveIdentityName"
+    $identityNode.SetAttribute("Name", $EffectiveIdentityName)
+    $manifestChanged = $true
+}
+if ($identityNode.GetAttribute("Publisher") -ne $EffectivePublisher) {
+    Write-Host "    Patching staged AppxManifest.xml Identity/@Publisher: $($identityNode.GetAttribute('Publisher')) -> $EffectivePublisher"
+    $identityNode.SetAttribute("Publisher", $EffectivePublisher)
+    $manifestChanged = $true
+}
+if ($pubDisplayNode.InnerText -ne $EffectivePublisherDisplayName) {
+    Write-Host "    Patching staged AppxManifest.xml Properties/PublisherDisplayName -> $EffectivePublisherDisplayName"
+    $pubDisplayNode.InnerText = $EffectivePublisherDisplayName
+    $manifestChanged = $true
+}
+if ($manifestChanged) {
     $manifestDoc.Save($StagedManifest)
 }
 
@@ -295,10 +609,32 @@ if ($LASTEXITCODE -ne 0) {
 
 Remove-Item -LiteralPath $StringsStage -Recurse -Force
 
+# Normalize staged file timestamps to SOURCE_DATE_EPOCH prior to makeappx pack.
+foreach ($stagedFile in @(Get-ChildItem -LiteralPath $StagingDir -Recurse -File)) {
+    [System.IO.File]::SetLastWriteTimeUtc($stagedFile.FullName, $EpochUtc)
+}
+
 Write-Host "==> [arm64 4/5] Packing $OutMsixName with strict makeappx.exe (no /nv)..."
 & $MakeAppxExe pack /o /h SHA256 /d $StagingDir /p $OutMsix
 if ($LASTEXITCODE -ne 0) {
     throw "makeappx.exe pack (arm64) failed with exit code $LASTEXITCODE"
+}
+[System.IO.File]::SetLastWriteTimeUtc($OutMsix, $EpochUtc)
+
+if ($EmitSymbols) {
+    Write-Host "==> Packing deterministic arm64 debug symbols archive: $OutAppxSymName..."
+    $pdbEntries = @{
+        "totaldrop-winui.pdb"        = (Join-Path $PublishDir "totaldrop-winui.pdb")
+        "totaldrop_windows_ffi.pdb"  = (Join-Path $TargetReleaseDir "totaldrop_windows_ffi.pdb")
+        "totaldrop_explorer_ext.pdb" = (Join-Path $TargetReleaseDir "totaldrop_explorer_ext.pdb")
+    }
+    foreach ($pdbKey in ($pdbEntries.Keys | Sort-Object)) {
+        $pdbPath = [string]$pdbEntries[$pdbKey]
+        if (-not (Test-Path -LiteralPath $pdbPath) -or (Get-Item -LiteralPath $pdbPath).Length -le 0) {
+            throw "Expected non-empty PDB symbol file missing for -EmitSymbols: $pdbPath"
+        }
+    }
+    New-DeterministicZipArchive -DestinationPath $OutAppxSym -EntryMap $pdbEntries -EpochSeconds $SourceDateEpoch
 }
 
 if ($CreateStoreBundle) {
@@ -312,11 +648,15 @@ if ($CreateStoreBundle) {
     New-Item -ItemType Directory -Force -Path $BundleInputDir | Out-Null
     Copy-Item -LiteralPath $X64Msix -Destination $BundleInputDir -Force
     Copy-Item -LiteralPath $OutMsix -Destination $BundleInputDir -Force
+    foreach ($bundleInputFile in @(Get-ChildItem -LiteralPath $BundleInputDir -File)) {
+        [System.IO.File]::SetLastWriteTimeUtc($bundleInputFile.FullName, $EpochUtc)
+    }
 
     & $MakeAppxExe bundle /o /bv $Version /d $BundleInputDir /p $OutBundle
     if ($LASTEXITCODE -ne 0) {
         throw "makeappx.exe bundle failed with exit code $LASTEXITCODE"
     }
+    [System.IO.File]::SetLastWriteTimeUtc($OutBundle, $EpochUtc)
     Write-Host "==> Built multi-arch Store bundle: $OutBundle"
 }
 
@@ -325,12 +665,13 @@ $TargetName = Split-Path -Leaf $TargetArtifact
 
 if ($SelfSignEphemeral) {
     $SignToolExe = Resolve-WindowsKitTool -ToolName "signtool.exe" -PreferredArch "arm64"
-    Write-Host "==> Signing CI test artifact with ephemeral zero-PFX self-signed cert (ADR 0016)..."
+    Write-Host "==> Signing CI test artifact with ephemeral zero-PFX self-signed cert (Subject: $EffectivePublisher)..."
+    Write-Host "    SignTool: $SignToolExe"
     $Cert = $null
     try {
         $Cert = New-SelfSignedCertificate `
             -Type Custom `
-            -Subject "CN=TotalDrop" `
+            -Subject $EffectivePublisher `
             -KeyUsage DigitalSignature `
             -KeyAlgorithm RSA `
             -KeyLength 2048 `
@@ -349,14 +690,33 @@ if ($SelfSignEphemeral) {
             Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($Cert.Thumbprint)" -Force
         }
     }
+} else {
+    Write-Host "==> Skipping ephemeral signing (unsigned Store-ready artifact)."
 }
 
-$HashHex = (Get-FileHash -Algorithm SHA256 -LiteralPath $TargetArtifact).Hash.ToLowerInvariant()
+$ArtifactsToHash = [System.Collections.Generic.List[string]]::new()
+$ArtifactsToHash.Add($TargetName)
+if ($EmitSymbols) {
+    $ArtifactsToHash.Add($OutAppxSymName)
+}
+$ArtifactsToHash.Sort([System.StringComparer]::Ordinal)
+
+$ChecksumLines = [System.Collections.Generic.List[string]]::new()
+foreach ($artName in $ArtifactsToHash) {
+    $artPath = Join-Path $ResolvedOutDir $artName
+    $hashHex = (Get-FileHash -Algorithm SHA256 -LiteralPath $artPath).Hash.ToLowerInvariant()
+    $ChecksumLines.Add("$hashHex  $artName")
+}
 $ChecksumsPath = Join-Path $ResolvedOutDir "SHA256SUMS"
 [System.IO.File]::WriteAllText(
     $ChecksumsPath,
-    "$HashHex  $TargetName`n",
+    ($ChecksumLines -join "`n") + "`n",
     [System.Text.UTF8Encoding]::new($false)
 )
 
-Write-Host "==> Built arm64 artifact: $TargetArtifact (SHA-256: $HashHex)"
+$TargetHashHex = (Get-FileHash -Algorithm SHA256 -LiteralPath $TargetArtifact).Hash.ToLowerInvariant()
+Write-Host "==> Built arm64 artifact: $TargetArtifact (SHA-256: $TargetHashHex)"
+if ($EmitSymbols) {
+    $SymHashHex = (Get-FileHash -Algorithm SHA256 -LiteralPath $OutAppxSym).Hash.ToLowerInvariant()
+    Write-Host "==> Built arm64 Symbols: $OutAppxSym (SHA-256: $SymHashHex)"
+}

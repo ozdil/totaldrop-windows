@@ -2,10 +2,11 @@
 # SPDX-FileCopyrightText: 2026 The TotalDrop Contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Enforce version alignment and CLSID invariants across totaldrop-windows."""
+"""Enforce version alignment, CLSID invariants, and Microsoft Store MSIX rules across totaldrop-windows."""
 
 from __future__ import annotations
 
+import argparse
 import re
 import subprocess
 import sys
@@ -20,9 +21,13 @@ APP_VERSION = "0.1.0-beta.1"
 MSIX_VERSION = "0.1.1.0"
 CANONICAL_CLSID = "8F6E3D72-4B9A-4E1C-9D3A-7C2F5A81E4B0"
 TOAST_ACTIVATOR_CLSID = "7DF2CCED-0448-4849-A140-41CD106EAA9B"
+UNSIGNED_PACKAGE_OID = "2.25.311729368913984317654407730594956997722"
 BARE_GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+IDENTITY_NAME_RE = re.compile(r"^[A-Za-z0-9.-]{3,50}$")
+RDN_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?\d+(?:\.\d+)+)\s*=\s*\S.*$")
+QUAD_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$", re.ASCII)
 
 # Split forbidden literals so this script never matches itself if scanned naively.
 FORBIDDEN_LITERALS: tuple[tuple[str, str], ...] = (
@@ -31,14 +36,141 @@ FORBIDDEN_LITERALS: tuple[tuple[str, str], ...] = (
     ("8E6D76B4-" + "54A9-4D92-9A57-2F7D25F8B216", "bogus Explorer COM CLSID"),
 )
 
+SKIP_WALK_DIRS: frozenset[str] = frozenset({".git", "target", "dist", "bin", "obj", "__pycache__"})
+
 
 def expect_eq(errors: list[str], label: str, actual: object, expected: object) -> None:
     if actual != expected:
         errors.append(f"{label}: expected {expected!r}, got {actual!r}")
 
 
-def check_core_bucket(errors: list[str]) -> None:
-    root_toml = tomllib.loads((REPO_ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+def validate_msix_version_quad(
+    version: str,
+    label: str,
+    errors: list[str],
+    *,
+    require_store_rules: bool,
+) -> bool:
+    if not isinstance(version, str) or not QUAD_RE.fullmatch(version):
+        errors.append(
+            f"{label}: invalid MSIX version {version!r} (expected 4-part numeric Major.Minor.Build.Revision)"
+        )
+        return False
+
+    parts = version.split(".")
+    nums: list[int] = []
+    for part in parts:
+        if len(part) > 1 and part.startswith("0"):
+            errors.append(
+                f"{label}: invalid MSIX version {version!r} (leading zeros not allowed in {part!r})"
+            )
+            return False
+        val = int(part)
+        if val < 0 or val > 65535:
+            errors.append(
+                f"{label}: invalid MSIX version {version!r} "
+                f"(component {val} outside 0..=65535 uint16 quad bounds)"
+            )
+            return False
+        nums.append(val)
+
+    major, _minor, _build, revision = nums
+    ok = True
+    if require_store_rules:
+        if major < 1:
+            errors.append(
+                f"{label}: Store MSIX version {version!r} violates Microsoft Store Major >= 1 requirement"
+            )
+            ok = False
+        if revision != 0:
+            errors.append(
+                f"{label}: Store MSIX version {version!r} violates Microsoft Store Revision == 0 requirement"
+            )
+            ok = False
+    return ok
+
+
+def validate_store_msix_version(version: str, label: str, errors: list[str]) -> bool:
+    return validate_msix_version_quad(version, label, errors, require_store_rules=True)
+
+
+def validate_x500_publisher(publisher: str, label: str, errors: list[str]) -> bool:
+    if not isinstance(publisher, str) or not publisher.strip():
+        errors.append(f"{label}: Publisher must be a non-empty X.500 CN=... distinguished name")
+        return False
+    if len(publisher) > 8192:
+        errors.append(f"{label}: Publisher exceeds 8192 characters")
+        return False
+
+    for ch in publisher:
+        cp = ord(ch)
+        if (
+            cp < 0x20
+            or cp == 0x7F
+            or 0x202A <= cp <= 0x202E
+            or 0x2066 <= cp <= 0x2069
+            or cp == 0x061C
+        ):
+            errors.append(
+                f"{label}: Publisher contains forbidden control or Bidi override character U+{cp:04X}"
+            )
+            return False
+
+    if UNSIGNED_PACKAGE_OID in publisher.lower():
+        errors.append(
+            f"{label}: Publisher contains forbidden unsigned-package OID {UNSIGNED_PACKAGE_OID}"
+        )
+        return False
+
+    rdns: list[str] = []
+    buf: list[str] = []
+    in_quotes = False
+    escaped = False
+    for ch in publisher:
+        if escaped:
+            buf.append(ch)
+            escaped = False
+            continue
+        if ch == "\\":
+            buf.append(ch)
+            escaped = True
+            continue
+        if ch == '"':
+            in_quotes = not in_quotes
+            buf.append(ch)
+            continue
+        if ch == "," and not in_quotes:
+            rdns.append("".join(buf).strip())
+            buf.clear()
+            continue
+        buf.append(ch)
+
+    if in_quotes or escaped:
+        errors.append(f"{label}: malformed X.500 Publisher {publisher!r} (unterminated quote or escape)")
+        return False
+    rdns.append("".join(buf).strip())
+
+    has_cn = False
+    for rdn in rdns:
+        if not rdn or not RDN_RE.fullmatch(rdn):
+            errors.append(
+                f"{label}: malformed X.500 Publisher RDN {rdn!r} in {publisher!r} (expected e.g. 'CN=...')"
+            )
+            return False
+        key, val = rdn.split("=", 1)
+        if key.strip().upper() == "CN" and val.strip():
+            has_cn = True
+
+    if not has_cn:
+        errors.append(
+            f"{label}: X.500 Publisher {publisher!r} must include a non-empty 'CN=' attribute"
+        )
+        return False
+    return True
+
+
+def check_core_bucket(repo_root: Path, errors: list[str]) -> None:
+    root_toml = tomllib.loads((repo_root / "Cargo.toml").read_text(encoding="utf-8"))
     expect_eq(
         errors,
         "Cargo.toml [workspace.package].version",
@@ -54,7 +186,7 @@ def check_core_bucket(errors: list[str]) -> None:
         "totaldrop-windows-bridge",
     ):
         manifest = tomllib.loads(
-            (REPO_ROOT / "crates" / crate / "Cargo.toml").read_text(encoding="utf-8")
+            (repo_root / "crates" / crate / "Cargo.toml").read_text(encoding="utf-8")
         )
         ver = manifest.get("package", {}).get("version")
         expect_eq(
@@ -65,9 +197,9 @@ def check_core_bucket(errors: list[str]) -> None:
         )
 
 
-def check_ffi_and_csproj(errors: list[str]) -> None:
+def check_ffi_and_csproj(repo_root: Path, errors: list[str]) -> None:
     ffi_toml = tomllib.loads(
-        (REPO_ROOT / "crates" / "totaldrop-windows-ffi" / "Cargo.toml").read_text(
+        (repo_root / "crates" / "totaldrop-windows-ffi" / "Cargo.toml").read_text(
             encoding="utf-8"
         )
     )
@@ -79,7 +211,7 @@ def check_ffi_and_csproj(errors: list[str]) -> None:
     )
 
     ext_toml = tomllib.loads(
-        (REPO_ROOT / "crates" / "totaldrop-explorer-ext" / "Cargo.toml").read_text(
+        (repo_root / "crates" / "totaldrop-explorer-ext" / "Cargo.toml").read_text(
             encoding="utf-8"
         )
     )
@@ -90,7 +222,7 @@ def check_ffi_and_csproj(errors: list[str]) -> None:
         APP_VERSION,
     )
 
-    ext_src = (REPO_ROOT / "crates" / "totaldrop-explorer-ext" / "src" / "lib.rs").read_text(
+    ext_src = (repo_root / "crates" / "totaldrop-explorer-ext" / "src" / "lib.rs").read_text(
         encoding="utf-8"
     )
     if CANONICAL_CLSID not in ext_src:
@@ -98,7 +230,7 @@ def check_ffi_and_csproj(errors: list[str]) -> None:
             f"crates/totaldrop-explorer-ext/src/lib.rs: missing canonical Explorer CLSID {CANONICAL_CLSID}"
         )
 
-    ffi_src = (REPO_ROOT / "crates" / "totaldrop-windows-ffi" / "src" / "lib.rs").read_text(
+    ffi_src = (repo_root / "crates" / "totaldrop-windows-ffi" / "src" / "lib.rs").read_text(
         encoding="utf-8"
     )
     m_core = re.search(r'pub const CORE_VERSION:\s*&str\s*=\s*"([^"]+)"', ffi_src)
@@ -117,7 +249,7 @@ def check_ffi_and_csproj(errors: list[str]) -> None:
     )
 
     csproj_root = ET.fromstring(
-        (REPO_ROOT / "ui-winui3-fluent2" / "TotalDrop.WinUI.csproj").read_text(encoding="utf-8")
+        (repo_root / "ui-winui3-fluent2" / "TotalDrop.WinUI.csproj").read_text(encoding="utf-8")
     )
     for tag, expected in (
         ("Version", APP_VERSION),
@@ -133,7 +265,7 @@ def check_ffi_and_csproj(errors: list[str]) -> None:
             expected,
         )
 
-    main_win = (REPO_ROOT / "ui-winui3-fluent2" / "MainWindow.xaml.cs").read_text(
+    main_win = (repo_root / "ui-winui3-fluent2" / "MainWindow.xaml.cs").read_text(
         encoding="utf-8"
     )
     m_fb = re.search(r'FallbackAppVersion\s*=\s*"([^"]+)"', main_win)
@@ -549,14 +681,131 @@ def _check_manifest_extensions(rel: str, root: ET.Element, errors: list[str]) ->
             )
 
 
-def check_manifests_and_scripts(errors: list[str]) -> None:
+def check_cross_arch_identity_parity(
+    x64_label: str,
+    x64_root: ET.Element,
+    x64_raw: str,
+    arm64_label: str,
+    arm64_root: ET.Element,
+    arm64_raw: str,
+    errors: list[str],
+    *,
+    require_store_rules: bool,
+    require_store_identity: bool = False,
+    allow_test_identity: bool = False,
+    notes: list[str] | None = None,
+) -> tuple[str | None, str | None, str | None]:
+    """Validate x64 & arm64 Identity, X.500 Publisher, unsigned OID ban, Properties parity, and extensions."""
+    appx_ns = "{http://schemas.microsoft.com/appx/manifest/foundation/windows10}"
+
+    extracted: dict[str, dict[str, str]] = {}
+    for arch, label, root, raw_text in (
+        ("x64", x64_label, x64_root, x64_raw),
+        ("arm64", arm64_label, arm64_root, arm64_raw),
+    ):
+        if UNSIGNED_PACKAGE_OID in raw_text.lower():
+            errors.append(
+                f"{label}: contains forbidden unsigned-package OID {UNSIGNED_PACKAGE_OID}"
+            )
+
+        doc_idents = root.findall(f".//{appx_ns}Identity")
+        direct_idents = root.findall(f"{appx_ns}Identity")
+        if len(doc_idents) != 1 or len(direct_idents) != 1:
+            errors.append(
+                f"{label}: must declare exactly 1 top-level <Identity> "
+                f"(doc={len(doc_idents)}, direct={len(direct_idents)})"
+            )
+            continue
+        ident = direct_idents[0]
+        name = ident.attrib.get("Name", "")
+        publisher = ident.attrib.get("Publisher", "")
+        version = ident.attrib.get("Version", "")
+        proc_arch = ident.attrib.get("ProcessorArchitecture", "")
+
+        expect_eq(errors, f"{label} Identity/@ProcessorArchitecture", proc_arch, arch)
+        if not IDENTITY_NAME_RE.fullmatch(name):
+            errors.append(
+                f"{label}: Identity/@Name {name!r} must match {IDENTITY_NAME_RE.pattern}"
+            )
+        validate_x500_publisher(publisher, f"{label} Identity/@Publisher", errors)
+        validate_msix_version_quad(
+            version,
+            f"{label} Identity/@Version",
+            errors,
+            require_store_rules=require_store_rules,
+        )
+
+        props = root.find(f"{appx_ns}Properties")
+        disp_name = ""
+        pub_disp = ""
+        if props is None:
+            errors.append(f"{label}: missing <Properties>")
+        else:
+            dn_el = props.find(f"{appx_ns}DisplayName")
+            pd_el = props.find(f"{appx_ns}PublisherDisplayName")
+            disp_name = dn_el.text.strip() if dn_el is not None and dn_el.text else ""
+            pub_disp = pd_el.text.strip() if pd_el is not None and pd_el.text else ""
+            if not disp_name:
+                errors.append(f"{label}: Properties/DisplayName must be non-empty")
+            if not pub_disp:
+                errors.append(f"{label}: Properties/PublisherDisplayName must be non-empty")
+
+        _check_manifest_extensions(label, root, errors)
+        extracted[arch] = {
+            "name": name,
+            "publisher": publisher,
+            "version": version,
+            "display_name": disp_name,
+            "publisher_display_name": pub_disp,
+        }
+
+    if "x64" not in extracted or "arm64" not in extracted:
+        return (None, None, None)
+
+    x64_info = extracted["x64"]
+    arm64_info = extracted["arm64"]
+    for field, field_label in (
+        ("name", "Identity/@Name"),
+        ("publisher", "Identity/@Publisher"),
+        ("version", "Identity/@Version"),
+        ("display_name", "Properties/DisplayName"),
+        ("publisher_display_name", "Properties/PublisherDisplayName"),
+    ):
+        if x64_info[field] != arm64_info[field]:
+            errors.append(
+                f"cross-arch parity mismatch on {field_label}: "
+                f"x64={x64_info[field]!r} vs arm64={arm64_info[field]!r}"
+            )
+
+    if require_store_rules:
+        is_placeholder = (
+            x64_info["publisher"] == "CN=TotalDrop"
+            or x64_info["name"] == "TotalDrop.TotalDrop"
+        )
+        if is_placeholder:
+            if require_store_identity:
+                errors.append(
+                    "Store identity required (--require-store-identity): refusing placeholder "
+                    f"Name={x64_info['name']!r}, Publisher={x64_info['publisher']!r}"
+                )
+            elif not allow_test_identity and notes is not None:
+                notes.append(
+                    f"note: manifests still use temporary test identity "
+                    f"(Name={x64_info['name']!r}, Publisher={x64_info['publisher']!r}); "
+                    "pass --require-store-identity to reject placeholders before Partner Center submission."
+                )
+
+    return (x64_info["version"], x64_info["name"], x64_info["publisher"])
+
+
+def check_manifests_and_scripts(repo_root: Path, errors: list[str]) -> None:
     if not re.fullmatch(r"\d+\.\d+\.\d+\.0", MSIX_VERSION):
         errors.append(
             f"MSIX_VERSION {MSIX_VERSION!r} must be 4-part with Revision == 0 for Microsoft Store"
         )
 
     app_manifest = ET.fromstring(
-        (REPO_ROOT / "ui-winui3-fluent2" / "app.manifest").read_text(encoding="utf-8")
+        (repo_root / "ui-winui3-fluent2" / "app.manifest").read_text(encoding="utf-8")
     )
     asm_id = app_manifest.find("{urn:schemas-microsoft-com:asm.v1}assemblyIdentity")
     expect_eq(
@@ -566,13 +815,15 @@ def check_manifests_and_scripts(errors: list[str]) -> None:
         MSIX_VERSION,
     )
 
-    appx_ns = "{http://schemas.microsoft.com/appx/manifest/foundation/windows10}"
+    x64_rel = "target-x86_64/Package.x64.appxmanifest"
+    arm64_rel = "target-arm64/Package.arm64.appxmanifest"
+    x64_raw = (repo_root / x64_rel).read_text(encoding="utf-8")
+    arm64_raw = (repo_root / arm64_rel).read_text(encoding="utf-8")
+    x64_root = ET.fromstring(x64_raw)
+    arm64_root = ET.fromstring(arm64_raw)
 
-    for rel, expected_arch in (
-        ("target-x86_64/Package.x64.appxmanifest", "x64"),
-        ("target-arm64/Package.arm64.appxmanifest", "arm64"),
-    ):
-        root = ET.fromstring((REPO_ROOT / rel).read_text(encoding="utf-8"))
+    appx_ns = "{http://schemas.microsoft.com/appx/manifest/foundation/windows10}"
+    for rel, root in ((x64_rel, x64_root), (arm64_rel, arm64_root)):
         ident = root.find(f"{appx_ns}Identity")
         expect_eq(
             errors,
@@ -580,16 +831,20 @@ def check_manifests_and_scripts(errors: list[str]) -> None:
             ident.attrib.get("Version") if ident is not None else None,
             MSIX_VERSION,
         )
-        expect_eq(
-            errors,
-            f"{rel} Identity/@ProcessorArchitecture",
-            ident.attrib.get("ProcessorArchitecture") if ident is not None else None,
-            expected_arch,
-        )
-        _check_manifest_extensions(rel, root, errors)
+
+    check_cross_arch_identity_parity(
+        x64_rel,
+        x64_root,
+        x64_raw,
+        arm64_rel,
+        arm64_root,
+        arm64_raw,
+        errors,
+        require_store_rules=False,
+    )
 
     for rel in ("target-x86_64/build-x64.ps1", "target-arm64/build-arm64.ps1"):
-        text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+        text = (repo_root / rel).read_text(encoding="utf-8")
         m_ver = re.search(r'\[string\]\$Version\s*=\s*"([^"]+)"', text)
         expect_eq(
             errors,
@@ -602,7 +857,7 @@ def check_manifests_and_scripts(errors: list[str]) -> None:
         ("target-x86_64/winget/app.totaldrop.TotalDrop.x64.yaml", "x64"),
         ("target-arm64/winget/app.totaldrop.TotalDrop.arm64.yaml", "arm64"),
     ):
-        text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+        text = (repo_root / rel).read_text(encoding="utf-8")
         m_pkg = re.search(r"^PackageVersion:\s*(\S+)\s*$", text, re.MULTILINE)
         expect_eq(
             errors,
@@ -615,7 +870,7 @@ def check_manifests_and_scripts(errors: list[str]) -> None:
             errors.append(f"{rel}: InstallerUrl does not reference {expected_msix}")
 
 
-def check_subplatforms_and_workflows(errors: list[str]) -> None:
+def check_subplatforms_and_workflows(repo_root: Path, errors: list[str]) -> None:
     expected_artifacts: dict[tuple[str, str], str] = {
         ("msix", "x86_64"): f"TotalDrop_{MSIX_VERSION}_x64.msix",
         ("msix", "arm64"): f"TotalDrop_{MSIX_VERSION}_arm64.msix",
@@ -626,13 +881,13 @@ def check_subplatforms_and_workflows(errors: list[str]) -> None:
     }
 
     for (fmt, arch), expected_artifact in sorted(expected_artifacts.items()):
-        unit_dir = REPO_ROOT / "subplatforms" / fmt / arch
+        unit_dir = repo_root / "subplatforms" / fmt / arch
         recipe_path = unit_dir / "RECIPE.toml"
         data = tomllib.loads(recipe_path.read_text(encoding="utf-8"))
-        expect_eq(errors, f"{recipe_path.relative_to(REPO_ROOT)} version", data.get("version"), APP_VERSION)
+        expect_eq(errors, f"{recipe_path.relative_to(repo_root)} version", data.get("version"), APP_VERSION)
         expect_eq(
             errors,
-            f"{recipe_path.relative_to(REPO_ROOT)} artifact_name",
+            f"{recipe_path.relative_to(repo_root)} artifact_name",
             data.get("artifact_name"),
             expected_artifact,
         )
@@ -640,23 +895,26 @@ def check_subplatforms_and_workflows(errors: list[str]) -> None:
             script_path = unit_dir / script_name
             if expected_artifact not in script_path.read_text(encoding="utf-8"):
                 errors.append(
-                    f"{script_path.relative_to(REPO_ROOT)}: missing expected artifact {expected_artifact}"
+                    f"{script_path.relative_to(repo_root)}: missing expected artifact {expected_artifact}"
                 )
-        workflow_path = REPO_ROOT / data["workflow"]
+        workflow_path = repo_root / data["workflow"]
         if expected_artifact not in workflow_path.read_text(encoding="utf-8"):
             errors.append(
-                f"{workflow_path.relative_to(REPO_ROOT)}: missing expected artifact {expected_artifact}"
+                f"{workflow_path.relative_to(repo_root)}: missing expected artifact {expected_artifact}"
             )
 
-    ci_text = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    expected_ci_msix = f"TotalDrop_{MSIX_VERSION}_x64.msix"
-    if expected_ci_msix not in ci_text:
-        errors.append(f".github/workflows/ci.yml: missing expected x64 MSIX filename {expected_ci_msix}")
+    ci_text = (repo_root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    for arch_tag in ("x64", "arm64"):
+        expected_ci_msix = f"TotalDrop_{MSIX_VERSION}_{arch_tag}.msix"
+        if expected_ci_msix not in ci_text:
+            errors.append(
+                f".github/workflows/ci.yml: missing expected {arch_tag} MSIX filename {expected_ci_msix}"
+            )
     expected_ci_flag = f"--expected-version {MSIX_VERSION}"
     if expected_ci_flag not in ci_text:
         errors.append(f".github/workflows/ci.yml: missing `{expected_ci_flag}`")
 
-    verifier_text = (REPO_ROOT / "tools" / "verify-msix-artifact.py").read_text(encoding="utf-8")
+    verifier_text = (repo_root / "tools" / "verify-msix-artifact.py").read_text(encoding="utf-8")
     for const_name, expected_val in (
         ("EXPECTED_APP_VERSION", APP_VERSION),
         ("EXPECTED_CORE_VERSION", CORE_VERSION),
@@ -671,23 +929,38 @@ def check_subplatforms_and_workflows(errors: list[str]) -> None:
         )
 
 
-def check_readme_and_forbidden_literals(errors: list[str]) -> None:
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+def _iter_repo_text_files(repo_root: Path) -> list[str]:
+    if (repo_root / ".git").exists():
+        ls_proc = subprocess.run(
+            ["git", "ls-files"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return [rel for rel in ls_proc.stdout.splitlines() if rel]
+
+    rel_paths: list[str] = []
+    for path in sorted(repo_root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(repo_root)
+        if any(part in SKIP_WALK_DIRS for part in rel.parts):
+            continue
+        rel_paths.append(rel.as_posix())
+    return rel_paths
+
+
+def check_readme_and_forbidden_literals(repo_root: Path, errors: list[str]) -> None:
+    readme = (repo_root / "README.md").read_text(encoding="utf-8")
     if CANONICAL_CLSID not in readme:
         errors.append(f"README.md: missing canonical Explorer COM CLSID {{{CANONICAL_CLSID}}}")
 
-    ls_proc = subprocess.run(
-        ["git", "ls-files"],
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    for rel in ls_proc.stdout.splitlines():
+    for rel in _iter_repo_text_files(repo_root):
         if not rel or rel in ("Cargo.lock", "tools/check-versions.py"):
             continue
-        path = REPO_ROOT / rel
-        if not path.is_file() or path.suffix.lower() in (".png", ".ico", ".pri", ".msix"):
+        path = repo_root / rel
+        if not path.is_file() or path.suffix.lower() in (".png", ".ico", ".pri", ".msix", ".msixbundle", ".msixupload", ".appxsym"):
             continue
         try:
             text = path.read_text(encoding="utf-8")
@@ -698,13 +971,183 @@ def check_readme_and_forbidden_literals(errors: list[str]) -> None:
                 errors.append(f"{rel}: contains forbidden {reason} ({literal!r})")
 
 
-def main() -> int:
+def _resolve_manifest_pair(repo_root: Path) -> tuple[Path | None, Path | None]:
+    x64_candidates = (
+        repo_root / "target-x86_64" / "Package.x64.appxmanifest",
+        repo_root / "Package.x64.appxmanifest",
+    )
+    arm64_candidates = (
+        repo_root / "target-arm64" / "Package.arm64.appxmanifest",
+        repo_root / "Package.arm64.appxmanifest",
+    )
+    x64_path = next((p for p in x64_candidates if p.is_file()), None)
+    arm64_path = next((p for p in arm64_candidates if p.is_file()), None)
+    return (x64_path, arm64_path)
+
+
+def check_store_mode(
+    repo_root: Path,
+    store_version: str | None,
+    require_store_identity: bool,
+    allow_test_identity: bool,
+    errors: list[str],
+    notes: list[str],
+) -> tuple[str | None, str | None, str | None]:
+    if store_version is not None:
+        validate_store_msix_version(store_version, "--store-version", errors)
+
+    x64_path, arm64_path = _resolve_manifest_pair(repo_root)
+    if x64_path is None:
+        errors.append(
+            f"{repo_root}: missing Package.x64.appxmanifest (checked target-x86_64/ and root)"
+        )
+    if arm64_path is None:
+        errors.append(
+            f"{repo_root}: missing Package.arm64.appxmanifest (checked target-arm64/ and root)"
+        )
+    if x64_path is None or arm64_path is None:
+        return (None, None, None)
+
+    x64_label = x64_path.relative_to(repo_root).as_posix()
+    arm64_label = arm64_path.relative_to(repo_root).as_posix()
+    try:
+        x64_raw = x64_path.read_text(encoding="utf-8")
+        x64_root = ET.fromstring(x64_raw)
+    except (OSError, ET.ParseError) as exc:
+        errors.append(f"{x64_label}: failed to parse XML: {exc}")
+        return (None, None, None)
+    try:
+        arm64_raw = arm64_path.read_text(encoding="utf-8")
+        arm64_root = ET.fromstring(arm64_raw)
+    except (OSError, ET.ParseError) as exc:
+        errors.append(f"{arm64_label}: failed to parse XML: {exc}")
+        return (None, None, None)
+
+    manifest_ver, ident_name, publisher = check_cross_arch_identity_parity(
+        x64_label,
+        x64_root,
+        x64_raw,
+        arm64_label,
+        arm64_root,
+        arm64_raw,
+        errors,
+        require_store_rules=True,
+        require_store_identity=require_store_identity,
+        allow_test_identity=allow_test_identity,
+        notes=notes,
+    )
+
+    effective_ver = store_version if store_version is not None else manifest_ver
+    if store_version is not None and manifest_ver is not None and manifest_ver != store_version:
+        errors.append(
+            f"manifest Identity/@Version ({manifest_ver!r}) does not match --store-version ({store_version!r})"
+        )
+
+    # Validate companion app.manifest and build-{x64,arm64}.ps1 when present under repo_root.
+    if effective_ver is not None:
+        app_manifest_path = repo_root / "ui-winui3-fluent2" / "app.manifest"
+        if app_manifest_path.is_file():
+            try:
+                app_manifest = ET.fromstring(app_manifest_path.read_text(encoding="utf-8"))
+                asm_id = app_manifest.find("{urn:schemas-microsoft-com:asm.v1}assemblyIdentity")
+                expect_eq(
+                    errors,
+                    "ui-winui3-fluent2/app.manifest assemblyIdentity/@version",
+                    asm_id.attrib.get("version") if asm_id is not None else None,
+                    effective_ver,
+                )
+            except ET.ParseError as exc:
+                errors.append(f"ui-winui3-fluent2/app.manifest: invalid XML: {exc}")
+
+        for rel in ("target-x86_64/build-x64.ps1", "target-arm64/build-arm64.ps1"):
+            script_path = repo_root / rel
+            if script_path.is_file():
+                text = script_path.read_text(encoding="utf-8")
+                m_ver = re.search(r'\[string\]\$Version\s*=\s*"([^"]+)"', text)
+                expect_eq(
+                    errors,
+                    f"{rel} default $Version",
+                    m_ver.group(1) if m_ver else None,
+                    effective_ver,
+                )
+
+    return (effective_ver, ident_name, publisher)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Verify version alignment, CLSID invariants, and Microsoft Store MSIX rules."
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=REPO_ROOT,
+        help="Repository or fixture root directory (default: repo root).",
+    )
+    parser.add_argument(
+        "--store",
+        action="store_true",
+        help="Validate Package.{x64,arm64}.appxmanifest (and companion files when present) under Microsoft Store rules.",
+    )
+    parser.add_argument(
+        "--store-version",
+        default=None,
+        help="Validate an explicit 4-part Microsoft Store MSIX version (Major >= 1, Revision == 0).",
+    )
+    parser.add_argument(
+        "--require-store-identity",
+        action="store_true",
+        help="With --store, reject temporary CN=TotalDrop / TotalDrop.TotalDrop test identity.",
+    )
+    parser.add_argument(
+        "--allow-test-identity",
+        action="store_true",
+        help="With --store, explicitly permit temporary CN=TotalDrop / TotalDrop.TotalDrop dry-run identity.",
+    )
+    args = parser.parse_args(argv)
+
+    if args.require_store_identity and args.allow_test_identity:
+        parser.error("--require-store-identity and --allow-test-identity are mutually exclusive.")
+
     errors: list[str] = []
-    check_core_bucket(errors)
-    check_ffi_and_csproj(errors)
-    check_manifests_and_scripts(errors)
-    check_subplatforms_and_workflows(errors)
-    check_readme_and_forbidden_literals(errors)
+    notes: list[str] = []
+    repo_root = args.root.resolve()
+
+    if args.store_version is not None and not args.store:
+        validate_store_msix_version(args.store_version, "--store-version", errors)
+        if errors:
+            for err in errors:
+                print(f"error: {err}", file=sys.stderr)
+            return 1
+        print(f"store version check OK: msix={args.store_version} (Major >= 1, Revision == 0, uint16 quad).")
+        return 0
+
+    if args.store:
+        ver, ident_name, publisher = check_store_mode(
+            repo_root,
+            args.store_version,
+            args.require_store_identity,
+            args.allow_test_identity,
+            errors,
+            notes,
+        )
+        if errors:
+            for err in errors:
+                print(f"error: {err}", file=sys.stderr)
+            return 1
+        for note in notes:
+            print(note)
+        print(
+            f"store versions check OK: msix={ver}, identity={ident_name}, "
+            f"publisher={publisher}, cross-arch parity verified."
+        )
+        return 0
+
+    check_core_bucket(repo_root, errors)
+    check_ffi_and_csproj(repo_root, errors)
+    check_manifests_and_scripts(repo_root, errors)
+    check_subplatforms_and_workflows(repo_root, errors)
+    check_readme_and_forbidden_literals(repo_root, errors)
 
     if errors:
         for err in errors:

@@ -2,15 +2,18 @@
 # SPDX-FileCopyrightText: 2026 The TotalDrop Contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Deep structural, PRI, PE32+ hardening, CRT, COM, manifest, and live C ABI verifier for TotalDrop MSIX packages.
+"""Deep structural, PRI, PE32+ hardening, CRT, COM, manifest, bundle, upload, and live C ABI verifier for TotalDrop MSIX packages.
 
 Uses only the Python standard library so it runs cleanly on GitHub Actions
-`windows-latest` and `windows-11-arm` runners without extra dependencies.
+`ubuntu-latest`, `windows-latest`, and `windows-11-arm` runners without extra dependencies.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import io
+import platform
 import re
 import struct
 import subprocess
@@ -25,10 +28,17 @@ EXPECTED_CORE_VERSION = "0.2.0-beta.5"
 EXPECTED_MSIX_VERSION = "0.1.1.0"
 EXPECTED_EXPLORER_CLSID = "8f6e3d72-4b9a-4e1c-9d3a-7c2f5a81e4b0"
 EXPECTED_TOAST_CLSID = "7df2cced-0448-4849-a140-41cd106eaa9b"
+UNSIGNED_PACKAGE_OID = "2.25.311729368913984317654407730594956997722"
 
 BARE_GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+QUAD_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$", re.ASCII)
+IDENTITY_NAME_RE = re.compile(r"^[A-Za-z0-9.-]{3,50}$")
+RDN_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?\d+(?:\.\d+)+)\s*=\s*\S.*$")
+
+APPX_NS = "{http://schemas.microsoft.com/appx/manifest/foundation/windows10}"
+BUNDLE_NS = "{http://schemas.microsoft.com/appx/2013/bundle}"
 
 REQUIRED_FFI_EXPORTS: tuple[str, ...] = (
     # Phase 1 (6 exports)
@@ -71,6 +81,25 @@ REQUIRED_FFI_EXPORTS: tuple[str, ...] = (
 REQUIRED_EXPLORER_EXT_EXPORTS: tuple[str, ...] = (
     "DllGetClassObject",
     "DllCanUnloadNow",
+)
+
+REQUIRED_SYMBOL_PDBS: frozenset[str] = frozenset(
+    {
+        "totaldrop-winui.pdb",
+        "totaldrop_windows_ffi.pdb",
+        "totaldrop_explorer_ext.pdb",
+    }
+)
+
+FORBIDDEN_KEY_EXTS: tuple[str, ...] = (
+    ".pfx",
+    ".p12",
+    ".cer",
+    ".snk",
+    ".key",
+    ".pem",
+    ".jks",
+    ".keystore",
 )
 
 FORBIDDEN_CRT_DLLS: tuple[str, ...] = (
@@ -548,6 +577,178 @@ assert mod.DllCanUnloadNow() == 0, "expected S_OK after releasing all COM instan
 """
 
 
+def _python_host_arch() -> str | None:
+    machine = platform.machine().lower()
+    if machine in ("amd64", "x86_64"):
+        return "x64"
+    if machine in ("arm64", "aarch64"):
+        return "arm64"
+    return None
+
+
+def _validate_msix_version_quad(version: str, label: str, *, store_mode: bool) -> None:
+    if not isinstance(version, str) or not QUAD_RE.fullmatch(version):
+        raise ValueError(
+            f"{label}: invalid MSIX version {version!r} (expected Major.Minor.Build.Revision)"
+        )
+    parts = version.split(".")
+    nums: list[int] = []
+    for part in parts:
+        if len(part) > 1 and part.startswith("0"):
+            raise ValueError(f"{label}: leading zero not permitted in version component {part!r}")
+        val = int(part)
+        if val < 0 or val > 65535:
+            raise ValueError(
+                f"{label}: version component {val} outside 0..=65535 uint16 quad bounds"
+            )
+        nums.append(val)
+    if store_mode:
+        if nums[0] < 1:
+            raise ValueError(
+                f"{label}: Store MSIX version {version!r} violates Microsoft Store Major >= 1 requirement"
+            )
+        if nums[3] != 0:
+            raise ValueError(
+                f"{label}: Store MSIX version {version!r} violates Microsoft Store Revision == 0 requirement"
+            )
+
+
+def _validate_x500_publisher(publisher: str, label: str) -> None:
+    if not isinstance(publisher, str) or not publisher.strip():
+        raise ValueError(f"{label}: Publisher must be a non-empty X.500 CN=... distinguished name")
+    if len(publisher) > 8192:
+        raise ValueError(f"{label}: Publisher exceeds 8192 characters")
+    for ch in publisher:
+        cp = ord(ch)
+        if (
+            cp < 0x20
+            or cp == 0x7F
+            or 0x202A <= cp <= 0x202E
+            or 0x2066 <= cp <= 0x2069
+            or cp == 0x061C
+        ):
+            raise ValueError(f"{label}: Publisher contains forbidden control/Bidi char U+{cp:04X}")
+    if UNSIGNED_PACKAGE_OID in publisher.lower():
+        raise ValueError(
+            f"{label}: Publisher contains forbidden unsigned-package OID {UNSIGNED_PACKAGE_OID}"
+        )
+
+    rdns: list[str] = []
+    buf: list[str] = []
+    in_quotes = False
+    escaped = False
+    for ch in publisher:
+        if escaped:
+            buf.append(ch)
+            escaped = False
+            continue
+        if ch == "\\":
+            buf.append(ch)
+            escaped = True
+            continue
+        if ch == '"':
+            in_quotes = not in_quotes
+            buf.append(ch)
+            continue
+        if ch == "," and not in_quotes:
+            rdns.append("".join(buf).strip())
+            buf.clear()
+            continue
+        buf.append(ch)
+    if in_quotes or escaped:
+        raise ValueError(f"{label}: malformed X.500 Publisher {publisher!r} (unterminated quote/escape)")
+    rdns.append("".join(buf).strip())
+
+    has_cn = False
+    for rdn in rdns:
+        if not rdn or not RDN_RE.fullmatch(rdn):
+            raise ValueError(
+                f"{label}: malformed X.500 Publisher RDN {rdn!r} in {publisher!r} (expected e.g. 'CN=...')"
+            )
+        key, val = rdn.split("=", 1)
+        if key.strip().upper() == "CN" and val.strip():
+            has_cn = True
+    if not has_cn:
+        raise ValueError(f"{label}: X.500 Publisher {publisher!r} must include a non-empty 'CN=' attribute")
+
+
+def _validate_identity_store_policy(
+    name: str,
+    publisher: str,
+    version: str,
+    label: str,
+    *,
+    expected_version: str | None,
+    store_mode: bool,
+    allow_test_identity: bool,
+) -> None:
+    if not IDENTITY_NAME_RE.fullmatch(name):
+        raise ValueError(f"{label}: invalid Identity/@Name {name!r}")
+    _validate_x500_publisher(publisher, f"{label} Identity/@Publisher")
+    _validate_msix_version_quad(version, f"{label} Identity/@Version", store_mode=store_mode)
+    if expected_version is not None and version != expected_version:
+        raise ValueError(
+            f"{label}: Identity/@Version mismatch: {version!r} != {expected_version!r}"
+        )
+    if store_mode and not allow_test_identity:
+        if publisher == "CN=TotalDrop" or name == "TotalDrop.TotalDrop":
+            raise ValueError(
+                f"{label}: Store-mode build refuses placeholder test identity "
+                f"(Name={name!r}, Publisher={publisher!r}); supply Partner Center identity or pass --allow-test-identity"
+            )
+
+
+def _check_opc_zip_entries(
+    zf: zipfile.ZipFile,
+    label: str,
+    *,
+    flat_root_only: bool = False,
+    case_sensitive_unique_paths: tuple[str, ...] = (),
+) -> list[str]:
+    bad_member = zf.testzip()
+    if bad_member is not None:
+        raise ValueError(f"{label}: corrupted ZIP member {bad_member!r}")
+
+    raw_names = zf.namelist()
+    seen_exact: set[str] = set()
+    lower_counts: dict[str, int] = {}
+    for name in raw_names:
+        if name in seen_exact:
+            raise ValueError(f"{label}: duplicate ZIP entry {name!r}")
+        seen_exact.add(name)
+        lower_name = name.lower()
+        lower_counts[lower_name] = lower_counts.get(lower_name, 0) + 1
+
+        if not name or name.startswith("/") or "\\" in name:
+            raise ValueError(f"{label}: unsafe OPC/ZIP entry path {name!r}")
+        if any(ord(ch) < 0x20 or ord(ch) > 0x7E for ch in name):
+            raise ValueError(f"{label}: non-ASCII or control char in ZIP entry name {name!r}")
+        parts = name.split("/")
+        if ".." in parts:
+            raise ValueError(f"{label}: path traversal component in ZIP entry {name!r}")
+        if flat_root_only and ("/" in name):
+            raise ValueError(f"{label}: nested directory entry {name!r} not permitted (flat root files only)")
+
+    for critical_path in case_sensitive_unique_paths:
+        if lower_counts.get(critical_path.lower(), 0) > 1:
+            raise ValueError(
+                f"{label}: case-insensitive duplicate critical manifest entry {critical_path!r}"
+            )
+    return raw_names
+
+
+def _canonicalize_manifest_for_parity(elem: ET.Element) -> tuple[object, ...]:
+    """Return a canonical tree representation ignoring comments/whitespace and ONLY Identity/@ProcessorArchitecture."""
+    attrs: list[tuple[str, str]] = []
+    for k, v in sorted(elem.attrib.items()):
+        if elem.tag == f"{APPX_NS}Identity" and k == "ProcessorArchitecture":
+            continue
+        attrs.append((k, v))
+    text = (elem.text or "").strip()
+    children = tuple(_canonicalize_manifest_for_parity(child) for child in elem)
+    return (elem.tag, tuple(attrs), text, children)
+
+
 def _parse_resource_directory(
     data: bytes, rsrc_off: int, rsrc_size: int
 ) -> tuple[set[int], set[tuple[int, int]]]:
@@ -588,16 +789,15 @@ def _parse_resource_directory(
     return resource_types, resource_ids
 
 
-def parse_pe64(path: Path) -> dict[str, object]:
+def parse_pe64_bytes(data: bytes, label: str) -> dict[str, object]:
     """Parse PE32+ headers, security flags, Debug Dir CET_COMPAT, Load Config, imports, exports, and resources."""
-    data = path.read_bytes()
     if len(data) < 0x40 or data[:2] != b"MZ":
-        raise ValueError(f"{path.name}: missing MZ header")
+        raise ValueError(f"{label}: missing MZ header")
 
     try:
         e_lfanew = struct.unpack_from("<I", data, 0x3C)[0]
         if e_lfanew + 24 > len(data) or data[e_lfanew : e_lfanew + 4] != b"PE\x00\x00":
-            raise ValueError(f"{path.name}: missing PE signature")
+            raise ValueError(f"{label}: missing PE signature")
 
         coff_off = e_lfanew + 4
         machine, num_sections, _, _, _, opt_size, characteristics = struct.unpack_from(
@@ -605,12 +805,12 @@ def parse_pe64(path: Path) -> dict[str, object]:
         )
         opt_off = coff_off + 20
         if opt_off + 2 > len(data):
-            raise ValueError(f"{path.name}: truncated PE optional header")
+            raise ValueError(f"{label}: truncated PE optional header")
         magic = struct.unpack_from("<H", data, opt_off)[0]
         if magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC:
-            raise ValueError(f"{path.name}: expected PE32+ (0x20B), got {magic:#x}")
+            raise ValueError(f"{label}: expected PE32+ (0x20B), got {magic:#x}")
         if opt_size < 112 or opt_off + opt_size > len(data):
-            raise ValueError(f"{path.name}: truncated PE32+ optional header")
+            raise ValueError(f"{label}: truncated PE32+ optional header")
 
         dll_chars = struct.unpack_from("<H", data, opt_off + 70)[0]
         num_rvas = struct.unpack_from("<I", data, opt_off + 108)[0]
@@ -625,7 +825,7 @@ def parse_pe64(path: Path) -> dict[str, object]:
         sections: list[tuple[int, int, int, int]] = []
         sec_off = opt_off + opt_size
         if sec_off + num_sections * 40 > len(data):
-            raise ValueError(f"{path.name}: truncated PE32+ section table")
+            raise ValueError(f"{label}: truncated PE32+ section table")
         for i in range(num_sections):
             entry_off = sec_off + i * 40
             _, v_size, v_addr, raw_size, raw_ptr, _, _, _, _, _ = struct.unpack_from(
@@ -738,7 +938,7 @@ def parse_pe64(path: Path) -> dict[str, object]:
 
         clr_rva, clr_size = data_dir(14)
     except struct.error as exc:
-        raise ValueError(f"{path.name}: truncated or malformed PE32+ binary: {exc}") from exc
+        raise ValueError(f"{label}: truncated or malformed PE32+ binary: {exc}") from exc
 
     return {
         "machine": machine,
@@ -755,9 +955,13 @@ def parse_pe64(path: Path) -> dict[str, object]:
     }
 
 
+def parse_pe64(path: Path) -> dict[str, object]:
+    return parse_pe64_bytes(path.read_bytes(), path.name)
+
+
 def verify_manifest_extensions(manifest_root: ET.Element) -> None:
     """Validate Explorer COM, FileExplorerContextMenus, Toast Activation, runFullTrust, and scoped FirewallRules."""
-    appx_ns = "{http://schemas.microsoft.com/appx/manifest/foundation/windows10}"
+    appx_ns = APPX_NS
     uap_ns = "{http://schemas.microsoft.com/appx/manifest/uap/windows10}"
     com_ns = "{http://schemas.microsoft.com/appx/manifest/com/windows10}"
     desktop_ns = "{http://schemas.microsoft.com/appx/manifest/desktop/windows10}"
@@ -769,7 +973,6 @@ def verify_manifest_extensions(manifest_root: ET.Element) -> None:
     if manifest_root.tag != f"{appx_ns}Package":
         raise ValueError(f"AppxManifest.xml root must be <Package>, got {manifest_root.tag!r}")
 
-    # 1. Single <Applications>/<Application> and single Application/Package <Extensions> containers.
     doc_applications = manifest_root.findall(f".//{appx_ns}Applications")
     direct_applications = manifest_root.findall(f"{appx_ns}Applications")
     if len(doc_applications) != 1 or len(direct_applications) != 1:
@@ -1148,7 +1351,6 @@ def verify_pri_dump(pri_dump_path: Path) -> None:
     if missing:
         raise ValueError(f"resources.pri dump missing expected entries: {missing}")
 
-    # Verify multi-locale string candidates compiled from the 35 .resw files.
     for lang_marker in ('"EN"', '"TR"', '"AR"', '"JA"', '"ZH-HANS"', '"ZH-HANT"'):
         if lang_marker not in upper_text:
             raise ValueError(f"resources.pri dump missing locale candidate {lang_marker}")
@@ -1216,45 +1418,39 @@ def _check_no_forbidden_crt(label: str, pe: dict[str, object]) -> None:
         raise ValueError(f"{label} links dynamic MSVC CRT DLL(s): {bad_crt}")
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Verify packed TotalDrop MSIX archive, PRI dump, PE32+ hardening, COM, and FFI ABI."
-    )
-    parser.add_argument("--msix", type=Path, required=True, help="Path to built .msix archive.")
-    parser.add_argument("--arch", choices=("x64", "arm64"), default="x64")
-    parser.add_argument("--expected-version", default=EXPECTED_MSIX_VERSION)
-    parser.add_argument(
-        "--expect-signed",
-        action="store_true",
-        help="Require AppxSignature.p7x inside the MSIX package.",
-    )
-    parser.add_argument(
-        "--pri-dump",
-        type=Path,
-        default=None,
-        help="Optional MakePri.exe detailed XML dump to inspect.",
-    )
-    args = parser.parse_args(argv)
+def verify_msix_archive(
+    source: Path | bytes,
+    label: str,
+    *,
+    arch: str,
+    expected_version: str | None,
+    expect_signed: bool,
+    store_mode: bool,
+    allow_test_identity: bool,
+    pri_dump: Path | None = None,
+    run_live_smoke: bool = True,
+) -> dict[str, object]:
+    """Deep-verify a single-architecture .msix package (from disk Path or in-memory bytes)."""
+    if isinstance(source, Path):
+        if not source.is_file():
+            raise ValueError(f"MSIX not found: {source}")
+        raw_bytes = source.read_bytes()
+    else:
+        raw_bytes = source
 
-    msix_path = args.msix
-    if not msix_path.is_file():
-        print(f"error: MSIX not found: {msix_path}", file=sys.stderr)
-        return 1
+    if len(raw_bytes) < 4 or raw_bytes[:4] != b"PK\x03\x04":
+        raise ValueError(f"{label}: not a ZIP/OPC archive (magic={raw_bytes[:4]!r})")
 
-    magic = msix_path.read_bytes()[:4]
-    if magic != b"PK\x03\x04":
-        print(f"error: {msix_path} is not a ZIP/OPC archive (magic={magic!r})", file=sys.stderr)
-        return 1
+    expected_machine = IMAGE_FILE_MACHINE_AMD64 if arch == "x64" else IMAGE_FILE_MACHINE_ARM64
 
-    expected_machine = IMAGE_FILE_MACHINE_AMD64 if args.arch == "x64" else IMAGE_FILE_MACHINE_ARM64
-
-    with zipfile.ZipFile(msix_path, "r") as zf:
-        bad_member = zf.testzip()
-        if bad_member is not None:
-            print(f"error: corrupted ZIP member in MSIX: {bad_member}", file=sys.stderr)
-            return 1
-
-        names = set(zf.namelist())
+    with zipfile.ZipFile(io.BytesIO(raw_bytes), "r") as zf:
+        raw_names = _check_opc_zip_entries(
+            zf,
+            label,
+            flat_root_only=False,
+            case_sensitive_unique_paths=("AppxManifest.xml",),
+        )
+        names = set(raw_names)
         required = {
             "AppxManifest.xml",
             "AppxBlockMap.xml",
@@ -1269,35 +1465,32 @@ def main(argv: list[str] | None = None) -> int:
             "Views/ReceivePage.xbf",
             "Views/SettingsPage.xbf",
         }
-        if args.expect_signed:
+        if expect_signed:
             required.add("AppxSignature.p7x")
 
         missing = sorted(required - names)
         if missing:
-            print(f"error: MSIX missing required entries: {missing}", file=sys.stderr)
-            return 1
+            raise ValueError(f"{label}: MSIX missing required entries: {missing}")
 
-        if args.expect_signed and zf.getinfo("AppxSignature.p7x").file_size <= 0:
-            print("error: AppxSignature.p7x is empty", file=sys.stderr)
-            return 1
+        if expect_signed and zf.getinfo("AppxSignature.p7x").file_size <= 0:
+            raise ValueError(f"{label}: AppxSignature.p7x is empty")
 
         asset_entries = {n for n in names if n.startswith("Assets/") and not n.endswith("/")}
         expected_asset_entries = {f"Assets/{name}" for name in EXPECTED_ASSETS}
         if asset_entries != expected_asset_entries:
             missing_assets = sorted(expected_asset_entries - asset_entries)
             extra_assets = sorted(asset_entries - expected_asset_entries)
-            print(
-                f"error: MSIX Assets/ mismatch (expected {len(expected_asset_entries)} canonical Kose assets; "
-                f"missing={missing_assets[:8]}, unexpected={extra_assets[:8]})",
-                file=sys.stderr,
+            raise ValueError(
+                f"{label}: MSIX Assets/ mismatch (expected {len(expected_asset_entries)} canonical Kose assets; "
+                f"missing={missing_assets[:8]}, unexpected={extra_assets[:8]})"
             )
-            return 1
 
         forbidden_entries = [
             n
-            for n in names
+            for n in raw_names
             if n.lower().endswith(".pdb")
             or n.lower().endswith(".resw")
+            or n.lower().endswith(FORBIDDEN_KEY_EXTS)
             or (
                 Path(n.replace("\\", "/")).name.lower().startswith("resources.")
                 and n.lower().endswith(".pri")
@@ -1305,111 +1498,1250 @@ def main(argv: list[str] | None = None) -> int:
             )
         ]
         if forbidden_entries:
-            print(f"error: forbidden staging artifacts packed in MSIX: {forbidden_entries}", file=sys.stderr)
-            return 1
+            raise ValueError(f"{label}: forbidden staging/key artifacts packed in MSIX: {forbidden_entries}")
 
-        # Verify AppxManifest Identity & M3 COM/Toast/Firewall extensions.
-        manifest_root = ET.fromstring(zf.read("AppxManifest.xml"))
-        appx_ns = "{http://schemas.microsoft.com/appx/manifest/foundation/windows10}"
-        ident = manifest_root.find(f"{appx_ns}Identity")
-        if ident is None:
-            print("error: AppxManifest.xml missing <Identity>", file=sys.stderr)
-            return 1
-        if ident.attrib.get("ProcessorArchitecture") != args.arch:
-            print(
-                f"error: AppxManifest arch mismatch: {ident.attrib.get('ProcessorArchitecture')!r} != {args.arch!r}",
-                file=sys.stderr,
+        manifest_raw = zf.read("AppxManifest.xml").decode("utf-8", errors="strict")
+        if UNSIGNED_PACKAGE_OID in manifest_raw.lower():
+            raise ValueError(
+                f"{label}: AppxManifest.xml contains forbidden unsigned-package OID {UNSIGNED_PACKAGE_OID}"
             )
-            return 1
-        if ident.attrib.get("Version") != args.expected_version:
-            print(
-                f"error: AppxManifest version mismatch: {ident.attrib.get('Version')!r} != {args.expected_version!r}",
-                file=sys.stderr,
+        manifest_root = ET.fromstring(manifest_raw)
+
+        doc_idents = manifest_root.findall(f".//{APPX_NS}Identity")
+        direct_idents = manifest_root.findall(f"{APPX_NS}Identity")
+        if len(doc_idents) != 1 or len(direct_idents) != 1:
+            raise ValueError(
+                f"{label}: AppxManifest.xml must declare exactly 1 top-level <Identity> "
+                f"(doc={len(doc_idents)}, direct={len(direct_idents)})"
             )
-            return 1
+        ident = direct_idents[0]
+        actual_arch = ident.attrib.get("ProcessorArchitecture", "")
+        if actual_arch != arch:
+            raise ValueError(f"{label}: AppxManifest arch mismatch: {actual_arch!r} != {arch!r}")
+
+        ident_name = ident.attrib.get("Name", "")
+        ident_pub = ident.attrib.get("Publisher", "")
+        ident_ver = ident.attrib.get("Version", "")
+        _validate_identity_store_policy(
+            ident_name,
+            ident_pub,
+            ident_ver,
+            f"{label} AppxManifest.xml",
+            expected_version=expected_version,
+            store_mode=store_mode,
+            allow_test_identity=allow_test_identity,
+        )
         verify_manifest_extensions(manifest_root)
 
-        with tempfile.TemporaryDirectory(prefix="totaldrop-msix-verify-") as tmp:
-            tmp_dir = Path(tmp)
-            zf.extract("totaldrop_windows_ffi.dll", tmp_dir)
-            zf.extract("totaldrop_explorer_ext.dll", tmp_dir)
-            zf.extract("totaldrop-winui.exe", tmp_dir)
+        ffi_bytes = zf.read("totaldrop_windows_ffi.dll")
+        ext_bytes = zf.read("totaldrop_explorer_ext.dll")
+        exe_bytes = zf.read("totaldrop-winui.exe")
 
-            ffi_path = tmp_dir / "totaldrop_windows_ffi.dll"
-            ext_path = tmp_dir / "totaldrop_explorer_ext.dll"
-            exe_path = tmp_dir / "totaldrop-winui.exe"
+        ffi_pe = parse_pe64_bytes(ffi_bytes, f"{label}:totaldrop_windows_ffi.dll")
+        ext_pe = parse_pe64_bytes(ext_bytes, f"{label}:totaldrop_explorer_ext.dll")
+        exe_pe = parse_pe64_bytes(exe_bytes, f"{label}:totaldrop-winui.exe")
 
-            ffi_pe = parse_pe64(ffi_path)
-            ext_pe = parse_pe64(ext_path)
-            exe_pe = parse_pe64(exe_path)
+        _check_pe_common(f"{label}:totaldrop_windows_ffi.dll", ffi_pe, expected_machine, arch, expect_dll=True)
+        _check_pe_common(f"{label}:totaldrop_explorer_ext.dll", ext_pe, expected_machine, arch, expect_dll=True)
+        _check_pe_common(f"{label}:totaldrop-winui.exe", exe_pe, expected_machine, arch, expect_dll=False)
 
-            _check_pe_common("totaldrop_windows_ffi.dll", ffi_pe, expected_machine, args.arch, expect_dll=True)
-            _check_pe_common("totaldrop_explorer_ext.dll", ext_pe, expected_machine, args.arch, expect_dll=True)
-            _check_pe_common("totaldrop-winui.exe", exe_pe, expected_machine, args.arch, expect_dll=False)
+        for dll_label, dll_pe in (
+            (f"{label}:totaldrop_windows_ffi.dll", ffi_pe),
+            (f"{label}:totaldrop_explorer_ext.dll", ext_pe),
+        ):
+            dep_flags = dll_pe["dependent_load_flags"]
+            if not isinstance(dep_flags, int) or (dep_flags & LOAD_LIBRARY_SEARCH_SYSTEM32) == 0:
+                raise ValueError(f"{dll_label}: missing DependentLoadFlags 0x800 (got {dep_flags!r})")
+            _check_no_forbidden_crt(dll_label, dll_pe)
 
-            for dll_label, dll_pe in (("totaldrop_windows_ffi.dll", ffi_pe), ("totaldrop_explorer_ext.dll", ext_pe)):
-                dep_flags = dll_pe["dependent_load_flags"]
-                if not isinstance(dep_flags, int) or (dep_flags & LOAD_LIBRARY_SEARCH_SYSTEM32) == 0:
-                    raise ValueError(
-                        f"{dll_label}: missing DependentLoadFlags 0x800 (got {dep_flags!r})"
-                    )
-                _check_no_forbidden_crt(dll_label, dll_pe)
+        _check_no_forbidden_crt(f"{label}:totaldrop-winui.exe", exe_pe)
 
-            _check_no_forbidden_crt("totaldrop-winui.exe", exe_pe)
+        ffi_exports = set(ffi_pe["exports"])  # type: ignore[arg-type]
+        missing_exports = [sym for sym in REQUIRED_FFI_EXPORTS if sym not in ffi_exports]
+        if missing_exports:
+            raise ValueError(f"{label}: totaldrop_windows_ffi.dll missing C ABI exports: {missing_exports}")
 
-            # Verify exact 31/31 Phase 1 + Phase 2 + Phase 3 C ABI exports.
-            ffi_exports = set(ffi_pe["exports"])  # type: ignore[arg-type]
-            missing_exports = [sym for sym in REQUIRED_FFI_EXPORTS if sym not in ffi_exports]
-            if missing_exports:
-                raise ValueError(
-                    f"totaldrop_windows_ffi.dll missing C ABI exports: {missing_exports}"
+        ext_exports = set(ext_pe["exports"])  # type: ignore[arg-type]
+        missing_ext_exports = [sym for sym in REQUIRED_EXPLORER_EXT_EXPORTS if sym not in ext_exports]
+        if missing_ext_exports:
+            raise ValueError(
+                f"{label}: totaldrop_explorer_ext.dll missing COM exports: {missing_ext_exports}"
+            )
+        ext_rsrc_types = set(ext_pe["resource_types"])  # type: ignore[arg-type]
+        ext_rsrc_ids = set(ext_pe["resource_ids"])  # type: ignore[arg-type]
+        if (RT_GROUP_ICON, EXPLORER_ICON_RESOURCE_ID) not in ext_rsrc_ids or RT_ICON not in ext_rsrc_types:
+            raise ValueError(
+                f"{label}: totaldrop_explorer_ext.dll missing embedded Win32 icon resource ID 101 "
+                f"(types={sorted(ext_rsrc_types)}, ids={sorted(ext_rsrc_ids)})"
+            )
+
+        if exe_pe["clr_header"] != (0, 0):
+            raise ValueError(
+                f"{label}: totaldrop-winui.exe has non-zero CLR header {exe_pe['clr_header']} (not Native AOT)"
+            )
+        exe_imports = set(exe_pe["imports"]) | set(exe_pe["delay_imports"])  # type: ignore[arg-type]
+        bad_clr = sorted(imp for imp in exe_imports if imp in FORBIDDEN_CLR_HOST_DLLS)
+        if bad_clr:
+            raise ValueError(f"{label}: totaldrop-winui.exe imports CLR host DLL(s): {bad_clr}")
+        exe_rsrc_types = set(exe_pe["resource_types"])  # type: ignore[arg-type]
+        if RT_GROUP_ICON not in exe_rsrc_types or RT_ICON not in exe_rsrc_types:
+            raise ValueError(
+                f"{label}: totaldrop-winui.exe missing embedded application icon resources "
+                f"(types={sorted(exe_rsrc_types)})"
+            )
+
+        if sys.platform == "win32" and run_live_smoke:
+            host_arch = _python_host_arch()
+            if host_arch == arch:
+                with tempfile.TemporaryDirectory(prefix="totaldrop-msix-smoke-") as tmp:
+                    tmp_dir = Path(tmp)
+                    ffi_path = tmp_dir / "totaldrop_windows_ffi.dll"
+                    ext_path = tmp_dir / "totaldrop_explorer_ext.dll"
+                    ffi_path.write_bytes(ffi_bytes)
+                    ext_path.write_bytes(ext_bytes)
+                    smoke_test_ffi_dll(ffi_path)
+                    smoke_test_explorer_ext_dll(ext_path)
+            else:
+                print(
+                    f"note: skipping live ctypes smoke test for {label} (arch={arch}) on host Python arch={host_arch}; "
+                    "all static PE32+, export, resource, and manifest checks passed."
                 )
 
-            # Verify Explorer COM exports and embedded Win32 icon resource ID 101.
-            ext_exports = set(ext_pe["exports"])  # type: ignore[arg-type]
-            missing_ext_exports = [sym for sym in REQUIRED_EXPLORER_EXT_EXPORTS if sym not in ext_exports]
-            if missing_ext_exports:
+    if pri_dump is not None:
+        verify_pri_dump(pri_dump)
+
+    return {
+        "arch": arch,
+        "name": ident_name,
+        "publisher": ident_pub,
+        "version": ident_ver,
+        "manifest_root": manifest_root,
+        "size_bytes": len(raw_bytes),
+    }
+
+
+def verify_msixbundle_archive(
+    source: Path | bytes,
+    label: str,
+    *,
+    expected_version: str | None,
+    expect_signed: bool,
+    store_mode: bool,
+    allow_test_identity: bool,
+    run_live_smoke: bool = True,
+) -> dict[str, object]:
+    """Deep-verify a unified dual-arch (x64 + arm64) .msixbundle archive."""
+    if isinstance(source, Path):
+        if not source.is_file():
+            raise ValueError(f"MSIX bundle not found: {source}")
+        raw_bytes = source.read_bytes()
+    else:
+        raw_bytes = source
+
+    if len(raw_bytes) < 4 or raw_bytes[:4] != b"PK\x03\x04":
+        raise ValueError(f"{label}: not a ZIP/OPC .msixbundle archive (magic={raw_bytes[:4]!r})")
+
+    with zipfile.ZipFile(io.BytesIO(raw_bytes), "r") as zf:
+        raw_names = _check_opc_zip_entries(
+            zf,
+            label,
+            flat_root_only=False,
+            case_sensitive_unique_paths=("AppxMetadata/AppxBundleManifest.xml",),
+        )
+        names = set(raw_names)
+        required = {
+            "AppxMetadata/AppxBundleManifest.xml",
+            "AppxBlockMap.xml",
+            "[Content_Types].xml",
+        }
+        if expect_signed:
+            required.add("AppxSignature.p7x")
+        missing = sorted(required - names)
+        if missing:
+            raise ValueError(f"{label}: .msixbundle missing required OPC entries: {missing}")
+        if expect_signed and zf.getinfo("AppxSignature.p7x").file_size <= 0:
+            raise ValueError(f"{label}: AppxSignature.p7x is empty")
+
+        forbidden_bundle_exts = FORBIDDEN_KEY_EXTS + (".pdb", ".resw")
+        bad_entries = [n for n in raw_names if n.lower().endswith(forbidden_bundle_exts)]
+        if bad_entries:
+            raise ValueError(f"{label}: forbidden key/symbol/staging files inside .msixbundle: {bad_entries}")
+
+        manifest_raw = zf.read("AppxMetadata/AppxBundleManifest.xml").decode("utf-8", errors="strict")
+        if UNSIGNED_PACKAGE_OID in manifest_raw.lower():
+            raise ValueError(
+                f"{label}: AppxBundleManifest.xml contains forbidden unsigned-package OID {UNSIGNED_PACKAGE_OID}"
+            )
+        bundle_root = ET.fromstring(manifest_raw)
+        if bundle_root.tag != f"{BUNDLE_NS}Bundle":
+            raise ValueError(
+                f"{label}: AppxBundleManifest.xml root must be <Bundle>, got {bundle_root.tag!r}"
+            )
+
+        doc_idents = bundle_root.findall(f".//{BUNDLE_NS}Identity")
+        direct_idents = bundle_root.findall(f"{BUNDLE_NS}Identity")
+        if len(doc_idents) != 1 or len(direct_idents) != 1:
+            raise ValueError(
+                f"{label}: AppxBundleManifest.xml must declare exactly 1 top-level <Identity> "
+                f"(doc={len(doc_idents)}, direct={len(direct_idents)})"
+            )
+        b_ident = direct_idents[0]
+        b_name = b_ident.attrib.get("Name", "")
+        b_pub = b_ident.attrib.get("Publisher", "")
+        b_ver = b_ident.attrib.get("Version", "")
+        _validate_identity_store_policy(
+            b_name,
+            b_pub,
+            b_ver,
+            f"{label} AppxBundleManifest.xml",
+            expected_version=expected_version,
+            store_mode=store_mode,
+            allow_test_identity=allow_test_identity,
+        )
+
+        doc_pkgs_containers = bundle_root.findall(f".//{BUNDLE_NS}Packages")
+        direct_pkgs_containers = bundle_root.findall(f"{BUNDLE_NS}Packages")
+        if len(doc_pkgs_containers) != 1 or len(direct_pkgs_containers) != 1:
+            raise ValueError(
+                f"{label}: AppxBundleManifest.xml must declare exactly 1 top-level <Packages> "
+                f"(doc={len(doc_pkgs_containers)}, direct={len(direct_pkgs_containers)})"
+            )
+        pkgs_container = direct_pkgs_containers[0]
+        pkg_children = list(pkgs_container)
+        unexpected_children = [el.tag for el in pkg_children if el.tag != f"{BUNDLE_NS}Package"]
+        if unexpected_children:
+            raise ValueError(
+                f"{label}: <Packages> contains unexpected child elements: {unexpected_children!r}"
+            )
+
+        app_packages_by_arch: dict[str, tuple[str, str]] = {}
+        referenced_files: set[str] = set()
+        for pkg in pkg_children:
+            pkg_type = pkg.attrib.get("Type", "")
+            pkg_arch = pkg.attrib.get("Architecture", "")
+            pkg_ver = pkg.attrib.get("Version", "")
+            pkg_file = pkg.attrib.get("FileName", "")
+
+            if pkg_arch.lower() == "x86":
                 raise ValueError(
-                    f"totaldrop_explorer_ext.dll missing COM exports: {missing_ext_exports}"
+                    f"{label}: forbidden 32-bit 'x86' architecture slice found in AppxBundleManifest.xml (ADR 0016)"
                 )
-            ext_rsrc_types = set(ext_pe["resource_types"])  # type: ignore[arg-type]
-            ext_rsrc_ids = set(ext_pe["resource_ids"])  # type: ignore[arg-type]
-            if (RT_GROUP_ICON, EXPLORER_ICON_RESOURCE_ID) not in ext_rsrc_ids or RT_ICON not in ext_rsrc_types:
+            if pkg_type != "application":
                 raise ValueError(
-                    "totaldrop_explorer_ext.dll missing embedded Win32 icon resource ID 101 "
-                    f"(types={sorted(ext_rsrc_types)}, ids={sorted(ext_rsrc_ids)})"
+                    f"{label}: unexpected bundle <Package Type={pkg_type!r}> (expected 'application' slices only)"
+                )
+            if pkg_arch not in ("x64", "arm64"):
+                raise ValueError(
+                    f"{label}: unsupported bundle <Package Architecture={pkg_arch!r}> (expected 'x64' or 'arm64')"
+                )
+            if pkg_arch in app_packages_by_arch:
+                raise ValueError(f"{label}: duplicate bundle <Package> slice for Architecture={pkg_arch!r}")
+            if pkg_ver != b_ver:
+                raise ValueError(
+                    f"{label}: <Package Architecture={pkg_arch!r}> Version={pkg_ver!r} != bundle Version={b_ver!r}"
+                )
+            if not pkg_file or not pkg_file.lower().endswith(".msix") or pkg_file not in names:
+                raise ValueError(
+                    f"{label}: <Package Architecture={pkg_arch!r}> FileName={pkg_file!r} missing or not an .msix in bundle"
+                )
+            app_packages_by_arch[pkg_arch] = (pkg_file, pkg_ver)
+            referenced_files.add(pkg_file)
+
+        missing_arches = sorted({"x64", "arm64"} - set(app_packages_by_arch))
+        if missing_arches:
+            raise ValueError(
+                f"{label}: .msixbundle missing required architecture slice(s): {missing_arches} "
+                f"(present={sorted(app_packages_by_arch)})"
+            )
+
+        unreferenced_msix = sorted(
+            n for n in raw_names if n.lower().endswith((".msix", ".appx")) and n not in referenced_files
+        )
+        if unreferenced_msix:
+            raise ValueError(
+                f"{label}: unreferenced .msix/.appx entries inside .msixbundle: {unreferenced_msix}"
+            )
+
+        inner_results: dict[str, dict[str, object]] = {}
+        for arch in ("x64", "arm64"):
+            pkg_file, _ = app_packages_by_arch[arch]
+            inner_bytes = zf.read(pkg_file)
+            res = verify_msix_archive(
+                inner_bytes,
+                f"{label}/{pkg_file}",
+                arch=arch,
+                expected_version=b_ver,
+                expect_signed=False,
+                store_mode=store_mode,
+                allow_test_identity=allow_test_identity,
+                run_live_smoke=run_live_smoke,
+            )
+            if res["name"] != b_name:
+                raise ValueError(
+                    f"{label}/{pkg_file}: inner Identity/@Name {res['name']!r} != bundle {b_name!r}"
+                )
+            if res["publisher"] != b_pub:
+                raise ValueError(
+                    f"{label}/{pkg_file}: inner Identity/@Publisher {res['publisher']!r} != bundle {b_pub!r}"
+                )
+            if res["version"] != b_ver:
+                raise ValueError(
+                    f"{label}/{pkg_file}: inner Identity/@Version {res['version']!r} != bundle {b_ver!r}"
+                )
+            inner_results[arch] = res
+
+        # Cross-arch canonical XML parity across Properties, Dependencies, 35 Resources, Extensions, Capabilities.
+        x64_canon = _canonicalize_manifest_for_parity(inner_results["x64"]["manifest_root"])  # type: ignore[arg-type]
+        arm64_canon = _canonicalize_manifest_for_parity(inner_results["arm64"]["manifest_root"])  # type: ignore[arg-type]
+        if x64_canon != arm64_canon:
+            raise ValueError(
+                f"{label}: x64 and arm64 inner AppxManifest.xml files diverge beyond Identity/@ProcessorArchitecture"
+            )
+
+    return {
+        "name": b_name,
+        "publisher": b_pub,
+        "version": b_ver,
+        "arches": ("x64", "arm64"),
+        "size_bytes": len(raw_bytes),
+        "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+    }
+
+
+def _verify_appxsym_bytes(data: bytes, label: str) -> set[str]:
+    if len(data) < 4 or data[:4] != b"PK\x03\x04":
+        raise ValueError(f"{label}: not a valid ZIP .appxsym archive (magic={data[:4]!r})")
+    pdb_basenames: set[str] = set()
+    forbidden_sym_exts = FORBIDDEN_KEY_EXTS + (".exe", ".dll", ".msix", ".appx", ".msixbundle")
+    with zipfile.ZipFile(io.BytesIO(data), "r") as sym_zf:
+        names = _check_opc_zip_entries(sym_zf, label, flat_root_only=False)
+        for name in names:
+            if name.endswith("/"):
+                continue
+            lower = name.lower()
+            if lower.endswith(forbidden_sym_exts):
+                raise ValueError(f"{label}: forbidden file inside .appxsym archive: {name!r}")
+            if not lower.endswith(".pdb"):
+                raise ValueError(f"{label}: unexpected non-PDB file inside .appxsym archive: {name!r}")
+            if sym_zf.getinfo(name).file_size <= 0:
+                raise ValueError(f"{label}: empty PDB entry inside .appxsym archive: {name!r}")
+            pdb_basenames.add(Path(name).name.lower())
+    if not pdb_basenames:
+        raise ValueError(f"{label}: .appxsym archive contains zero .pdb entries")
+    return pdb_basenames
+
+
+def verify_msixupload_archive(
+    upload_path: Path,
+    *,
+    expected_version: str | None,
+    expect_signed: bool,
+    store_mode: bool,
+    allow_test_identity: bool,
+    expected_bundle_path: Path | None = None,
+    run_live_smoke: bool = True,
+) -> dict[str, object]:
+    """Deep-verify a Microsoft Store Partner Center .msixupload archive."""
+    if not upload_path.is_file():
+        raise ValueError(f"MSIX upload package not found: {upload_path}")
+    raw_bytes = upload_path.read_bytes()
+    label = upload_path.name
+    if len(raw_bytes) < 4 or raw_bytes[:4] != b"PK\x03\x04":
+        raise ValueError(f"{label}: not a ZIP .msixupload archive (magic={raw_bytes[:4]!r})")
+
+    with zipfile.ZipFile(io.BytesIO(raw_bytes), "r") as zf:
+        names = _check_opc_zip_entries(zf, label, flat_root_only=True)
+        bundles: list[str] = []
+        appxsyms: list[str] = []
+
+        for name in names:
+            lower = name.lower()
+            if lower.endswith((".msix", ".appx")):
+                raise ValueError(
+                    f"{label}: bare standalone package {name!r} is forbidden inside .msixupload "
+                    "(Microsoft Store enforces irreversible standalone .msix <-> .msixbundle format lock-in; "
+                    "always wrap a dual-arch .msixbundle from Flight #1)"
+                )
+            if lower.endswith(FORBIDDEN_KEY_EXTS):
+                raise ValueError(f"{label}: forbidden signing key/certificate file inside .msixupload: {name!r}")
+            if lower.endswith(".msixbundle"):
+                bundles.append(name)
+            elif lower.endswith(".appxsym"):
+                appxsyms.append(name)
+            else:
+                raise ValueError(
+                    f"{label}: unexpected entry {name!r} inside .msixupload (expected only .msixbundle and .appxsym)"
                 )
 
-            # Verify totaldrop-winui.exe is genuinely Native AOT and embeds TotalDrop.ico.
-            if exe_pe["clr_header"] != (0, 0):
+        if len(bundles) != 1:
+            raise ValueError(
+                f"{label}: .msixupload must contain exactly 1 .msixbundle entry, found {len(bundles)} ({bundles!r})"
+            )
+        if len(appxsyms) < 1:
+            raise ValueError(
+                f"{label}: .msixupload must contain at least 1 .appxsym PDB symbol archive"
+            )
+
+        bundle_name = bundles[0]
+        bundle_bytes = zf.read(bundle_name)
+        bundle_sha = hashlib.sha256(bundle_bytes).hexdigest()
+        if expected_bundle_path is not None:
+            disk_bytes = expected_bundle_path.read_bytes()
+            disk_sha = hashlib.sha256(disk_bytes).hexdigest()
+            if bundle_name != expected_bundle_path.name:
                 raise ValueError(
-                    f"totaldrop-winui.exe has non-zero CLR header {exe_pe['clr_header']} (not Native AOT)"
+                    f"{label}: embedded bundle name {bundle_name!r} != --bundle {expected_bundle_path.name!r}"
                 )
-            exe_imports = set(exe_pe["imports"]) | set(exe_pe["delay_imports"])  # type: ignore[arg-type]
-            bad_clr = sorted(imp for imp in exe_imports if imp in FORBIDDEN_CLR_HOST_DLLS)
-            if bad_clr:
-                raise ValueError(f"totaldrop-winui.exe imports CLR host DLL(s): {bad_clr}")
-            exe_rsrc_types = set(exe_pe["resource_types"])  # type: ignore[arg-type]
-            if RT_GROUP_ICON not in exe_rsrc_types or RT_ICON not in exe_rsrc_types:
+            if bundle_sha != disk_sha:
                 raise ValueError(
-                    f"totaldrop-winui.exe missing embedded application icon resources (types={sorted(exe_rsrc_types)})"
+                    f"{label}: embedded {bundle_name} SHA-256 ({bundle_sha}) != --bundle ({disk_sha})"
                 )
 
-            # Live ctypes C ABI & COM smoke tests when running natively on Windows.
-            if sys.platform == "win32":
-                smoke_test_ffi_dll(ffi_path)
-                smoke_test_explorer_ext_dll(ext_path)
+        bundle_info = verify_msixbundle_archive(
+            bundle_bytes,
+            f"{label}/{bundle_name}",
+            expected_version=expected_version,
+            expect_signed=expect_signed,
+            store_mode=store_mode,
+            allow_test_identity=allow_test_identity,
+            run_live_smoke=run_live_smoke,
+        )
 
-    if args.pri_dump is not None:
-        verify_pri_dump(args.pri_dump)
+        combined_pdbs: set[str] = set()
+        for sym_name in sorted(appxsyms):
+            combined_pdbs |= _verify_appxsym_bytes(zf.read(sym_name), f"{label}/{sym_name}")
 
-    print(
-        f"msix-artifact verify OK: {msix_path.name} ({msix_path.stat().st_size} bytes, "
-        f"arch={args.arch}, version={args.expected_version}, 46 canonical Assets, "
-        f"PE hardening + CET_COMPAT + DependentLoadFlags=0x800 + zero VCRUNTIME140 + "
-        f"{len(REQUIRED_FFI_EXPORTS)} C ABI exports + Explorer COM DLL (icon 101) + "
-        f"COM/Toast/Firewall manifest + Native AOT verified)."
+        missing_pdbs = sorted(REQUIRED_SYMBOL_PDBS - combined_pdbs)
+        if missing_pdbs:
+            raise ValueError(
+                f"{label}: .appxsym archive(s) missing required PDB symbol(s): {missing_pdbs} "
+                f"(present={sorted(combined_pdbs)})"
+            )
+
+    return {
+        "bundle_name": bundle_name,
+        "bundle_info": bundle_info,
+        "appxsym_count": len(appxsyms),
+        "pdb_names": sorted(combined_pdbs),
+        "size_bytes": len(raw_bytes),
+    }
+
+
+def _build_synthetic_pe64(
+    *,
+    machine: int,
+    is_dll: bool,
+    exports: tuple[str, ...] = (),
+    cet_compat: bool = False,
+    dependent_load_flags: int | None = None,
+    include_icon_101: bool = False,
+) -> bytes:
+    """Build a minimal valid PE32+ image for pure-Python verifier self-tests (zero external tools)."""
+    v_addr = 0x1000
+    raw_ptr = 0x200
+    sec = bytearray()
+
+    def align4() -> None:
+        while len(sec) % 4 != 0:
+            sec.append(0)
+
+    def cur_rva() -> int:
+        return v_addr + len(sec)
+
+    # 1. Export directory (DataDirectory[0])
+    exp_rva, exp_size = 0, 0
+    if exports:
+        align4()
+        exp_off = len(sec)
+        exp_rva = v_addr + exp_off
+        sec.extend(b"\x00" * 40)
+        names_table_off = len(sec)
+        names_table_rva = v_addr + names_table_off
+        sec.extend(b"\x00" * (4 * len(exports)))
+        name_rvas: list[int] = []
+        for sym in exports:
+            name_rvas.append(cur_rva())
+            sec.extend(sym.encode("ascii") + b"\x00")
+        struct.pack_into("<I", sec, exp_off + 24, len(exports))
+        struct.pack_into("<I", sec, exp_off + 32, names_table_rva)
+        for i, nrva in enumerate(name_rvas):
+            struct.pack_into("<I", sec, names_table_off + i * 4, nrva)
+        exp_size = len(sec) - exp_off
+
+    # 2. Resource directory (DataDirectory[2]) — 2-level RT_ICON(3) & RT_GROUP_ICON(14) ID 101
+    rsrc_rva, rsrc_size = 0, 0
+    if include_icon_101:
+        align4()
+        rsrc_off = len(sec)
+        rsrc_rva = v_addr + rsrc_off
+        # Root dir: 16-byte header + 2*8=16-byte entries = 32 bytes.
+        # Lvl2 RT_ICON at rel 32 (24 bytes), Lvl2 RT_GROUP_ICON at rel 56 (24 bytes).
+        lvl2_icon_rel = 32
+        lvl2_group_rel = 56
+        sec.extend(struct.pack("<IIHHHH", 0, 0, 0, 0, 0, 2))
+        sec.extend(struct.pack("<II", RT_ICON, 0x8000_0000 | lvl2_icon_rel))
+        sec.extend(struct.pack("<II", RT_GROUP_ICON, 0x8000_0000 | lvl2_group_rel))
+        # Lvl2 RT_ICON
+        sec.extend(struct.pack("<IIHHHH", 0, 0, 0, 0, 0, 1))
+        sec.extend(struct.pack("<II", 1, 0))
+        # Lvl2 RT_GROUP_ICON
+        sec.extend(struct.pack("<IIHHHH", 0, 0, 0, 0, 0, 1))
+        sec.extend(struct.pack("<II", EXPLORER_ICON_RESOURCE_ID, 0))
+        rsrc_size = len(sec) - rsrc_off
+
+    # 3. Debug directory (DataDirectory[6]) — Type 20 CET_COMPAT
+    dbg_rva, dbg_size = 0, 0
+    if cet_compat:
+        align4()
+        dbg_off = len(sec)
+        dbg_rva = v_addr + dbg_off
+        sec.extend(b"\x00" * 28)
+        val_off = len(sec)
+        val_rva = v_addr + val_off
+        val_raw_ptr = raw_ptr + val_off
+        sec.extend(struct.pack("<I", IMAGE_DLLCHARACTERISTICS_EX_CET_COMPAT))
+        struct.pack_into(
+            "<IIHHIIII",
+            sec,
+            dbg_off,
+            0,
+            0,
+            0,
+            0,
+            IMAGE_DEBUG_TYPE_EX_DLLCHARACTERISTICS,
+            4,
+            val_rva,
+            val_raw_ptr,
+        )
+        dbg_size = 28
+
+    # 4. Load Config directory (DataDirectory[10]) — DependentLoadFlags at offset 0x4E
+    lc_rva, lc_size = 0, 0
+    if dependent_load_flags is not None:
+        align4()
+        lc_off = len(sec)
+        lc_rva = v_addr + lc_off
+        lc_buf = bytearray(0x50)
+        struct.pack_into("<I", lc_buf, 0, 0x50)
+        struct.pack_into("<H", lc_buf, 0x4E, dependent_load_flags)
+        sec.extend(lc_buf)
+        lc_size = 0x50
+
+    if not sec:
+        sec.extend(b"\x00" * 16)
+    v_size = len(sec)
+    while len(sec) % 0x200 != 0:
+        sec.append(0)
+    raw_size = len(sec)
+
+    hdr = bytearray(raw_ptr)
+    hdr[0:2] = b"MZ"
+    e_lfanew = 0x80
+    struct.pack_into("<I", hdr, 0x3C, e_lfanew)
+    hdr[e_lfanew : e_lfanew + 4] = b"PE\x00\x00"
+
+    coff_off = e_lfanew + 4
+    opt_size = 240
+    characteristics = IMAGE_FILE_DLL if is_dll else 0x0002
+    struct.pack_into("<HHIIIHH", hdr, coff_off, machine, 1, 0, 0, 0, opt_size, characteristics)
+
+    opt_off = coff_off + 20
+    struct.pack_into("<H", hdr, opt_off, IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+    dll_chars = (
+        IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA
+        | IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE
+        | IMAGE_DLLCHARACTERISTICS_NX_COMPAT
     )
+    struct.pack_into("<H", hdr, opt_off + 70, dll_chars)
+    struct.pack_into("<I", hdr, opt_off + 108, 16)
+
+    data_dirs_off = opt_off + 112
+    for idx, (rva, size) in (
+        (0, (exp_rva, exp_size)),
+        (2, (rsrc_rva, rsrc_size)),
+        (6, (dbg_rva, dbg_size)),
+        (10, (lc_rva, lc_size)),
+    ):
+        struct.pack_into("<II", hdr, data_dirs_off + idx * 8, rva, size)
+
+    sec_tbl_off = opt_off + opt_size
+    struct.pack_into(
+        "<8sIIIIIIHHI",
+        hdr,
+        sec_tbl_off,
+        b".rdata\x00\x00",
+        v_size,
+        v_addr,
+        raw_size,
+        raw_ptr,
+        0,
+        0,
+        0,
+        0,
+        0x4000_0040,
+    )
+    return bytes(hdr) + bytes(sec)
+
+
+def _patch_manifest_xml(
+    template_xml: str,
+    *,
+    name: str,
+    publisher: str,
+    version: str,
+    arch: str,
+    publisher_display_name: str = "TotalDrop",
+    drop_run_full_trust: bool = False,
+) -> bytes:
+    xml = template_xml
+    xml = re.sub(r'Name="TotalDrop\.TotalDrop"', f'Name="{name}"', xml, count=1)
+    xml = re.sub(r'Publisher="CN=TotalDrop"', f'Publisher="{publisher}"', xml, count=1)
+    xml = re.sub(r'Version="[^"]+"', f'Version="{version}"', xml, count=1)
+    xml = re.sub(r'ProcessorArchitecture="[^"]+"', f'ProcessorArchitecture="{arch}"', xml, count=1)
+    xml = re.sub(
+        r"<PublisherDisplayName>[^<]*</PublisherDisplayName>",
+        f"<PublisherDisplayName>{publisher_display_name}</PublisherDisplayName>",
+        xml,
+        count=1,
+    )
+    if drop_run_full_trust:
+        xml = xml.replace('<rescap:Capability Name="runFullTrust" />', "")
+    return xml.encode("utf-8")
+
+
+def _make_synthetic_msix(
+    template_xml: str,
+    *,
+    arch: str,
+    name: str,
+    publisher: str,
+    version: str,
+    publisher_display_name: str = "TotalDrop",
+    ext_machine_override: int | None = None,
+    drop_run_full_trust: bool = False,
+) -> bytes:
+    machine = IMAGE_FILE_MACHINE_AMD64 if arch == "x64" else IMAGE_FILE_MACHINE_ARM64
+    is_x64 = arch == "x64"
+    manifest_bytes = _patch_manifest_xml(
+        template_xml,
+        name=name,
+        publisher=publisher,
+        version=version,
+        arch=arch,
+        publisher_display_name=publisher_display_name,
+        drop_run_full_trust=drop_run_full_trust,
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("AppxManifest.xml", manifest_bytes)
+        zf.writestr("AppxBlockMap.xml", b"<BlockMap />")
+        zf.writestr("[Content_Types].xml", b"<Types />")
+        zf.writestr("resources.pri", b"mrm_pri2\x00\x00\x00\x00")
+        zf.writestr("App.xbf", b"XBF\x00")
+        zf.writestr("MainWindow.xbf", b"XBF\x00")
+        zf.writestr("Views/SendPage.xbf", b"XBF\x00")
+        zf.writestr("Views/ReceivePage.xbf", b"XBF\x00")
+        zf.writestr("Views/SettingsPage.xbf", b"XBF\x00")
+        for asset in sorted(EXPECTED_ASSETS):
+            zf.writestr(f"Assets/{asset}", b"\x89PNG\r\n\x1a\n" if asset.endswith(".png") else b"\x00\x00\x01\x00")
+        zf.writestr(
+            "totaldrop-winui.exe",
+            _build_synthetic_pe64(machine=machine, is_dll=False, cet_compat=is_x64, include_icon_101=True),
+        )
+        zf.writestr(
+            "totaldrop_windows_ffi.dll",
+            _build_synthetic_pe64(
+                machine=machine,
+                is_dll=True,
+                exports=REQUIRED_FFI_EXPORTS,
+                cet_compat=is_x64,
+                dependent_load_flags=LOAD_LIBRARY_SEARCH_SYSTEM32,
+            ),
+        )
+        zf.writestr(
+            "totaldrop_explorer_ext.dll",
+            _build_synthetic_pe64(
+                machine=ext_machine_override if ext_machine_override is not None else machine,
+                is_dll=True,
+                exports=REQUIRED_EXPLORER_EXT_EXPORTS,
+                cet_compat=(ext_machine_override == IMAGE_FILE_MACHINE_AMD64) if ext_machine_override else is_x64,
+                dependent_load_flags=LOAD_LIBRARY_SEARCH_SYSTEM32,
+                include_icon_101=True,
+            ),
+        )
+    return buf.getvalue()
+
+
+def _make_synthetic_bundle(
+    *,
+    name: str,
+    publisher: str,
+    version: str,
+    packages: list[tuple[str, str, str, bytes]],
+    duplicate_identity: bool = False,
+    duplicate_manifest_entry: bool = False,
+) -> bytes:
+    pkg_xml = "\n".join(
+        f'    <Package Type="application" Version="{p_ver}" Architecture="{p_arch}" FileName="{p_file}" />'
+        for p_arch, p_ver, p_file, _ in packages
+    )
+    extra_id = f'\n  <Identity Name="{name}" Publisher="{publisher}" Version="{version}" />' if duplicate_identity else ""
+    bundle_manifest = (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<Bundle SchemaVersion="5.0" xmlns="http://schemas.microsoft.com/appx/2013/bundle">\n'
+        f'  <Identity Name="{name}" Publisher="{publisher}" Version="{version}" />{extra_id}\n'
+        "  <Packages>\n"
+        f"{pkg_xml}\n"
+        "  </Packages>\n"
+        "</Bundle>\n"
+    ).encode("utf-8")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("AppxMetadata/AppxBundleManifest.xml", bundle_manifest)
+        if duplicate_manifest_entry:
+            zf.writestr("appxmetadata/appxbundlemanifest.xml", bundle_manifest)
+        zf.writestr("AppxBlockMap.xml", b"<BlockMap />")
+        zf.writestr("[Content_Types].xml", b"<Types />")
+        for _, _, p_file, p_bytes in packages:
+            zf.writestr(p_file, p_bytes)
+    return buf.getvalue()
+
+
+def _make_synthetic_appxsym(pdb_names: tuple[str, ...]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for pdb in pdb_names:
+            zf.writestr(pdb, b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\x00\x00\x00")
+    return buf.getvalue()
+
+
+def _make_synthetic_upload(entries: list[tuple[str, bytes]]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for name, content in entries:
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+def run_self_test_bundle() -> int:
+    """Run 16 positive and negative pure-Python synthetic self-tests against the real verifier."""
+    repo_root = Path(__file__).resolve().parent.parent
+    x64_tpl = (repo_root / "target-x86_64" / "Package.x64.appxmanifest").read_text(encoding="utf-8")
+    arm64_tpl = (repo_root / "target-arm64" / "Package.arm64.appxmanifest").read_text(encoding="utf-8")
+
+    store_name = "12345TotalDrop.TotalDrop"
+    store_pub = "CN=11111111-2222-3333-4444-555555555555"
+    store_ver = "1.0.1.0"
+    all_pdbs = tuple(sorted(REQUIRED_SYMBOL_PDBS))
+
+    def expect_fail(case_name: str, fn: object, expected_substr: str = "") -> None:
+        try:
+            fn()  # type: ignore[operator]
+        except ValueError as exc:
+            if expected_substr and expected_substr.lower() not in str(exc).lower():
+                raise AssertionError(
+                    f"self-test {case_name}: failed with unexpected error {exc!r} (expected {expected_substr!r})"
+                ) from exc
+            return
+        raise AssertionError(f"self-test {case_name}: expected ValueError, but verification passed")
+
+    with tempfile.TemporaryDirectory(prefix="totaldrop-bundle-selftest-") as tmp:
+        tmp_dir = Path(tmp)
+        x64_ok = _make_synthetic_msix(x64_tpl, arch="x64", name=store_name, publisher=store_pub, version=store_ver)
+        arm64_ok = _make_synthetic_msix(arm64_tpl, arch="arm64", name=store_name, publisher=store_pub, version=store_ver)
+        bundle_ok_bytes = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_ok),
+            ],
+        )
+        sym_ok = _make_synthetic_appxsym(all_pdbs)
+        bundle_ok_path = tmp_dir / f"TotalDrop-{store_ver}.msixbundle"
+        bundle_ok_path.write_bytes(bundle_ok_bytes)
+        upload_ok_path = tmp_dir / f"TotalDrop-{store_ver}.msixupload"
+        upload_ok_path.write_bytes(
+            _make_synthetic_upload(
+                [
+                    (bundle_ok_path.name, bundle_ok_bytes),
+                    (f"TotalDrop_{store_ver}_x64.appxsym", sym_ok),
+                    (f"TotalDrop_{store_ver}_arm64.appxsym", sym_ok),
+                ]
+            )
+        )
+
+        # Case 1: Positive valid dual-arch Store .msixbundle + .msixupload passes --store-mode.
+        verify_msixbundle_archive(
+            bundle_ok_path,
+            bundle_ok_path.name,
+            expected_version=store_ver,
+            expect_signed=False,
+            store_mode=True,
+            allow_test_identity=False,
+            run_live_smoke=False,
+        )
+        verify_msixupload_archive(
+            upload_ok_path,
+            expected_version=store_ver,
+            expect_signed=False,
+            store_mode=True,
+            allow_test_identity=False,
+            expected_bundle_path=bundle_ok_path,
+            run_live_smoke=False,
+        )
+
+        # Case 2: Dry-run CN=TotalDrop bundle fails strict --store-mode, passes --store-mode --allow-test-identity.
+        x64_dry = _make_synthetic_msix(x64_tpl, arch="x64", name="TotalDrop.TotalDrop", publisher="CN=TotalDrop", version=store_ver)
+        arm64_dry = _make_synthetic_msix(arm64_tpl, arch="arm64", name="TotalDrop.TotalDrop", publisher="CN=TotalDrop", version=store_ver)
+        bundle_dry = _make_synthetic_bundle(
+            name="TotalDrop.TotalDrop",
+            publisher="CN=TotalDrop",
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_dry),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_dry),
+            ],
+        )
+        expect_fail(
+            "case-2-dryrun-strict",
+            lambda: verify_msixbundle_archive(
+                bundle_dry, "dry.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "placeholder",
+        )
+        verify_msixbundle_archive(
+            bundle_dry, "dry.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=True, run_live_smoke=False
+        )
+
+        # Case 3: Missing arm64 slice (x64 only).
+        bundle_no_arm64 = _make_synthetic_bundle(
+            name=store_name, publisher=store_pub, version=store_ver, packages=[("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok)]
+        )
+        expect_fail(
+            "case-3-missing-arm64",
+            lambda: verify_msixbundle_archive(
+                bundle_no_arm64, "no-arm64.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "arm64",
+        )
+
+        # Case 4: Forbidden x86 slice.
+        bundle_x86 = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_ok),
+                ("x86", store_ver, f"TotalDrop_{store_ver}_x86.msix", x64_ok),
+            ],
+        )
+        expect_fail(
+            "case-4-forbidden-x86",
+            lambda: verify_msixbundle_archive(
+                bundle_x86, "x86.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "x86",
+        )
+
+        # Case 5: Bare .msix at root of .msixupload -> cites Store format lock-in rule.
+        bad_upload_bare = tmp_dir / "bare.msixupload"
+        bad_upload_bare.write_bytes(
+            _make_synthetic_upload([(f"TotalDrop_{store_ver}_x64.msix", x64_ok), (f"TotalDrop_{store_ver}_x64.appxsym", sym_ok)])
+        )
+        expect_fail(
+            "case-5-bare-msix-upload",
+            lambda: verify_msixupload_archive(
+                bad_upload_bare, expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "lock-in",
+        )
+
+        # Case 6: Cross-arch PE contamination (x64 0x8664 totaldrop_explorer_ext.dll inside arm64.msix).
+        arm64_contaminated = _make_synthetic_msix(
+            arm64_tpl, arch="arm64", name=store_name, publisher=store_pub, version=store_ver, ext_machine_override=IMAGE_FILE_MACHINE_AMD64
+        )
+        bundle_contam = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_contaminated),
+            ],
+        )
+        expect_fail(
+            "case-6-pe-arch-contamination",
+            lambda: verify_msixbundle_archive(
+                bundle_contam, "contam.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "expected machine",
+        )
+
+        # Case 7: Outer bundle version 1.0.2.0 vs inner arm64 version 1.0.1.0.
+        x64_v2 = _make_synthetic_msix(x64_tpl, arch="x64", name=store_name, publisher=store_pub, version="1.0.2.0")
+        bundle_ver_drift = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version="1.0.2.0",
+            packages=[
+                ("x64", "1.0.2.0", "TotalDrop_1.0.2.0_x64.msix", x64_v2),
+                ("arm64", "1.0.2.0", "TotalDrop_1.0.2.0_arm64.msix", arm64_ok),
+            ],
+        )
+        expect_fail(
+            "case-7-version-drift",
+            lambda: verify_msixbundle_archive(
+                bundle_ver_drift, "ver-drift.msixbundle", expected_version=None, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "Version mismatch",
+        )
+
+        # Case 8: Cross-arch Identity/@Publisher mismatch.
+        arm64_diff_pub = _make_synthetic_msix(
+            arm64_tpl, arch="arm64", name=store_name, publisher="CN=99999999-2222-3333-4444-555555555555", version=store_ver
+        )
+        bundle_pub_drift = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_diff_pub),
+            ],
+        )
+        expect_fail(
+            "case-8-publisher-drift",
+            lambda: verify_msixbundle_archive(
+                bundle_pub_drift, "pub-drift.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "Publisher",
+        )
+
+        # Case 9: Major == 0 (0.1.1.0) under --store-mode.
+        x64_zero = _make_synthetic_msix(x64_tpl, arch="x64", name=store_name, publisher=store_pub, version="0.1.1.0")
+        arm64_zero = _make_synthetic_msix(arm64_tpl, arch="arm64", name=store_name, publisher=store_pub, version="0.1.1.0")
+        bundle_zero = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version="0.1.1.0",
+            packages=[
+                ("x64", "0.1.1.0", "TotalDrop_0.1.1.0_x64.msix", x64_zero),
+                ("arm64", "0.1.1.0", "TotalDrop_0.1.1.0_arm64.msix", arm64_zero),
+            ],
+        )
+        expect_fail(
+            "case-9-major-zero",
+            lambda: verify_msixbundle_archive(
+                bundle_zero, "major0.msixbundle", expected_version=None, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "Major >= 1",
+        )
+
+        # Case 10: Revision != 0 (1.0.0.1) and uint16 overflow (65536.0.0.0).
+        for bad_ver, expected_msg in (("1.0.0.1", "Revision == 0"), ("65536.0.0.0", "0..=65535")):
+            bx = _make_synthetic_msix(x64_tpl, arch="x64", name=store_name, publisher=store_pub, version=bad_ver)
+            ba = _make_synthetic_msix(arm64_tpl, arch="arm64", name=store_name, publisher=store_pub, version=bad_ver)
+            bb = _make_synthetic_bundle(
+                name=store_name,
+                publisher=store_pub,
+                version=bad_ver,
+                packages=[
+                    ("x64", bad_ver, f"TotalDrop_{bad_ver}_x64.msix", bx),
+                    ("arm64", bad_ver, f"TotalDrop_{bad_ver}_arm64.msix", ba),
+                ],
+            )
+            expect_fail(
+                f"case-10-{bad_ver}",
+                lambda bb=bb: verify_msixbundle_archive(
+                    bb, "badver.msixbundle", expected_version=None, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+                ),
+                expected_msg,
+            )
+
+        # Case 11: Unsigned-package OID in Publisher.
+        oid_pub = f"CN=TotalDrop, OID.{UNSIGNED_PACKAGE_OID}=1"
+        x64_oid = _make_synthetic_msix(x64_tpl, arch="x64", name=store_name, publisher=oid_pub, version=store_ver)
+        arm64_oid = _make_synthetic_msix(arm64_tpl, arch="arm64", name=store_name, publisher=oid_pub, version=store_ver)
+        bundle_oid = _make_synthetic_bundle(
+            name=store_name,
+            publisher=oid_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_oid),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_oid),
+            ],
+        )
+        expect_fail(
+            "case-11-unsigned-oid",
+            lambda: verify_msixbundle_archive(
+                bundle_oid, "oid.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=True, run_live_smoke=False
+            ),
+            UNSIGNED_PACKAGE_OID,
+        )
+
+        # Case 12: Malformed Publisher without CN=.
+        x64_badpub = _make_synthetic_msix(x64_tpl, arch="x64", name=store_name, publisher="TotalDrop", version=store_ver)
+        arm64_badpub = _make_synthetic_msix(arm64_tpl, arch="arm64", name=store_name, publisher="TotalDrop", version=store_ver)
+        bundle_badpub = _make_synthetic_bundle(
+            name=store_name,
+            publisher="TotalDrop",
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_badpub),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_badpub),
+            ],
+        )
+        expect_fail(
+            "case-12-bad-publisher",
+            lambda: verify_msixbundle_archive(
+                bundle_badpub, "badpub.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "X.500",
+        )
+
+        # Case 13: Leaked .pfx and .snk inside .msixupload.
+        for leak_name in ("signing.pfx", "strongname.snk"):
+            bad_leak = tmp_dir / f"leak-{leak_name}.msixupload"
+            bad_leak.write_bytes(
+                _make_synthetic_upload(
+                    [
+                        (bundle_ok_path.name, bundle_ok_bytes),
+                        (f"TotalDrop_{store_ver}_x64.appxsym", sym_ok),
+                        (leak_name, b"SECRET"),
+                    ]
+                )
+            )
+            expect_fail(
+                f"case-13-leak-{leak_name}",
+                lambda p=bad_leak: verify_msixupload_archive(
+                    p, expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+                ),
+                "signing key",
+            )
+
+        # Case 14: Duplicate <Identity> and case-insensitive duplicate AppxBundleManifest.xml ZIP entry.
+        bundle_dup_id = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_ok),
+            ],
+            duplicate_identity=True,
+        )
+        expect_fail(
+            "case-14a-dup-identity",
+            lambda: verify_msixbundle_archive(
+                bundle_dup_id, "dupid.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "exactly 1 top-level <Identity>",
+        )
+        bundle_dup_zip = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_ok),
+            ],
+            duplicate_manifest_entry=True,
+        )
+        expect_fail(
+            "case-14b-dup-manifest-zip",
+            lambda: verify_msixbundle_archive(
+                bundle_dup_zip, "dupzip.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "duplicate",
+        )
+
+        # Case 15: Missing PDB in .appxsym AND SHA-256 mismatch between --bundle and embedded bundle.
+        sym_incomplete = _make_synthetic_appxsym(("totaldrop-winui.pdb", "totaldrop_windows_ffi.pdb"))
+        bad_sym_upload = tmp_dir / "missing-pdb.msixupload"
+        bad_sym_upload.write_bytes(
+            _make_synthetic_upload(
+                [
+                    (bundle_ok_path.name, bundle_ok_bytes),
+                    (f"TotalDrop_{store_ver}_x64.appxsym", sym_incomplete),
+                ]
+            )
+        )
+        expect_fail(
+            "case-15a-missing-pdb",
+            lambda: verify_msixupload_archive(
+                bad_sym_upload, expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "totaldrop_explorer_ext.pdb",
+        )
+        other_bundle_path = tmp_dir / bundle_ok_path.name
+        mismatch_dir = tmp_dir / "other"
+        mismatch_dir.mkdir()
+        other_bundle_path = mismatch_dir / bundle_ok_path.name
+        other_bundle_path.write_bytes(bundle_dry)
+        expect_fail(
+            "case-15b-sha256-mismatch",
+            lambda: verify_msixupload_archive(
+                upload_ok_path,
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                expected_bundle_path=other_bundle_path,
+                run_live_smoke=False,
+            ),
+            "SHA-256",
+        )
+
+        # Case 16: Cross-arch manifest divergence (PublisherDisplayName mismatch & missing runFullTrust in arm64).
+        arm64_diff_disp = _make_synthetic_msix(
+            arm64_tpl, arch="arm64", name=store_name, publisher=store_pub, version=store_ver, publisher_display_name="Other Publisher"
+        )
+        bundle_disp_drift = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_diff_disp),
+            ],
+        )
+        expect_fail(
+            "case-16a-manifest-divergence",
+            lambda: verify_msixbundle_archive(
+                bundle_disp_drift, "disp-drift.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "diverge",
+        )
+        arm64_no_rft = _make_synthetic_msix(
+            arm64_tpl, arch="arm64", name=store_name, publisher=store_pub, version=store_ver, drop_run_full_trust=True
+        )
+        bundle_no_rft = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_no_rft),
+            ],
+        )
+        expect_fail(
+            "case-16b-missing-runfulltrust",
+            lambda: verify_msixbundle_archive(
+                bundle_no_rft, "no-rft.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "runFullTrust",
+        )
+
+    print("self-test-bundle OK: 16/16 positive & negative bundle/msixupload/store-mode checks passed.")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Verify packed TotalDrop .msix, .msixbundle, and .msixupload archives."
+    )
+    parser.add_argument("--msix", type=Path, default=None, help="Path to built single-arch .msix archive.")
+    parser.add_argument("--bundle", type=Path, default=None, help="Path to unified dual-arch .msixbundle archive.")
+    parser.add_argument("--msixupload", type=Path, default=None, help="Path to Partner Center .msixupload archive.")
+    parser.add_argument(
+        "--self-test-bundle",
+        action="store_true",
+        help="Run built-in pure-Python positive & negative bundle/msixupload/Store-mode self-tests.",
+    )
+    parser.add_argument("--arch", choices=("x64", "arm64"), default="x64")
+    parser.add_argument("--expected-version", default=None)
+    parser.add_argument(
+        "--expect-signed",
+        action="store_true",
+        help="Require non-empty AppxSignature.p7x inside the package/bundle.",
+    )
+    parser.add_argument(
+        "--pri-dump",
+        type=Path,
+        default=None,
+        help="Optional MakePri.exe detailed XML dump to inspect (with --msix).",
+    )
+    parser.add_argument(
+        "--store-mode",
+        action="store_true",
+        help="Enforce Microsoft Store MSIX rules (Major >= 1, Revision == 0, X.500 CN=, non-placeholder identity).",
+    )
+    parser.add_argument(
+        "--allow-test-identity",
+        action="store_true",
+        help="Permit temporary CN=TotalDrop / TotalDrop.TotalDrop identity during --store-mode dry-runs.",
+    )
+    args = parser.parse_args(argv)
+
+    if not any((args.msix, args.bundle, args.msixupload, args.self_test_bundle)):
+        parser.error("Provide at least one of --msix, --bundle, --msixupload, or --self-test-bundle.")
+
+    try:
+        if args.self_test_bundle:
+            run_self_test_bundle()
+
+        if args.msix is not None:
+            eff_ver = args.expected_version
+            if eff_ver is None and not args.store_mode:
+                eff_ver = EXPECTED_MSIX_VERSION
+            res = verify_msix_archive(
+                args.msix,
+                args.msix.name,
+                arch=args.arch,
+                expected_version=eff_ver,
+                expect_signed=args.expect_signed,
+                store_mode=args.store_mode,
+                allow_test_identity=args.allow_test_identity,
+                pri_dump=args.pri_dump,
+            )
+            cet_note = " + CET_COMPAT" if args.arch == "x64" else ""
+            print(
+                f"msix-artifact verify OK: {args.msix.name} ({res['size_bytes']} bytes, "
+                f"arch={args.arch}, version={res['version']}, 46 canonical Assets, "
+                f"PE hardening{cet_note} + DependentLoadFlags=0x800 + zero VCRUNTIME140 + "
+                f"{len(REQUIRED_FFI_EXPORTS)} C ABI exports + Explorer COM DLL (icon 101) + "
+                f"COM/Toast/Firewall manifest + Native AOT verified)."
+            )
+
+        if args.bundle is not None:
+            b_res = verify_msixbundle_archive(
+                args.bundle,
+                args.bundle.name,
+                expected_version=args.expected_version,
+                expect_signed=args.expect_signed,
+                store_mode=args.store_mode,
+                allow_test_identity=args.allow_test_identity,
+            )
+            print(
+                f"msixbundle verify OK: {args.bundle.name} ({b_res['size_bytes']} bytes, "
+                f"version={b_res['version']}, identity={b_res['name']}, arches=x64+arm64, "
+                f"cross-arch manifest parity & PE32+ hardening verified)."
+            )
+
+        if args.msixupload is not None:
+            u_res = verify_msixupload_archive(
+                args.msixupload,
+                expected_version=args.expected_version,
+                expect_signed=args.expect_signed,
+                store_mode=args.store_mode,
+                allow_test_identity=args.allow_test_identity,
+                expected_bundle_path=args.bundle,
+            )
+            b_info = u_res["bundle_info"]
+            print(
+                f"msixupload verify OK: {args.msixupload.name} ({u_res['size_bytes']} bytes, "
+                f"bundle={u_res['bundle_name']}, version={b_info['version']}, "  # type: ignore[index]
+                f"appxsym={u_res['appxsym_count']}, pdbs={len(u_res['pdb_names'])}, "  # type: ignore[arg-type]
+                "zero bare .msix & zero signing keys verified)."
+            )
+    except (ValueError, ET.ParseError, zipfile.BadZipFile, subprocess.CalledProcessError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
     return 0
 
 
