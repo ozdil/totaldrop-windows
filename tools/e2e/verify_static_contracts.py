@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -76,6 +77,15 @@ USER_VISIBLE_XAML_ATTRS: tuple[str, ...] = (
     "OnContent",
 )
 
+A11Y_AND_TOOLTIP_XAML_ATTRS: tuple[str, ...] = (
+    "AutomationProperties.Name",
+    "AutomationProperties.HelpText",
+    "AutomationProperties.FullDescription",
+    "ToolTipService.ToolTip",
+)
+
+XAML_STRING_TAG = "{http://schemas.microsoft.com/winfx/2006/xaml}String"
+
 FORBIDDEN_SIGNING_EXTS: frozenset[str] = frozenset({
     ".pfx", ".p12", ".snk", ".cer", ".jks", ".keystore", ".pepk",
 })
@@ -100,6 +110,43 @@ def iter_app_files(root: Path, pattern: str) -> list[Path]:
     if not ui_dir.is_dir():
         return []
     return sorted(p for p in ui_dir.rglob(pattern) if p.is_file() and not _is_excluded_app_path(p))
+
+
+def _resolve_sh() -> str:
+    """Resolve POSIX sh on PATH or Git for Windows fallbacks."""
+    found = shutil.which("sh")
+    if found:
+        return found
+    if os.name == "nt":
+        for candidate in (
+            r"C:\Program Files\Git\bin\sh.exe",
+            r"C:\Program Files\Git\usr\bin\sh.exe",
+        ):
+            if Path(candidate).is_file():
+                return candidate
+    raise ValueError("POSIX sh executable not found on PATH or Git for Windows")
+
+
+def _resolve_posix_shells() -> list[tuple[str, str]]:
+    """Resolve available POSIX shells (sh and optional dash) cross-platform."""
+    shells: list[tuple[str, str]] = []
+    sh_path = shutil.which("sh")
+    if not sh_path and os.name == "nt":
+        for candidate in (
+            r"C:\Program Files\Git\bin\sh.exe",
+            r"C:\Program Files\Git\usr\bin\sh.exe",
+        ):
+            if Path(candidate).is_file():
+                sh_path = candidate
+                break
+    if sh_path:
+        shells.append(("sh", sh_path))
+    dash_path = shutil.which("dash")
+    if dash_path:
+        shells.append(("dash", dash_path))
+    if not shells:
+        raise ValueError("no POSIX shell (sh or dash) found on PATH or Git for Windows")
+    return shells
 
 
 def strip_rust_comments_and_strings(src: str) -> str:
@@ -392,8 +439,11 @@ def check_csproj_and_aot_contracts(root: Path) -> None:
             elif dll_val.lower() not in allowed_sys_dlls:
                 raise ValueError(f"{rel}: unexpected LibraryImport target {dll_val!r}")
 
-        # Verify every JsonSerializer.Serialize / Deserialize passes TotalDropJsonContext.Default.*
-        for jm in re.finditer(r"\bJsonSerializer\.(?:De)?[Ss]erialize(?:\s*<[^>]+>)?\s*\(", cleaned):
+        # Verify every JsonSerializer.Serialize* / Deserialize* passes TotalDropJsonContext.Default.*
+        for jm in re.finditer(
+            r"\bJsonSerializer\.(?:De)?[Ss]erialize(?:Async|ToUtf8Bytes|ToDocument|ToNode|ToElement)?(?:\s*<[^>]+>)?\s*\(",
+            cleaned,
+        ):
             start_paren = jm.end() - 1
             depth = 1
             pos = start_paren + 1
@@ -504,11 +554,62 @@ def check_4way_35_locale_parity(root: Path) -> None:
             )
 
 
+def _strip_ps1_inline_comment(raw_line: str) -> str:
+    """Strip inline # comment outside single/double quotes (handling double-quoted backtick escapes)."""
+    buf: list[str] = []
+    in_sq = False
+    in_dq = False
+    idx = 0
+    while idx < len(raw_line):
+        c = raw_line[idx]
+        if c == "`" and in_dq and idx + 1 < len(raw_line):
+            buf.append(c)
+            buf.append(raw_line[idx + 1])
+            idx += 2
+            continue
+        if c == "'" and not in_dq:
+            in_sq = not in_sq
+        elif c == '"' and not in_sq:
+            in_dq = not in_dq
+        elif c == "#" and not in_sq and not in_dq:
+            break
+        buf.append(c)
+        idx += 1
+    return "".join(buf)
+
+
+def _has_ps1_line_continuation(code: str) -> bool:
+    """Return True if a comment-stripped PowerShell line ends with an unescaped backtick continuation."""
+    trimmed = code.rstrip(" \t")
+    if not trimmed.endswith("`"):
+        return False
+    count = 0
+    idx = len(trimmed) - 1
+    while idx >= 0 and trimmed[idx] == "`":
+        count += 1
+        idx -= 1
+    return (count % 2) == 1
+
+
 def _analyze_ps1_hardening(ps1_path: Path, rel_label: str) -> None:
     raw = ps1_path.read_text(encoding="utf-8")
-    # Strip block comments <# ... #>
-    text = re.sub(r"<#.*?#>", "", raw, flags=re.DOTALL)
-    lines = text.splitlines()
+    # Strip block comments <# ... #> while preserving newline count for accurate line numbers.
+    text = re.sub(r"<#.*?#>", lambda m: "\n" * m.group(0).count("\n"), raw, flags=re.DOTALL)
+    phys_lines = text.splitlines()
+
+    # Join backtick-continued logical PowerShell lines after stripping inline # comments.
+    logical_lines: list[tuple[int, str]] = []
+    idx = 0
+    while idx < len(phys_lines):
+        start_line = idx + 1
+        part = _strip_ps1_inline_comment(phys_lines[idx])
+        parts = [part]
+        while _has_ps1_line_continuation(parts[-1]) and idx + 1 < len(phys_lines):
+            parts[-1] = parts[-1].rstrip(" \t")[:-1]
+            idx += 1
+            parts.append(_strip_ps1_inline_comment(phys_lines[idx]))
+        logical_lines.append((start_line, " ".join(parts)))
+        idx += 1
 
     brace_depth = 0
     finally_entry_depths: list[int] = []
@@ -517,29 +618,7 @@ def _analyze_ps1_hardening(ps1_path: Path, rel_label: str) -> None:
     cleared_encoded = False
     saw_cargo_build = False
 
-    for line_no, raw_line in enumerate(lines, start=1):
-        # Strip inline # comments (outside double/single quotes)
-        buf: list[str] = []
-        in_sq = False
-        in_dq = False
-        idx = 0
-        while idx < len(raw_line):
-            c = raw_line[idx]
-            if c == "`" and in_dq and idx + 1 < len(raw_line):
-                buf.append(c)
-                buf.append(raw_line[idx + 1])
-                idx += 2
-                continue
-            if c == "'" and not in_dq:
-                in_sq = not in_sq
-            elif c == '"' and not in_sq:
-                in_dq = not in_dq
-            elif c == "#" and not in_sq and not in_dq:
-                break
-            buf.append(c)
-            idx += 1
-        code = "".join(buf)
-
+    for line_no, code in logical_lines:
         if re.search(r"\bfinally\b", code, flags=re.IGNORECASE):
             pending_finally = True
         in_finally = bool(finally_entry_depths)
@@ -559,11 +638,14 @@ def _analyze_ps1_hardening(ps1_path: Path, rel_label: str) -> None:
                     f"{rel_label}:{line_no}: active $env:{m_rf.group(1)} assignment outside finally block"
                 )
 
-        # Check makeappx invocations (ignoring Write-Host lines and quoted strings)
-        if not re.match(r"^\s*Write-Host\b", code, flags=re.IGNORECASE):
-            no_quotes = re.sub(r'"[^"]*"|\'[^\']*\'', "", code)
-            if re.search(r"makeappx", no_quotes, flags=re.IGNORECASE):
-                if re.search(r"(?:^|\s)[/-]nv(?:\s|$)", no_quotes, flags=re.IGNORECASE):
+        # Check makeappx invocations (joined logical lines + quoted "/nv" / '/nv' tokens)
+        if not re.match(
+            r"^\s*(?:Write-Host|Write-Output|Write-Verbose|Write-Warning|Write-Information|throw)\b",
+            code,
+            flags=re.IGNORECASE,
+        ):
+            if re.search(r"makeappx", code, flags=re.IGNORECASE):
+                if re.search(r'(?:^|[\s,(])["\']?[/-]nv["\']?(?:[\s,)]|$)', code, flags=re.IGNORECASE):
                     raise ValueError(
                         f"{rel_label}:{line_no}: forbidden makeappx '/nv' flag found on command invocation"
                     )
@@ -687,11 +769,12 @@ def check_workflows_and_subplatform_scripts(root: Path) -> None:
     # Verify subplatform POSIX shell scripts (T1-F06-02)
     build_sh = root / "subplatforms" / "msix" / "x86_64" / "build.sh"
     verify_sh = root / "subplatforms" / "msix" / "x86_64" / "verify.sh"
+    posix_shells = _resolve_posix_shells()
     for sh_path in (build_sh, verify_sh):
-        for shell in ("sh", "dash"):
-            p = subprocess.run([shell, "-n", str(sh_path)], capture_output=True, text=True, check=False)
+        for label, shell_exe in posix_shells:
+            p = subprocess.run([shell_exe, "-n", str(sh_path)], capture_output=True, text=True, check=False)
             if p.returncode != 0:
-                raise ValueError(f"{shell} -n failed on {sh_path.relative_to(root)}: {p.stderr}")
+                raise ValueError(f"{label} -n failed on {sh_path.relative_to(root)}: {p.stderr}")
     build_text = build_sh.read_text(encoding="utf-8")
     if re.search(r"\btar\b[^|\n]*\|\s*gzip\b", build_text):
         raise ValueError("subplatforms/msix/x86_64/build.sh still contains forbidden tar | gzip stub")
@@ -748,8 +831,22 @@ def check_versions_quad_and_clsid(root: Path) -> None:
         _validate_msix_quad(m.group(1), rel)
         versions_found[rel] = m.group(1)
 
-    if len(set(versions_found.values())) != 1:
-        raise ValueError(f"MSIX version mismatch across manifests/scripts: {versions_found}")
+    ffi_lib_rel = "crates/totaldrop-windows-ffi/src/lib.rs"
+    ffi_lib_text = (root / ffi_lib_rel).read_text(encoding="utf-8")
+    m_ffi_ver = re.search(r'\bpub\s+const\s+MSIX_VERSION\s*:\s*&str\s*=\s*"([^"]+)"\s*;', ffi_lib_text)
+    if not m_ffi_ver:
+        raise ValueError(f"{ffi_lib_rel}: missing pub const MSIX_VERSION")
+    _validate_msix_quad(m_ffi_ver.group(1), f"{ffi_lib_rel} MSIX_VERSION")
+    versions_found[ffi_lib_rel] = m_ffi_ver.group(1)
+
+    unique_msix_versions = set(versions_found.values())
+    if len(unique_msix_versions) != 1:
+        raise ValueError(f"MSIX version mismatch across manifests/scripts/FFI: {versions_found}")
+    unified_msix_ver = next(iter(unique_msix_versions))
+    if unified_msix_ver != "0.1.1.0":
+        raise ValueError(
+            f"unified MSIX quad version {unified_msix_ver!r} != expected '0.1.1.0': {versions_found}"
+        )
 
     # Core crate version isolation (0.2.0-beta.5) vs Windows FFI app SemVer (0.1.0-beta.1)
     root_toml = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
@@ -843,24 +940,42 @@ def check_resw_critical_security_keys(root: Path) -> None:
                 )
 
 
+def _is_allowed_xaml_value(val: str) -> bool:
+    if val.startswith(("{x:Bind ", "{StaticResource ", "{ThemeResource ")):
+        return True
+    return val in ALLOWLISTED_XAML_LITERALS
+
+
 def check_zero_hardcoded_english_xaml(root: Path) -> None:
+    checked_attrs = set(USER_VISIBLE_XAML_ATTRS) | set(A11Y_AND_TOOLTIP_XAML_ATTRS)
     for xaml in iter_app_files(root, "*.xaml"):
         rel = xaml.relative_to(root)
         el_root = ET.fromstring(xaml.read_text(encoding="utf-8"))
         for el in el_root.iter():
+            tag = el.tag.split("}", 1)[-1]
             for attr_k, attr_v in el.attrib.items():
                 local_attr = attr_k.split("}", 1)[-1]
-                is_a11y_name = local_attr == "AutomationProperties.Name"
-                if local_attr not in USER_VISIBLE_XAML_ATTRS and not is_a11y_name:
+                if local_attr not in checked_attrs:
                     continue
                 val = attr_v.strip()
-                if val.startswith(("{x:Bind ", "{StaticResource ", "{ThemeResource ")):
-                    continue
-                if val in ALLOWLISTED_XAML_LITERALS:
+                if _is_allowed_xaml_value(val):
                     continue
                 raise ValueError(
                     f"{rel}: hardcoded user-visible literal {local_attr}=\"{attr_v}\" (must bind via {{x:Bind}})"
                 )
+
+            # Check non-whitespace inner element text (excluding <x:String> path geometry constants)
+            if el.tag != XAML_STRING_TAG:
+                inner_txt = (el.text or "").strip()
+                if inner_txt and not _is_allowed_xaml_value(inner_txt):
+                    raise ValueError(
+                        f"{rel}: hardcoded user-visible element text <{tag}>{inner_txt}</{tag}> (must bind via {{x:Bind}})"
+                    )
+                tail_txt = (el.tail or "").strip()
+                if tail_txt and not _is_allowed_xaml_value(tail_txt):
+                    raise ValueError(
+                        f"{rel}: hardcoded user-visible inline text after <{tag}>: {tail_txt!r} (must bind via {{x:Bind}})"
+                    )
 
 
 def check_kose_motion_rtl_hc_a11y(root: Path) -> None:
@@ -1020,6 +1135,175 @@ def check_m2_ui_page_audits(root: Path) -> None:
         raise ValueError("SettingsPage missing CanSaveServer trim check or Escape revert on HasUnsavedServerEdit")
 
 
+def _strip_comments_preserve_lines(src: str, suffix: str) -> str:
+    """Strip comments while preserving string literals and exact 1:1 line numbering."""
+    if suffix == ".ps1":
+        no_block = re.sub(r"<#.*?#>", lambda m: "\n" * m.group(0).count("\n"), src, flags=re.DOTALL)
+        return "\n".join(_strip_ps1_inline_comment(line) for line in no_block.splitlines())
+
+    if suffix == ".py":
+        out: list[str] = []
+        i = 0
+        n = len(src)
+        while i < n:
+            ch = src[i]
+            if ch in ("'", '"'):
+                quote = src[i : i + 3] if src[i : i + 3] in ('"""', "'''") else ch
+                out.append(quote)
+                i += len(quote)
+                while i < n:
+                    if src[i] == "\\" and i + 1 < n:
+                        out.append(src[i : i + 2])
+                        i += 2
+                        continue
+                    if src[i : i + len(quote)] == quote:
+                        out.append(quote)
+                        i += len(quote)
+                        break
+                    out.append(src[i])
+                    i += 1
+                continue
+            if ch == "#":
+                while i < n and src[i] != "\n":
+                    i += 1
+                continue
+            out.append(ch)
+            i += 1
+        return "".join(out)
+
+    # Rust (.rs) and C# (.cs): preserve string literals (incl. Rust raw strings & C# verbatim strings).
+    out = []
+    i = 0
+    n = len(src)
+    while i < n:
+        ch = src[i]
+        nxt = src[i + 1] if i + 1 < n else ""
+        if ch == "/" and nxt == "/":
+            i += 2
+            while i < n and src[i] != "\n":
+                i += 1
+            continue
+        if ch == "/" and nxt == "*":
+            depth = 1
+            i += 2
+            while i < n and depth > 0:
+                if suffix == ".rs" and src[i : i + 2] == "/*":
+                    depth += 1
+                    i += 2
+                elif src[i : i + 2] == "*/":
+                    depth -= 1
+                    i += 2
+                else:
+                    if src[i] == "\n":
+                        out.append("\n")
+                    i += 1
+            out.append(" ")
+            continue
+        if suffix == ".rs" and (ch == "r" or (ch == "b" and nxt == "r")) and i + 1 < n:
+            start = i + 2 if ch == "b" else i + 1
+            j = start
+            hashes = 0
+            while j < n and src[j] == "#":
+                hashes += 1
+                j += 1
+            if j < n and src[j] == '"':
+                end_marker = '"' + ("#" * hashes)
+                end_pos = src.find(end_marker, j + 1)
+                if end_pos == -1:
+                    out.append(src[i:])
+                    break
+                out.append(src[i : end_pos + len(end_marker)])
+                i = end_pos + len(end_marker)
+                continue
+        if suffix == ".cs" and ch == "@" and nxt == '"':
+            out.append('@"')
+            i += 2
+            while i < n:
+                if src[i] == '"':
+                    if i + 1 < n and src[i + 1] == '"':
+                        out.append('""')
+                        i += 2
+                        continue
+                    out.append('"')
+                    i += 1
+                    break
+                out.append(src[i])
+                i += 1
+            continue
+        if ch == '"':
+            out.append('"')
+            i += 1
+            while i < n:
+                if src[i] == "\\" and i + 1 < n:
+                    out.append(src[i : i + 2])
+                    i += 2
+                    continue
+                out.append(src[i])
+                if src[i] == '"':
+                    i += 1
+                    break
+                i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _compute_function_blocks(lines: list[str], suffix: str) -> list[tuple[int, int]]:
+    """Return 1-indexed (start_line, end_line) spans approximating enclosing functions/tests."""
+    if suffix == ".rs":
+        hdr = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+[A-Za-z_]\w*\b")
+    elif suffix == ".py":
+        hdr = re.compile(r"^\s*(?:async\s+)?def\s+[A-Za-z_]\w*\s*\(")
+    elif suffix == ".cs":
+        hdr = re.compile(
+            r"^\s*(?:public|private|internal|protected)\s+(?:static\s+)?(?:async\s+)?[A-Za-z_][\w<>?\[\],\s]*\s+[A-Za-z_]\w*\s*\("
+        )
+    elif suffix == ".ps1":
+        hdr = re.compile(r"^\s*function\s+[A-Za-z_][\w-]*\b", flags=re.IGNORECASE)
+    else:
+        return []
+
+    starts: list[int] = [i for i, line in enumerate(lines, start=1) if hdr.search(line)]
+    if not starts:
+        return []
+    blocks: list[tuple[int, int]] = []
+    for idx, st in enumerate(starts):
+        end = (starts[idx + 1] - 1) if idx + 1 < len(starts) else len(lines)
+        blocks.append((st, end))
+    return blocks
+
+
+def _extract_balanced_spans(text: str, open_pattern: str) -> list[tuple[int, str]]:
+    """Extract multi-line balanced (...) or {...} spans matching open_pattern."""
+    spans: list[tuple[int, str]] = []
+    for m in re.finditer(open_pattern, text):
+        open_ch = text[m.end() - 1]
+        close_ch = ")" if open_ch == "(" else "}"
+        depth = 1
+        pos = m.end()
+        in_sq = False
+        in_dq = False
+        while pos < len(text) and depth > 0:
+            c = text[pos]
+            if (in_sq or in_dq) and c == "\\" and pos + 1 < len(text):
+                pos += 2
+                continue
+            if c == "'" and not in_dq:
+                in_sq = not in_sq
+            elif c == '"' and not in_sq:
+                in_dq = not in_dq
+            elif not in_sq and not in_dq:
+                if c == open_ch:
+                    depth += 1
+                elif c == close_ch:
+                    depth -= 1
+            pos += 1
+        line_no = text.count("\n", 0, m.start()) + 1
+        spans.append((line_no, text[m.start() : pos]))
+    return spans
+
+
 def scan_no_live_production_probing(root: Path) -> list[str]:
     """Static anti-production-probing scanner (TEST_INFRA.md section 3.3)."""
     forbidden_hosts = (
@@ -1028,55 +1312,222 @@ def scan_no_live_production_probing(root: Path) -> list[str]:
         "stun.cloudflare.com",
         "totaldrop.app",
     )
-    connect_patterns = (
-        r"TcpStream::connect\s*\(",
-        r"UdpSocket::connect\s*\(",
-        r"connect_async\s*\(",
-        r"urlopen\s*\(",
-        r"HttpClient",
-        r"ClientWebSocket",
-        r"Invoke-WebRequest",
-        r"Invoke-RestMethod",
+    raw_network_api_patterns = (
+        r"\bTcpStream::connect\s*\(",
+        r"\bUdpSocket::connect\s*\(",
+        r"\bconnect_async\s*\(",
+        r"\bsocket\.create_connection\s*\(",
+        r"\.connect\s*\(",
+        r"\bHTTPS?Connection\s*\(",
+        r"\burlopen\s*\(",
+        r"\brequests\.(?:get|post|put|head|request)\s*\(",
+        r"\bhttpx\.",
+        r"\bwebsockets\.connect\s*\(",
+        r"\breqwest::",
+        r"\bHttpClient\b",
+        r"\bClientWebSocket\b",
+        r"\bTcpClient\b",
+        r"\bInvoke-WebRequest\b",
+        r"\bInvoke-RestMethod\b",
         r"\bcurl\b",
     )
-    scan_paths: list[Path] = []
-    for base in (
-        root / "crates" / "totaldrop-windows-ffi" / "tests",
+    session_start_api_patterns = (
+        r"\btotaldrop_win_(?:send_files|send_text|receive_connect)_start\b",
+        r"\bStart(?:SendFiles|SendText|ReceiveConnect)\b",
+        r"\bstart_(?:send_files|send_text|receive_connect)\s*\(",
+    )
+    raw_net_re = re.compile("|".join(raw_network_api_patterns))
+    all_live_re = re.compile("|".join(raw_network_api_patterns + session_start_api_patterns))
+    offline_context_re = re.compile(
+        r"\b(?:(?:totaldrop_win_)?(?:validate_server_url|validate_uri|validate_input|extract_clipboard_code)(?:_json)?|"
+        r"TryValidateServerUrl|TrySaveServerUrl|"
+        r"DefaultRendezvousServer|DefaultRelayServer|DefaultStunServer)\b|Assert\.Equal\s*\("
+    )
+    userinfo_spoof_re = re.compile(r"wss?://[^\s\"']*@[^\s\"']*totaldrop\.app", flags=re.IGNORECASE)
+    invalid_space_url_re = re.compile(r"wss?://[^\s\"']*totaldrop\.app\s+/bad", flags=re.IGNORECASE)
+    config_kv_re = re.compile(
+        r'(?:\\?["\']?(?:rendezvous_server|relay_server|stun_server|'
+        r'RendezvousServer|RelayServer|StunServer)\\?["\']?\s*[:=]\s*)'
+        r'(?:r#*)?\\?["\']([^"\'\\]+)\\?["\']'
+    )
+
+    def _first_forbidden_host(snippet: str) -> str | None:
+        low = snippet.lower()
+        for h in forbidden_hosts:
+            if h in low:
+                return h
+        return None
+
+    def _is_share_or_privacy_only(line: str) -> bool:
+        low = line.lower()
+        if any(h in low for h in ("rendezvous.totaldrop.app", "relay.totaldrop.app", "stun.cloudflare.com")):
+            return False
+        stripped = re.sub(r"https://totaldrop\.app/(?:r#|privacy/)", "", low)
+        return "totaldrop.app" not in stripped
+
+    scan_dirs: list[Path] = [
+        root / "tests",
         root / "tools" / "e2e",
-        root / "tests" / "e2e",
         root / "ui-winui3-fluent2" / "TotalDrop.WinUI.Tests",
-    ):
+    ]
+    crates_dir = root / "crates"
+    if crates_dir.is_dir():
+        for tdir in sorted(crates_dir.glob("*/tests")):
+            if tdir.is_dir():
+                scan_dirs.append(tdir)
+
+    seen_paths: set[Path] = set()
+    scan_paths: list[Path] = []
+    for base in scan_dirs:
         if base.is_dir():
             for p in sorted(base.rglob("*")):
-                if p.is_file() and p.suffix in {".rs", ".py", ".ps1", ".cs"} and not _is_excluded_scan_path(p):
+                if (
+                    p.is_file()
+                    and p.suffix in {".rs", ".py", ".ps1", ".cs"}
+                    and not _is_excluded_scan_path(p)
+                    and p not in seen_paths
+                ):
+                    seen_paths.add(p)
                     scan_paths.append(p)
 
     violations: list[str] = []
+    seen_violations: set[str] = set()
+
+    def _add_violation(msg: str) -> None:
+        if msg not in seen_violations:
+            seen_violations.add(msg)
+            violations.append(msg)
+
     for p in scan_paths:
         rel = p.relative_to(root)
         # Skip this scanner's own pattern table
         if rel == Path("tools/e2e/verify_static_contracts.py"):
             continue
-        text = p.read_text(encoding="utf-8", errors="replace")
-        for line_no, line in enumerate(text.splitlines(), start=1):
-            stripped = line.strip()
-            if stripped.startswith(("//", "#", "///")):
+        raw_text = p.read_text(encoding="utf-8", errors="replace")
+        code_text = _strip_comments_preserve_lines(raw_text, p.suffix)
+        lines = code_text.splitlines()
+        blocks = _compute_function_blocks(lines, p.suffix)
+
+        def _enclosing_range(line_no: int) -> tuple[int, int]:
+            lo = max(1, line_no - 20)
+            hi = min(len(lines), line_no + 20)
+            for b_start, b_end in blocks:
+                if b_start <= line_no <= b_end:
+                    lo = min(lo, b_start)
+                    hi = max(hi, b_end)
+                    break
+            return lo, hi
+
+        def _enclosing_block_only(line_no: int) -> tuple[int, int]:
+            for b_start, b_end in blocks:
+                if b_start <= line_no <= b_end:
+                    return b_start, b_end
+            return max(1, line_no - 5), min(len(lines), line_no + 5)
+
+        file_has_live_api = any(all_live_re.search(ln) for ln in lines)
+
+        # Rule 2a: Multi-line BridgeNetworkConfig / BridgeNetworkConfigDto / make_cfg_json literals
+        for cfg_pat in (
+            r"\bBridgeNetworkConfig(?:Dto)?\s*[\(\{]",
+            r"\bBridgeNetworkConfig(?:Dto)?\s+\w+\s*=\s*new\s*\(",
+            r"\bmake_cfg_json\s*\(",
+        ):
+            for span_line, span_text in _extract_balanced_spans(code_text, cfg_pat):
+                if userinfo_spoof_re.search(span_text) or invalid_space_url_re.search(span_text):
+                    continue
+                host = _first_forbidden_host(span_text)
+                if host is not None and not _is_share_or_privacy_only(span_text):
+                    _add_violation(
+                        f"{rel}:{span_line}: forbidden production host {host!r} inside network config literal"
+                    )
+
+        # Rule 2b: JSON / dict / struct / named-arg assignments to rendezvous_server / relay_server / stun_server
+        for m_kv in config_kv_re.finditer(code_text):
+            val = m_kv.group(1)
+            if userinfo_spoof_re.search(val) or invalid_space_url_re.search(val):
                 continue
-            for host in forbidden_hosts:
-                if host in line:
-                    for cpat in connect_patterns:
-                        if re.search(cpat, line):
-                            violations.append(
-                                f"{rel}:{line_no}: forbidden live network call targeting {host!r}: {stripped}"
-                            )
-            # Check make_cfg_json / BridgeNetworkConfigDto live session fixtures do not default STUN to Cloudflare
-            if "stun.cloudflare.com" in line and "DefaultStunServer" not in line and "offline" not in line.lower():
-                violations.append(f"{rel}:{line_no}: unexpected stun.cloudflare.com reference: {stripped}")
+            host = _first_forbidden_host(val)
+            if host is None:
+                continue
+            kv_line = code_text.count("\n", 0, m_kv.start()) + 1
+            b_lo, b_hi = _enclosing_block_only(kv_line)
+            block_text = "\n".join(lines[b_lo - 1 : b_hi])
+            block_has_live = bool(all_live_re.search(block_text))
+            is_strict_offline_settings = (
+                rel.name == "SettingsStoreTests.cs"
+                or bool(offline_context_re.search(lines[kv_line - 1]))
+            ) and not block_has_live and not file_has_live_api
+            if not is_strict_offline_settings:
+                _add_violation(
+                    f"{rel}:{kv_line}: forbidden production host {host!r} assigned in network config field: "
+                    f"{lines[kv_line - 1].strip()}"
+                )
+
+        # Rule 3: Line-by-line, +-20 line window, and enclosing function-block API correlation
+        for line_no, line in enumerate(lines, start=1):
+            host = _first_forbidden_host(line)
+            if host is None:
+                continue
+
+            lo, hi = _enclosing_range(line_no)
+            b_lo, b_hi = _enclosing_block_only(line_no)
+            block_text = "\n".join(lines[b_lo - 1 : b_hi])
+
+            # Check unconditional Cloudflare STUN prohibition
+            if host == "stun.cloudflare.com":
+                block_has_live = bool(all_live_re.search(block_text))
+                if (
+                    ("DefaultStunServer" not in line and "Assert.Equal" not in line)
+                    or block_has_live
+                ):
+                    _add_violation(
+                        f"{rel}:{line_no}: forbidden live STUN host 'stun.cloudflare.com': {line.strip()}"
+                    )
+                    continue
+
+            is_share_only = _is_share_or_privacy_only(line)
+            is_malformed_test = bool(userinfo_spoof_re.search(line) or invalid_space_url_re.search(line))
+
+            # Even share-link or malformed URL lines must never sit next to raw HTTP/socket connect APIs
+            if is_share_only or is_malformed_test:
+                for api_line in range(lo, hi + 1):
+                    m_api = raw_net_re.search(lines[api_line - 1])
+                    if m_api:
+                        _add_violation(
+                            f"{rel}:{line_no}: forbidden live network API {m_api.group(0)!r} (line {api_line}) "
+                            f"near production host {host!r}: {line.strip()}"
+                        )
+                        break
+                continue
+
+            # Regular production host literal: forbid ANY network or session-start API in window or block
+            matched_api: tuple[int, str] | None = None
+            for api_line in range(lo, hi + 1):
+                m_api = all_live_re.search(lines[api_line - 1])
+                if m_api:
+                    matched_api = (api_line, m_api.group(0))
+                    break
+            if matched_api is not None:
+                api_ln, api_tok = matched_api
+                _add_violation(
+                    f"{rel}:{line_no}: forbidden live network/session API {api_tok!r} (line {api_ln}) "
+                    f"targeting production host {host!r}: {line.strip()}"
+                )
+                continue
+
+            # Also flag file-level indirection (e.g. top-level constant used by live API elsewhere in file)
+            # unless the host appears strictly inside an explicit offline validation/assertion context.
+            if file_has_live_api and not offline_context_re.search(block_text):
+                _add_violation(
+                    f"{rel}:{line_no}: production host {host!r} in file containing live network/session APIs "
+                    f"outside explicit offline validation: {line.strip()}"
+                )
+
     return violations
 
 
 def _is_excluded_scan_path(p: Path) -> bool:
-    return bool(set(p.parts) & {"bin", "obj", "__pycache__", ".git"})
+    return bool(set(p.parts) & {"bin", "obj", "__pycache__", ".git", "target"})
 
 
 def verify_all_static(root: Path, milestone: str) -> None:
@@ -1271,14 +1722,19 @@ def run_test_suite(root: Path, milestone: str) -> dict[str, dict[str, Any]]:
     def t2_f02_05() -> str:
         check_csproj_and_aot_contracts(root)
         with tempfile.TemporaryDirectory(prefix="td-f02-05-") as tmp:
-            d = Path(tmp) / "m"
-            _copy_lightweight_tree(root, d, m1_light_paths)
-            (d / "ui-winui3-fluent2" / "Interop" / "BadJson.cs").write_text(
-                "using System.Text.Json;\nclass Bad { object? Parse(string raw) => JsonSerializer.Deserialize<object>(raw); }\n",
-                encoding="utf-8",
-            )
-            _expect_fail_proc(_run_self_on(d, "M1"), "T2-F02-05", ("JsonSerializer.Deserialize<object>",))
-        return "clean source-gen JSON passes; reflection Deserialize<object> mutation caught"
+            t = Path(tmp)
+            for tag, snippet, expected in (
+                ("sync", "object? Parse(string raw) => JsonSerializer.Deserialize<object>(raw);", "JsonSerializer.Deserialize<object>"),
+                ("async", "System.Threading.Tasks.ValueTask<string?> ParseAsync(System.IO.Stream s) => JsonSerializer.DeserializeAsync<string>(s);", "JsonSerializer.DeserializeAsync<string>"),
+            ):
+                d = t / tag
+                _copy_lightweight_tree(root, d, m1_light_paths)
+                (d / "ui-winui3-fluent2" / "Interop" / "BadJson.cs").write_text(
+                    f"using System.Text.Json;\nclass Bad {{ {snippet} }}\n",
+                    encoding="utf-8",
+                )
+                _expect_fail_proc(_run_self_on(d, "M1"), f"T2-F02-05({tag})", (expected,))
+        return "clean source-gen JSON passes; reflection Deserialize & DeserializeAsync mutations caught"
 
     def t1_f04_01() -> str:
         check_4way_35_locale_parity(root)
@@ -1364,13 +1820,19 @@ def run_test_suite(root: Path, milestone: str) -> dict[str, dict[str, Any]]:
             ps_b.write_text(ps_b.read_text(encoding="utf-8").replace("cargo build", '$env:CARGO_ENCODED_RUSTFLAGS = "-D"\n    cargo build', 1), encoding="utf-8")
             _expect_fail_proc(_run_self_on(b, "M1"), "T2-F05-01(b)", ("CARGO_ENCODED_RUSTFLAGS",))
 
-            # (c) append /nv to makeappx pack
+            # (c) append /nv to makeappx pack (single-line, multi-line backtick, and quoted "/nv")
             c = t / "c"
             _copy_lightweight_tree(root, c, m1_light_paths)
             ps_c = c / "target-x86_64" / "build-x64.ps1"
             ps_c.write_text(ps_c.read_text(encoding="utf-8").replace("& $MakeAppxExe pack ", "& $MakeAppxExe pack /nv ", 1), encoding="utf-8")
             _expect_fail_proc(_run_self_on(c, "M1"), "T2-F05-01(c)", ("/nv",))
-        return "clean PS1 passes; RUSTFLAGS, CARGO_ENCODED_RUSTFLAGS, and /nv mutations all caught"
+
+            c2 = t / "c2"
+            _copy_lightweight_tree(root, c2, m1_light_paths)
+            ps_c2 = c2 / "target-x86_64" / "build-x64.ps1"
+            ps_c2.write_text(ps_c2.read_text(encoding="utf-8").replace("& $MakeAppxExe pack ", '& $MakeAppxExe pack `\n    "/nv" ', 1), encoding="utf-8")
+            _expect_fail_proc(_run_self_on(c2, "M1"), "T2-F05-01(c2)", ("/nv",))
+        return "clean PS1 passes; RUSTFLAGS, CARGO_ENCODED_RUSTFLAGS, single-line and backtick-continued /nv mutations all caught"
 
     def t1_f06_01() -> str:
         check_workflows_and_subplatform_scripts(root)
@@ -1535,7 +1997,7 @@ def run_test_suite(root: Path, milestone: str) -> dict[str, dict[str, Any]]:
             fake.write_bytes(_gz.compress(b"not-an-msix"))
             import hashlib as _hl
             (art / "SHA256SUMS").write_text(f"{_hl.sha256(fake.read_bytes()).hexdigest()}  {art_name}\n", encoding="utf-8")
-            p_ver = subprocess.run(["sh", str(root / "subplatforms" / "msix" / "x86_64" / "verify.sh"), str(art)], cwd=str(root), capture_output=True, text=True, check=False)
+            p_ver = subprocess.run([_resolve_sh(), str(root / "subplatforms" / "msix" / "x86_64" / "verify.sh"), str(art)], cwd=str(root), capture_output=True, text=True, check=False)
             if p_ver.returncode == 0:
                 raise AssertionError("T3-16: verify.sh did not reject gzip fake .msix")
         return "clean check-versions + verify-subplatforms PASS; version drift & gzip fake .msix both caught"
@@ -1622,6 +2084,9 @@ def run_test_suite(root: Path, milestone: str) -> dict[str, dict[str, Any]]:
                     ("a", '<TextBlock Text="Send files" TextWrapping="Wrap" IsTextScaleFactorEnabled="True" />', 'Text="Send files"'),
                     ("b", '<Button Content="Connect" AutomationProperties.Name="TotalDrop" />', 'Content="Connect"'),
                     ("c", '<TextBox Header="Server" AutomationProperties.Name="TotalDrop" />', 'Header="Server"'),
+                    ("d", '<TextBlock TextWrapping="Wrap" IsTextScaleFactorEnabled="True">Connecting...</TextBlock>', "Connecting..."),
+                    ("e", '<TextBox AutomationProperties.Name="TotalDrop" AutomationProperties.HelpText="Enter your server address" />', 'AutomationProperties.HelpText="Enter your server address"'),
+                    ("f", '<Button AutomationProperties.Name="TotalDrop" ToolTipService.ToolTip="Copy transfer code" />', 'ToolTipService.ToolTip="Copy transfer code"'),
                 ):
                     d = t / tag
                     _copy_lightweight_tree(root, d, m1_light_paths)
@@ -1630,7 +2095,7 @@ def run_test_suite(root: Path, milestone: str) -> dict[str, dict[str, Any]]:
                         encoding="utf-8",
                     )
                     _expect_fail_proc(_run_self_on(d, "M2"), f"T2-F13-06({tag})", (expected,))
-            return "zero hardcoded English XAML literals PASS; all 3 injected literals caught"
+            return "zero hardcoded English XAML literals PASS; attributes, inner text, HelpText, and ToolTip mutations caught"
 
         def t1_f14_01() -> str:
             check_kose_motion_rtl_hc_a11y(root)

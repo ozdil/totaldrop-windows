@@ -251,9 +251,14 @@ def parse_ico_frames(ico_path: Path) -> dict[int, Image.Image]:
             dib_size, dib_w, dib_h = struct.unpack_from("<Iii", chunk, 0)
             if dib_size < 40 or dib_w != width or abs(dib_h) != height * 2:
                 raise AssertionError(f"{ico_path.name}: invalid BMP DIB frame {width}")
-            im = Image.open(ico_path)
-            im.size
-            frames[width] = im.convert("RGBA")
+            with Image.open(ico_path) as im:
+                frame = im.ico.getimage((width, height))
+                frame.load()
+                if frame.size != (width, height):
+                    raise AssertionError(
+                        f"{ico_path.name}: BMP DIB frame size mismatch {frame.size} != {(width, height)}"
+                    )
+                frames[width] = frame.convert("RGBA")
     expected_sizes = {16, 24, 32, 48, 256}
     if set(frames.keys()) != expected_sizes:
         raise AssertionError(f"{ico_path.name}: expected sizes {sorted(expected_sizes)}, got {sorted(frames.keys())}")

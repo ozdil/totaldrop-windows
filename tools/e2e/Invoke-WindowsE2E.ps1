@@ -69,6 +69,18 @@ function Resolve-DumpBinExe {
     throw "dumpbin.exe not found via vswhere.exe or PATH."
 }
 
+function Resolve-PosixSh {
+    $cmd = Get-Command sh -ErrorAction SilentlyContinue
+    if ($null -ne $cmd) { return $cmd.Source }
+    foreach ($cand in @(
+        "C:\Program Files\Git\bin\sh.exe",
+        "C:\Program Files\Git\usr\bin\sh.exe"
+    )) {
+        if (Test-Path -LiteralPath $cand) { return $cand }
+    }
+    throw "POSIX sh executable not found on PATH or Git for Windows."
+}
+
 function Invoke-E2ETest {
     param(
         [Parameter(Mandatory = $true)][string]$TestId,
@@ -103,7 +115,7 @@ try {
 
     $MakePriExe = Resolve-WindowsKitTool -ToolName "MakePri.exe"
     $MakeAppxExe = Resolve-WindowsKitTool -ToolName "makeappx.exe"
-    $SignToolExe = Resolve-WindowsKitTool -ToolName "signtool.exe"
+    [void](Resolve-WindowsKitTool -ToolName "signtool.exe")
     $DumpBinExe = Resolve-DumpBinExe
 
     $PubOutDir = Join-Path $WorkTemp "publish-win-x64"
@@ -167,8 +179,10 @@ if (`$env:RUSTFLAGS -ne '-C debuginfo=2') {
         Invoke-E2ETest "T2-F02-01" {
             $isoRoot = Join-Path $WorkTemp "missing-dll-copy"
             $isoUi = Join-Path $isoRoot "ui-winui3-fluent2"
-            New-Item -ItemType Directory -Force -Path $isoRoot | Out-Null
-            Copy-Item -Path (Join-Path $RepoRoot "ui-winui3-fluent2") -Destination $isoUi -Recurse -Force
+            New-Item -ItemType Directory -Force -Path $isoUi | Out-Null
+            Get-ChildItem -LiteralPath (Join-Path $RepoRoot "ui-winui3-fluent2") -Force |
+                Where-Object { $_.Name -notin @("bin", "obj", "TotalDrop.WinUI.Tests") } |
+                ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $isoUi -Recurse -Force }
             $isoOut = Join-Path $WorkTemp "missing-dll-out"
             & dotnet publish (Join-Path $isoUi "TotalDrop.WinUI.csproj") `
                 -r win-x64 -c Release -p:Platform=x64 -p:PublishAot=true -o $isoOut 2>&1 | Out-Null
@@ -248,15 +262,19 @@ if (`$env:RUSTFLAGS -ne '-C debuginfo=2') {
             $badPri = Join-Path $badStage "resources.pri"
             $badDump = Join-Path $WorkTemp "bad-pri.xml"
             & $MakePriExe createconfig /cf $badCfg /dq lang-en /o /pv 10.0.0 | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "MakePri createconfig failed in T2-F04-05 with exit $LASTEXITCODE" }
             [xml]$px = Get-Content -LiteralPath $badCfg -Raw
             $pkgNode = $px.SelectSingleNode("/resources/packaging")
             if ($null -ne $pkgNode) { [void]$px.resources.RemoveChild($pkgNode) }
             $px.Save($badCfg)
             & $MakePriExe new /pr $badStage /cf $badCfg /mn $manPath /of $badPri /o | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "MakePri new failed in T2-F04-05 with exit $LASTEXITCODE" }
             & $MakePriExe dump /if $badPri /of $badDump /dt detailed /o | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "MakePri dump failed in T2-F04-05 with exit $LASTEXITCODE" }
             $out34 = & $PythonExe (Join-Path $RepoRoot "tools\e2e\verify_msix_opc.py") --pri-dump $badDump 2>&1
-            if ($LASTEXITCODE -eq 0 -or ($out34 -join "`n") -notmatch "zh-Hant") {
-                throw "34-locale PRI dump without zh-Hant was not caught: $out34"
+            $out34Text = ($out34 -join "`n")
+            if ($LASTEXITCODE -eq 0 -or $out34Text -notmatch "34 != 35" -or $out34Text -notmatch "zh-Hant") {
+                throw "34-locale PRI dump without zh-Hant was not caught with '34 != 35' and 'zh-Hant': $out34Text"
             }
 
             $dupRepo = Join-Path $WorkTemp "dup-tr-repo"
@@ -291,11 +309,17 @@ if (`$env:RUSTFLAGS -ne '-C debuginfo=2') {
             "PE32+ oracle and dumpbin.exe corroborated hardening, +crt-static, and M1 exports"
         }
 
-        # T1-F05-05: AppxSignature.p7x CN=TotalDrop + SHA256SUMS + zero key residue
+        # T1-F05-05: AppxSignature.p7x CN=TotalDrop + SHA-256 + SHA256SUMS + zero key residue
         Invoke-E2ETest "T1-F05-05" {
             $sig = Get-AuthenticodeSignature -FilePath $MsixPath
             if ($null -eq $sig.SignerCertificate -or $sig.SignerCertificate.Subject -ne "CN=TotalDrop") {
                 throw "Unexpected Authenticode signer subject: $($sig.SignerCertificate.Subject)"
+            }
+            if ($sig.SignerCertificate.SignatureAlgorithm.FriendlyName -notmatch 'sha256') {
+                throw "Unexpected Authenticode signature algorithm: $($sig.SignerCertificate.SignatureAlgorithm.FriendlyName)"
+            }
+            if ($sig.Status -in @("NotSigned", "HashMismatch", "NotSupportedFileFormat")) {
+                throw "Invalid Authenticode signature status: $($sig.Status)"
             }
             $distDir = Split-Path -Parent $MsixPath
             $sumsPath = Join-Path $distDir "SHA256SUMS"
@@ -308,7 +332,7 @@ if (`$env:RUSTFLAGS -ne '-C debuginfo=2') {
             $leaks = @(Get-ChildItem -Path $RepoRoot -Recurse -File -ErrorAction SilentlyContinue |
                 Where-Object { $_.FullName -notmatch '\\\.git\\' -and $_.Extension -in @(".pfx", ".p12", ".cer", ".snk") })
             if ($leaks.Count -gt 0) { throw "Signing key residue found in repo: $($leaks.FullName -join ', ')" }
-            "CN=TotalDrop signature, SHA256SUMS, and zero key residue verified"
+            "CN=TotalDrop SHA-256 signature, SHA256SUMS, and zero key residue verified"
         }
 
         # T1-F06-04: OPC/MSIX validator + subplatforms/msix/x86_64/verify.sh
@@ -317,21 +341,32 @@ if (`$env:RUSTFLAGS -ne '-C debuginfo=2') {
                 --msix $MsixPath --arch x64 --milestone M1 --expect-signed --pri-dump $PriDumpPath
             if ($LASTEXITCODE -ne 0) { throw "verify_msix_opc.py failed on signed MSIX" }
             $distDir = Split-Path -Parent $MsixPath
-            & sh (Join-Path $RepoRoot "subplatforms\msix\x86_64\verify.sh") $distDir
+            $shExe = Resolve-PosixSh
+            & $shExe (Join-Path $RepoRoot "subplatforms\msix\x86_64\verify.sh") $distDir
             if ($LASTEXITCODE -ne 0) { throw "subplatforms/msix/x86_64/verify.sh failed" }
             "Signed MSIX passed OPC/ZIP, ANSI paths, PRI dump, and subplatform verify.sh"
         }
 
         # T2-F05-02: Strict makeappx.exe pack (no /nv) rejects missing StoreLogo and missing exe
         Invoke-E2ETest "T2-F05-02" {
-            # (a) Delete all StoreLogo.scale-*.png and regenerate resources.pri
+            # (a) Delete all StoreLogo.scale-*.png and regenerate unified resources.pri matching build-x64.ps1
             $stageA = Join-Path $WorkTemp "bad-stage-logo"
             Copy-Item -Path $UnpackedDir -Destination $stageA -Recurse -Force
             Get-ChildItem -LiteralPath (Join-Path $stageA "Assets") -Filter "StoreLogo.scale-*.png" | Remove-Item -Force
             Remove-Item -LiteralPath (Join-Path $stageA "resources.pri") -Force -ErrorAction SilentlyContinue
+            $stageAStrings = Join-Path $stageA "Strings"
+            Copy-Item -Path (Join-Path $RepoRoot "ui-winui3-fluent2\Strings") -Destination $stageAStrings -Recurse -Force
+            Remove-Item -LiteralPath (Join-Path $stageAStrings "locales.json") -Force -ErrorAction SilentlyContinue
             $cfgA = Join-Path $WorkTemp "pri-a.xml"
             & $MakePriExe createconfig /cf $cfgA /dq lang-en /o /pv 10.0.0 | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "MakePri createconfig failed in T2-F05-02 with exit $LASTEXITCODE" }
+            [xml]$priXmlA = Get-Content -LiteralPath $cfgA -Raw
+            $pkgNodeA = $priXmlA.SelectSingleNode("/resources/packaging")
+            if ($null -ne $pkgNodeA) { [void]$priXmlA.resources.RemoveChild($pkgNodeA) }
+            $priXmlA.Save($cfgA)
             & $MakePriExe new /pr $stageA /cf $cfgA /mn (Join-Path $stageA "AppxManifest.xml") /of (Join-Path $stageA "resources.pri") /o | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "MakePri new failed in T2-F05-02 with exit $LASTEXITCODE" }
+            Remove-Item -LiteralPath $stageAStrings -Recurse -Force
             & $MakeAppxExe pack /o /h SHA256 /d $stageA /p (Join-Path $WorkTemp "bad-logo.msix") 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) { throw "makeappx.exe pack unexpectedly succeeded with missing StoreLogo!" }
 
@@ -376,31 +411,93 @@ with zipfile.ZipFile(p, 'w') as zout:
             "makeappx.exe unpack rejected 1-byte tampered DLL via AppxBlockMap SHA-256 mismatch"
         }
 
-        # T2-F05-05: Mid-signing failure cert cleanup + synthetic key-leak scanner
+        # T2-F05-05: Execute real build-x64.ps1 -SelfSignEphemeral try/finally on forced signtool failure + synthetic key-leak scanner
         Invoke-E2ETest "T2-F05-05" {
+            # (a) AST-verify and execute build-x64.ps1's verbatim if ($SelfSignEphemeral) { ... try { ... } finally { ... } } block
+            $buildScript = Join-Path $RepoRoot "target-x86_64\build-x64.ps1"
+            $tokens = $null
+            $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($buildScript, [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -ne 0) {
+                throw "PowerShell AST parse errors in build-x64.ps1: $($parseErrors -join '; ')"
+            }
+            $resolveFnAst = $ast.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Resolve-WindowsKitTool"
+            }, $true)
+            if ($null -eq $resolveFnAst) {
+                throw "build-x64.ps1 missing Resolve-WindowsKitTool function"
+            }
+            $signIfAst = $ast.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.IfStatementAst] -and
+                    $node.Clauses.Count -gt 0 -and
+                    $node.Clauses[0].Item1.Extent.Text -match '\$SelfSignEphemeral'
+            }, $true)
+            if ($null -eq $signIfAst) {
+                throw "build-x64.ps1 missing if (`$SelfSignEphemeral) signing block"
+            }
+            $tryAst = $signIfAst.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.TryStatementAst]
+            }, $true)
+            if ($null -eq $tryAst) {
+                throw "build-x64.ps1 if (`$SelfSignEphemeral) is missing a try/finally block"
+            }
+            if ($tryAst.Body.Extent.Text -notmatch 'New-SelfSignedCertificate' -or $tryAst.Body.Extent.Text -notmatch 'SignToolExe|signtool') {
+                throw "build-x64.ps1 ephemeral signing try block missing New-SelfSignedCertificate or signtool invocation"
+            }
+            if ($null -eq $tryAst.Finally -or
+                $tryAst.Finally.Extent.Text -notmatch 'Remove-Item' -or
+                $tryAst.Finally.Extent.Text -notmatch 'Cert:\\CurrentUser\\My\\') {
+                throw "build-x64.ps1 ephemeral signing finally block missing Cert:\CurrentUser\My\ Remove-Item cleanup"
+            }
+
             $beforeThumbs = @(Get-ChildItem "Cert:\CurrentUser\My" | Where-Object { $_.Subject -eq "CN=TotalDrop" } | Select-Object -ExpandProperty Thumbprint)
-            $roMsix = Join-Path $WorkTemp "readonly.msix"
+            $isoSignDir = Join-Path $WorkTemp "build-x64-sign-fail"
+            New-Item -ItemType Directory -Force -Path $isoSignDir | Out-Null
+            $roMsix = Join-Path $isoSignDir "readonly.msix"
             Copy-Item -LiteralPath $MsixPath -Destination $roMsix -Force
             Set-ItemProperty -LiteralPath $roMsix -Name IsReadOnly -Value $true
-            $cert = $null
-            $signFailed = $false
+
+            $isoSignScript = Join-Path $isoSignDir "build-x64-signing-stage.ps1"
+            $isoScriptBody = @(
+                'param([Parameter(Mandatory = $true)][string]$OutMsix, [switch]$SelfSignEphemeral)',
+                'Set-StrictMode -Version Latest',
+                '$ErrorActionPreference = "Stop"',
+                $resolveFnAst.Extent.Text,
+                $signIfAst.Extent.Text
+            ) -join "`n"
+            Set-Content -LiteralPath $isoSignScript -Value $isoScriptBody -Encoding utf8NoBOM
+
+            $signRc = 0
+            $prevEap = $ErrorActionPreference
             try {
-                $cert = New-SelfSignedCertificate -Type Custom -Subject "CN=TotalDrop" -KeyUsage DigitalSignature `
-                    -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddHours(1) `
-                    -CertStoreLocation "Cert:\CurrentUser\My" -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
-                & $SignToolExe sign /fd SHA256 /sha1 $cert.Thumbprint $roMsix 2>&1 | Out-Null
-                if ($LASTEXITCODE -ne 0) { $signFailed = $true }
+                $ErrorActionPreference = "Continue"
+                & pwsh -NoProfile -File $isoSignScript -OutMsix $roMsix -SelfSignEphemeral 2>&1 | Out-Null
+                $signRc = $LASTEXITCODE
             }
             finally {
-                if ($null -ne $cert -and (Test-Path -LiteralPath "Cert:\CurrentUser\My\$($cert.Thumbprint)")) {
-                    Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($cert.Thumbprint)" -Force
-                }
+                $ErrorActionPreference = $prevEap
                 Set-ItemProperty -LiteralPath $roMsix -Name IsReadOnly -Value $false -ErrorAction SilentlyContinue
             }
-            if (-not $signFailed) { throw "Expected signtool.exe to fail on read-only MSIX copy" }
+            if ($signRc -eq 0) {
+                throw "Isolated build-x64.ps1 -SelfSignEphemeral signing stage unexpectedly succeeded on read-only MSIX"
+            }
+
             $afterThumbs = @(Get-ChildItem "Cert:\CurrentUser\My" | Where-Object { $_.Subject -eq "CN=TotalDrop" } | Select-Object -ExpandProperty Thumbprint)
             $leakedThumbs = @($afterThumbs | Where-Object { $_ -notin $beforeThumbs })
-            if ($leakedThumbs.Count -ne 0) { throw "Leaked ephemeral CN=TotalDrop cert thumbprints: $($leakedThumbs -join ', ')" }
+            if ($leakedThumbs.Count -ne 0) {
+                foreach ($lt in $leakedThumbs) {
+                    Remove-Item -LiteralPath "Cert:\CurrentUser\My\$lt" -Force -ErrorAction SilentlyContinue
+                }
+                throw "build-x64.ps1 -SelfSignEphemeral leaked ephemeral CN=TotalDrop cert thumbprints: $($leakedThumbs -join ', ')"
+            }
+            $isoLeaks = @(Get-ChildItem -Path $isoSignDir -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Extension -in @(".pfx", ".p12", ".cer", ".snk") })
+            if ($isoLeaks.Count -gt 0) {
+                throw "build-x64.ps1 -SelfSignEphemeral left key/cert files on disk: $($isoLeaks.FullName -join ', ')"
+            }
 
             # (b) Synthetic leak files caught by verify_static_contracts.py
             $leakRepo = Join-Path $WorkTemp "leak-repo"
@@ -414,7 +511,7 @@ with zipfile.ZipFile(p, 'w') as zout:
                     throw "Signing-material scanner missed $fname"
                 }
             }
-            "Mid-signing failure left 0 leaked certs; all 4 forbidden signing extensions caught"
+            "Real build-x64.ps1 -SelfSignEphemeral signing failure left 0 leaked certs and 0 key files; all 4 forbidden signing extensions caught"
         }
 
         # T3-14: Headless native C ABI DLL LoadLibraryW/GetProcAddress smoke
@@ -463,6 +560,8 @@ assert v['app_version'] == '0.1.0-beta.1' and v['core_version'] == '0.2.0-beta.5
         $M2BuildErr = ""
         try {
             if (-not (Test-Path -LiteralPath $FfiDll)) {
+                $savedRustFlags = $env:RUSTFLAGS
+                $savedEncodedRustFlags = $env:CARGO_ENCODED_RUSTFLAGS
                 Push-Location $RepoRoot
                 try {
                     Remove-Item Env:RUSTFLAGS -ErrorAction SilentlyContinue
@@ -471,7 +570,21 @@ assert v['app_version'] == '0.1.0-beta.1' and v['core_version'] == '0.2.0-beta.5
                         --target x86_64-pc-windows-msvc -p totaldrop-windows-ffi --release --locked
                     if ($LASTEXITCODE -ne 0) { throw "cargo build totaldrop-windows-ffi failed" }
                 }
-                finally { Pop-Location }
+                finally {
+                    if ($null -ne $savedRustFlags) {
+                        $env:RUSTFLAGS = $savedRustFlags
+                    }
+                    else {
+                        Remove-Item Env:RUSTFLAGS -ErrorAction SilentlyContinue
+                    }
+                    if ($null -ne $savedEncodedRustFlags) {
+                        $env:CARGO_ENCODED_RUSTFLAGS = $savedEncodedRustFlags
+                    }
+                    else {
+                        Remove-Item Env:CARGO_ENCODED_RUSTFLAGS -ErrorAction SilentlyContinue
+                    }
+                    Pop-Location
+                }
             }
             New-Item -ItemType Directory -Force -Path $M2PubDir | Out-Null
             & dotnet publish (Join-Path $RepoRoot "ui-winui3-fluent2\TotalDrop.WinUI.csproj") `

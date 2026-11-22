@@ -71,15 +71,23 @@ def _run_cmd(
     return subprocess.run(cmd, cwd=str(cwd), env=merged_env, capture_output=True, text=True, check=False)
 
 
-def _prepare_arch_a_servers(tmp_root: Path) -> tuple[Path | None, Path | None, str]:
+def _prepare_arch_a_servers(tmp_root: Path, *, skip_build: bool = False) -> tuple[Path | None, Path | None, str]:
     rdv_env = os.environ.get("TOTALDROP_TEST_RENDEZVOUS_BIN", "").strip()
     rly_env = os.environ.get("TOTALDROP_TEST_RELAY_BIN", "").strip()
-    if rdv_env and rly_env:
+    if rdv_env or rly_env:
+        if not rdv_env or not rly_env:
+            raise RuntimeError(
+                "Both TOTALDROP_TEST_RENDEZVOUS_BIN and TOTALDROP_TEST_RELAY_BIN must be set "
+                f"when overriding Arch A binaries (got rdv={rdv_env!r}, rly={rly_env!r})"
+            )
         rdv = Path(rdv_env)
         rly = Path(rly_env)
         if not rdv.is_file() or not rly.is_file():
             raise RuntimeError(f"Configured Arch A binaries missing: rdv={rdv}, rly={rly}")
         return rdv, rly, "Arch A (env-configured totaldrop-servers)"
+
+    if skip_build:
+        return None, None, "Arch B (--skip-arch-a-build)"
 
     servers_repo = WORKSPACE_PARENT / "totaldrop-servers"
     manifest = servers_repo / "Cargo.toml"
@@ -271,6 +279,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     matrix: dict[str, dict[str, Any]] = {}
+    subprocess_failures: list[dict[str, Any]] = []
+
+    def _record_subproc_failure(step: str, rc: int, detail: str) -> None:
+        snippet = detail.strip().splitlines()[-1] if detail.strip() else "non-zero exit"
+        subprocess_failures.append({"step": step, "returncode": rc, "detail": snippet[:500]})
 
     with tempfile.TemporaryDirectory(prefix="totaldrop-m1-m2-e2e-") as tmp:
         tmp_root = Path(tmp)
@@ -285,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"[GATE] {p_probe.stdout.strip()}")
 
-        # 1. PE32+ oracle synthetic unit self-test (validates Windows-CI binary parser on Linux)
+        # 1a. PE32+ oracle synthetic unit self-test (validates Windows-CI binary parser on Linux)
         p_pe = _run_cmd(
             [sys.executable, "tools/e2e/verify_pe_hardening.py", "--unit-test-synthetic"],
             cwd=REPO_ROOT,
@@ -295,19 +308,29 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"[GATE] {p_pe.stdout.strip()}")
 
-        # 2. Architecture A loopback server setup
+        # 1b. Realistic Windows SDK MakePri.exe XML dump self-test
+        p_pri = _run_cmd(
+            [sys.executable, "tools/e2e/verify_msix_opc.py", "--self-test-pri"],
+            cwd=REPO_ROOT,
+        )
+        if p_pri.returncode != 0:
+            print(f"[FAIL] verify_msix_opc PRI self-test:\n{p_pri.stderr}", file=sys.stderr)
+            return 1
+        print(f"[GATE] {p_pri.stdout.strip()}")
+
+        # 2. Architecture A loopback server setup (fails loudly on partial or nonexistent env overrides)
         rust_m2_env: dict[str, str] = {}
-        if not args.skip_arch_a_build:
-            rdv_bin, rly_bin, mode_desc = _prepare_arch_a_servers(tmp_root)
-            if rdv_bin and rly_bin:
-                rust_m2_env["TOTALDROP_TEST_RENDEZVOUS_BIN"] = str(rdv_bin)
-                rust_m2_env["TOTALDROP_TEST_RELAY_BIN"] = str(rly_bin)
-            print(f"[INFO] Loopback server mode: {mode_desc}")
+        rdv_bin, rly_bin, mode_desc = _prepare_arch_a_servers(tmp_root, skip_build=args.skip_arch_a_build)
+        if rdv_bin and rly_bin:
+            rust_m2_env["TOTALDROP_TEST_RENDEZVOUS_BIN"] = str(rdv_bin)
+            rust_m2_env["TOTALDROP_TEST_RELAY_BIN"] = str(rly_bin)
+        print(f"[INFO] Loopback server mode: {mode_desc}")
 
         # 3. Rust M1 (8 tests)
         m1_rust, m1_rc, m1_log = _run_rust_suite("e2e_c_abi_m1")
         if m1_rc != 0:
             print(m1_log, file=sys.stderr)
+            _record_subproc_failure("cargo test --test e2e_c_abi_m1", m1_rc, m1_log)
         for tid, info in m1_rust.items():
             matrix[tid] = {"milestone": "M1", "env": "cross-platform", **info}
 
@@ -315,6 +338,7 @@ def main(argv: list[str] | None = None) -> int:
         m2_rust, m2_rc, m2_log = _run_rust_suite("e2e_loopback_m2", env=rust_m2_env)
         if m2_rc != 0:
             print(m2_log, file=sys.stderr)
+            _record_subproc_failure("cargo test --test e2e_loopback_m2", m2_rc, m2_log)
         t2_f13_01_a = m2_rust.pop("T2-F13-01-PART-A", {"status": "FAIL", "detail": "missing T2-F13-01 part a"})
         t3_22_ffi = m2_rust.pop("T3-22", {"status": "FAIL", "detail": "missing t3_22_ffi_adversarial_corpus"})
         for tid, info in m2_rust.items():
@@ -322,25 +346,35 @@ def main(argv: list[str] | None = None) -> int:
 
         # 5. Assets Kose oracle (10 M1 cross-platform tests)
         assets_json = tmp_root / "assets.json"
-        _run_cmd(
+        p_assets = _run_cmd(
             [sys.executable, "tools/e2e/verify_assets_kose.py", "--run-tests", "--json-out", str(assets_json)],
             cwd=REPO_ROOT,
         )
-        for tid, info in json.loads(assets_json.read_text(encoding="utf-8")).items():
-            matrix[tid] = {"milestone": "M1", "env": "cross-platform", "runner": "verify_assets_kose.py", **info}
+        if p_assets.returncode != 0:
+            err_txt = f"{p_assets.stdout}\n{p_assets.stderr}"
+            print(err_txt, file=sys.stderr)
+            _record_subproc_failure("verify_assets_kose.py --run-tests", p_assets.returncode, err_txt)
+        if assets_json.is_file():
+            for tid, info in json.loads(assets_json.read_text(encoding="utf-8")).items():
+                matrix[tid] = {"milestone": "M1", "env": "cross-platform", "runner": "verify_assets_kose.py", **info}
 
         # 6. MSIX/OPC subplatform cross-platform tests (5 M1 tests)
         opc_json = tmp_root / "opc.json"
-        _run_cmd(
+        p_opc = _run_cmd(
             [sys.executable, "tools/e2e/verify_msix_opc.py", "--run-tests", "--json-out", str(opc_json)],
             cwd=REPO_ROOT,
         )
-        for tid, info in json.loads(opc_json.read_text(encoding="utf-8")).items():
-            matrix[tid] = {"milestone": "M1", "env": "cross-platform", "runner": "verify_msix_opc.py", **info}
+        if p_opc.returncode != 0:
+            err_txt = f"{p_opc.stdout}\n{p_opc.stderr}"
+            print(err_txt, file=sys.stderr)
+            _record_subproc_failure("verify_msix_opc.py --run-tests", p_opc.returncode, err_txt)
+        if opc_json.is_file():
+            for tid, info in json.loads(opc_json.read_text(encoding="utf-8")).items():
+                matrix[tid] = {"milestone": "M1", "env": "cross-platform", "runner": "verify_msix_opc.py", **info}
 
         # 7. Static & mutation contracts (28 M1 + 6 M2 + T2-F13-01 part b)
         static_json = tmp_root / "static.json"
-        _run_cmd(
+        p_static = _run_cmd(
             [
                 sys.executable,
                 "tools/e2e/verify_static_contracts.py",
@@ -352,7 +386,11 @@ def main(argv: list[str] | None = None) -> int:
             ],
             cwd=REPO_ROOT,
         )
-        static_data = json.loads(static_json.read_text(encoding="utf-8"))
+        if p_static.returncode != 0:
+            err_txt = f"{p_static.stdout}\n{p_static.stderr}"
+            print(err_txt, file=sys.stderr)
+            _record_subproc_failure("verify_static_contracts.py --milestone M2 --run-tests", p_static.returncode, err_txt)
+        static_data = json.loads(static_json.read_text(encoding="utf-8")) if static_json.is_file() else {}
         t2_f13_01_b = static_data.pop("T2-F13-01-part-b", {"status": "FAIL", "detail": "missing part b"})
         if t2_f13_01_a["status"] == "PASS" and t2_f13_01_b["status"] == "PASS":
             matrix["T2-F13-01"] = {
@@ -440,6 +478,7 @@ def main(argv: list[str] | None = None) -> int:
             "M2_windows_only_ready": len(m2_win),
         },
         "failed_ids": failed,
+        "subprocess_failures": subprocess_failures,
         "tests": dict(sorted(matrix.items())),
     }
 
@@ -451,10 +490,16 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Runnable Passed    : {len(passed)}/{len(passed) + len(failed)} (M1={len(m1_pass)}, M2={len(m2_pass)})")
     print(f"Runnable Failed    : {len(failed)}")
     print(f"WINDOWS_ONLY_READY : {len(win_ready)} (M1={len(m1_win)}, M2={len(m2_win)})")
+    print(f"Subprocess Failures: {len(subprocess_failures)}")
     if failed:
         print("\nFAILED TEST IDS:")
         for tid in failed:
             print(f"  - {tid}: {matrix[tid].get('detail')}")
+    if subprocess_failures:
+        print("\nSUBPROCESS FAILURES:", file=sys.stderr)
+        for sf in subprocess_failures:
+            print(f"  - {sf['step']} (rc={sf['returncode']}): {sf['detail']}", file=sys.stderr)
+    if failed or subprocess_failures:
         return 1
     if len(matrix) != 174 or len(passed) != 130 or len(win_ready) != 44:
         print(

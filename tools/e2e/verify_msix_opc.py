@@ -16,6 +16,9 @@ import gzip
 import hashlib
 import io
 import json
+import os
+import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -70,12 +73,79 @@ def verify_pri_file(pri_path: Path) -> None:
     verify_pri_bytes(pri_path.read_bytes(), label=pri_path.name)
 
 
+def _resolve_sh() -> str:
+    """Resolve POSIX sh on PATH or Git for Windows fallbacks."""
+    found = shutil.which("sh")
+    if found:
+        return found
+    if os.name == "nt":
+        for candidate in (
+            r"C:\Program Files\Git\bin\sh.exe",
+            r"C:\Program Files\Git\usr\bin\sh.exe",
+        ):
+            if Path(candidate).is_file():
+                return candidate
+    raise RuntimeError("POSIX sh executable not found on PATH or Git for Windows")
+
+
+def _local_tag(el: ET.Element) -> str:
+    return el.tag.split("}", 1)[-1]
+
+
+def _extract_candidate_qualifiers(
+    cand: ET.Element,
+    qualifier_sets: dict[str, list[tuple[str, str]]],
+) -> list[tuple[str, str]]:
+    """Parse qualifier (name, value) pairs from MakePri inline attributes or QualifierSet."""
+    pairs: list[tuple[str, str]] = []
+    quals_raw = cand.attrib.get("qualifiers", "").strip()
+    if quals_raw:
+        for part in re.split(r"[;,]", quals_raw):
+            token = part.strip()
+            if not token:
+                continue
+            kv = re.split(r"[=-]", token, maxsplit=1)
+            if len(kv) != 2:
+                continue
+            k, v = kv[0].strip(), kv[1].strip()
+            if k and v:
+                pairs.append((k, v))
+    for child in cand:
+        if _local_tag(child) == "Qualifier":
+            qname = child.attrib.get("name", "").strip()
+            qval = child.attrib.get("value", "").strip()
+            if qname and qval:
+                pairs.append((qname, qval))
+    if not pairs:
+        qset_ref = cand.attrib.get("qualifierSet", "").strip()
+        if qset_ref and qset_ref in qualifier_sets:
+            pairs.extend(qualifier_sets[qset_ref])
+    return pairs
+
+
 def verify_pri_dump(pri_xml_path: Path) -> None:
     """Verify MakePri.exe XML dump contains all 35 BCP-47 languages and Kose asset qualifiers."""
     if not pri_xml_path.is_file():
         raise ValueError(f"missing pri.xml dump: {pri_xml_path}")
     tree = ET.parse(pri_xml_path)
     root = tree.getroot()
+
+    # Index /dt detailed <QualifierSet index="..."><Qualifier name="..." value="..."/></QualifierSet>
+    qualifier_sets: dict[str, list[tuple[str, str]]] = {}
+    for el in root.iter():
+        if _local_tag(el) != "QualifierSet":
+            continue
+        qidx = el.attrib.get("index", "").strip()
+        if not qidx:
+            continue
+        qpairs: list[tuple[str, str]] = []
+        for child in el:
+            if _local_tag(child) == "Qualifier":
+                qname = child.attrib.get("name", "").strip()
+                qval = child.attrib.get("value", "").strip()
+                if qname and qval:
+                    qpairs.append((qname, qval))
+        qualifier_sets[qidx] = qpairs
 
     # Collect language qualifiers per NamedResource and globally under Resources subtrees.
     lang_by_resource: dict[str, set[str]] = {}
@@ -84,18 +154,17 @@ def verify_pri_dump(pri_xml_path: Path) -> None:
     asset_scales: set[str] = set()
     asset_targetsizes: set[str] = set()
 
-    for nr in root.iter("NamedResource"):
+    for nr in root.iter():
+        if _local_tag(nr) != "NamedResource":
+            continue
         name = nr.attrib.get("name", "")
+        is_square44 = "square44x44logo" in name.lower()
         langs: set[str] = set()
-        for cand in nr.findall("Candidate"):
-            quals_raw = cand.attrib.get("qualifiers", "")
-            for part in quals_raw.split(";"):
-                part = part.strip()
-                if "=" not in part:
-                    continue
-                k, v = part.split("=", 1)
-                k_up = k.strip().upper()
-                v_clean = v.strip()
+        for cand in nr:
+            if _local_tag(cand) != "Candidate":
+                continue
+            for k, v_clean in _extract_candidate_qualifiers(cand, qualifier_sets):
+                k_up = k.upper()
                 if k_up == "LANGUAGE":
                     langs.add(v_clean.lower())
                     all_langs.add(v_clean.lower())
@@ -103,15 +172,13 @@ def verify_pri_dump(pri_xml_path: Path) -> None:
                     asset_scales.add(v_clean)
                 elif k_up == "TARGETSIZE":
                     asset_targetsizes.add(v_clean)
-                elif k_up == "ALTERNATEFORM":
-                    if "square44x44logo" in name.lower():
-                        square44_quals.add(v_clean.upper())
-            if "square44x44logo" in name.lower():
-                up_q = quals_raw.upper()
-                if "LIGHTUNPLATED" in up_q:
-                    square44_quals.add("LIGHTUNPLATED")
-                if "ALTERNATEFORM=UNPLATED" in up_q or up_q.endswith("UNPLATED"):
-                    square44_quals.add("UNPLATED")
+                elif k_up in ("ALTERNATEFORM", "ALTFORM"):
+                    if is_square44:
+                        v_up = v_clean.upper()
+                        if v_up == "UNPLATED":
+                            square44_quals.add("UNPLATED")
+                        elif v_up == "LIGHTUNPLATED":
+                            square44_quals.add("LIGHTUNPLATED")
         if name:
             lang_by_resource.setdefault(name, set()).update(langs)
 
@@ -126,9 +193,10 @@ def verify_pri_dump(pri_xml_path: Path) -> None:
     for key in REQUIRED_PRI_RESOURCE_KEYS:
         key_langs = lang_by_resource.get(key)
         if not key_langs:
-            # MakePri may nest keys as Resources/<key>
+            # MakePri may nest keys as Resources/<key> or Resources\<key>
             for res_name, r_langs in lang_by_resource.items():
-                if res_name.endswith(f"/{key}") or res_name == key:
+                norm_name = res_name.replace("\\", "/")
+                if norm_name.endswith(f"/{key}") or norm_name == key:
                     key_langs = r_langs
                     break
         if not key_langs:
@@ -148,6 +216,179 @@ def verify_pri_dump(pri_xml_path: Path) -> None:
     for alt in ("UNPLATED", "LIGHTUNPLATED"):
         if alt not in square44_quals:
             raise ValueError(f"pri.xml Square44x44Logo.png missing AlternateForm={alt}")
+
+
+def _build_realistic_makepri_xml(
+    locales: tuple[str, ...],
+    *,
+    include_unplated: bool = True,
+    include_lightunplated: bool = True,
+    use_qualifier_sets_only: bool = False,
+) -> str:
+    """Construct realistic Windows SDK MakePri.exe dump XML (hyphen + comma qualifiers)."""
+    qset_lines: list[str] = []
+    res_lines: list[str] = []
+    next_qset = 1
+
+    if use_qualifier_sets_only:
+        lang_qset_ids: dict[str, int] = {}
+        for loc in locales:
+            qidx = next_qset
+            next_qset += 1
+            lang_qset_ids[loc] = qidx
+            qset_lines.append(
+                f'      <QualifierSet index="{qidx}">'
+                f'<Qualifier name="Language" value="{loc.upper()}"/>'
+                f"</QualifierSet>"
+            )
+        scale_qset_ids: dict[str, int] = {}
+        for sc in ("100", "125", "150", "200", "400"):
+            qidx = next_qset
+            next_qset += 1
+            scale_qset_ids[sc] = qidx
+            qset_lines.append(
+                f'      <QualifierSet index="{qidx}">'
+                f'<Qualifier name="Scale" value="{sc}"/>'
+                f"</QualifierSet>"
+            )
+        ts_qset_ids: list[tuple[str, int]] = []
+        for ts in ("16", "24", "32", "48", "256"):
+            if include_unplated:
+                qidx = next_qset
+                next_qset += 1
+                ts_qset_ids.append((f"unplated-{ts}", qidx))
+                qset_lines.append(
+                    f'      <QualifierSet index="{qidx}">'
+                    f'<Qualifier name="TargetSize" value="{ts}"/>'
+                    f'<Qualifier name="AlternateForm" value="UNPLATED"/>'
+                    f"</QualifierSet>"
+                )
+            if include_lightunplated:
+                qidx = next_qset
+                next_qset += 1
+                ts_qset_ids.append((f"light-{ts}", qidx))
+                qset_lines.append(
+                    f'      <QualifierSet index="{qidx}">'
+                    f'<Qualifier name="TargetSize" value="{ts}"/>'
+                    f'<Qualifier name="AlternateForm" value="LIGHTUNPLATED"/>'
+                    f"</QualifierSet>"
+                )
+        for key in REQUIRED_PRI_RESOURCE_KEYS:
+            cands = "".join(
+                f'<Candidate qualifierSet="{lang_qset_ids[loc]}" type="String"><Value>{key}-{loc}</Value></Candidate>'
+                for loc in locales
+            )
+            res_lines.append(f'      <NamedResource name="{key}">{cands}</NamedResource>')
+        sq_cands = [
+            f'<Candidate qualifierSet="{scale_qset_ids[sc]}" type="Path"><Value>Assets\\Square44x44Logo.scale-{sc}.png</Value></Candidate>'
+            for sc in ("100", "125", "150", "200", "400")
+        ]
+        sq_cands.extend(
+            f'<Candidate qualifierSet="{qidx}" type="Path"><Value>Assets\\Square44x44Logo.{label}.png</Value></Candidate>'
+            for label, qidx in ts_qset_ids
+        )
+        res_lines.append(f'      <NamedResource name="Assets\\Square44x44Logo.png">{"".join(sq_cands)}</NamedResource>')
+        return (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+            "<PriInfo>\n"
+            "  <ResourceMap name=\"TotalDrop.TotalDrop\">\n"
+            "    <DecisionInfo>\n"
+            + "\n".join(qset_lines)
+            + "\n    </DecisionInfo>\n"
+            "    <ResourceMapSubtree name=\"Resources\">\n"
+            + "\n".join(res_lines)
+            + "\n    </ResourceMapSubtree>\n"
+            "  </ResourceMap>\n"
+            "</PriInfo>\n"
+        )
+
+    for key in REQUIRED_PRI_RESOURCE_KEYS:
+        cands = "".join(
+            f'<Candidate qualifiers="Language-{loc.upper()}" type="String"><Value>{key}-{loc}</Value></Candidate>'
+            for loc in locales
+        )
+        res_lines.append(f'      <NamedResource name="{key}">{cands}</NamedResource>')
+
+    sq_cands = [
+        f'<Candidate qualifiers="Scale-{sc}" type="Path"><Value>Assets\\Square44x44Logo.scale-{sc}.png</Value></Candidate>'
+        for sc in ("100", "125", "150", "200", "400")
+    ]
+    for ts in ("16", "24", "32", "48", "256"):
+        if include_unplated:
+            sq_cands.append(
+                f'<Candidate qualifiers="TargetSize-{ts}, AlternateForm-UNPLATED" type="Path">'
+                f"<Value>Assets\\Square44x44Logo.targetsize-{ts}_altform-unplated.png</Value></Candidate>"
+            )
+        if include_lightunplated:
+            sq_cands.append(
+                f'<Candidate qualifiers="TargetSize-{ts}, AlternateForm-LIGHTUNPLATED" type="Path">'
+                f"<Value>Assets\\Square44x44Logo.targetsize-{ts}_altform-lightunplated.png</Value></Candidate>"
+            )
+    res_lines.append(f'      <NamedResource name="Assets\\Square44x44Logo.png">{"".join(sq_cands)}</NamedResource>')
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        "<PriInfo>\n"
+        "  <ResourceMap name=\"TotalDrop.TotalDrop\">\n"
+        "    <ResourceMapSubtree name=\"Resources\">\n"
+        + "\n".join(res_lines)
+        + "\n    </ResourceMapSubtree>\n"
+        "  </ResourceMap>\n"
+        "</PriInfo>\n"
+    )
+
+
+def self_test_pri_dump() -> str:
+    """Self-test verify_pri_dump() against realistic Windows SDK MakePri.exe dump formats."""
+    with tempfile.TemporaryDirectory(prefix="td-pri-selftest-") as tmp:
+        tmp_dir = Path(tmp)
+
+        # (a) 35-locale realistic MakePri dump (Language-EN, Language-ZH-HANT, Scale-100,
+        #     TargetSize-16, AlternateForm-UNPLATED / LIGHTUNPLATED) -> PASS
+        p_ok = tmp_dir / "pri_35_ok.xml"
+        p_ok.write_text(_build_realistic_makepri_xml(CANONICAL_35_LOCALES), encoding="utf-8")
+        verify_pri_dump(p_ok)
+
+        # (b) Missing zh-Hant (34 != 35) -> FAIL naming BOTH '34 != 35' and 'zh-Hant'
+        locales_34 = tuple(loc for loc in CANONICAL_35_LOCALES if loc != "zh-Hant")
+        p_34 = tmp_dir / "pri_34_missing_zhhant.xml"
+        p_34.write_text(_build_realistic_makepri_xml(locales_34), encoding="utf-8")
+        try:
+            verify_pri_dump(p_34)
+        except ValueError as exc:
+            msg = str(exc)
+            if "34 != 35" not in msg or "zh-Hant" not in msg:
+                raise AssertionError(f"missing zh-Hant error lacked '34 != 35' or 'zh-Hant': {msg}") from exc
+        else:
+            raise AssertionError("34-locale MakePri dump missing zh-Hant unexpectedly passed!")
+
+        # (c) Missing dark AlternateForm-UNPLATED (only AlternateForm-LIGHTUNPLATED present) -> FAIL
+        p_no_unplated = tmp_dir / "pri_missing_unplated.xml"
+        p_no_unplated.write_text(
+            _build_realistic_makepri_xml(
+                CANONICAL_35_LOCALES,
+                include_unplated=False,
+                include_lightunplated=True,
+            ),
+            encoding="utf-8",
+        )
+        try:
+            verify_pri_dump(p_no_unplated)
+        except ValueError as exc:
+            msg = str(exc)
+            if "AlternateForm=UNPLATED" not in msg:
+                raise AssertionError(f"missing UNPLATED error lacked 'AlternateForm=UNPLATED': {msg}") from exc
+        else:
+            raise AssertionError("MakePri dump with LIGHTUNPLATED only (no UNPLATED) unexpectedly passed!")
+
+        # (d) /dt detailed <QualifierSet> references without inline qualifiers= -> PASS
+        p_qset = tmp_dir / "pri_qset_detailed.xml"
+        p_qset.write_text(
+            _build_realistic_makepri_xml(CANONICAL_35_LOCALES, use_qualifier_sets_only=True),
+            encoding="utf-8",
+        )
+        verify_pri_dump(p_qset)
+
+    return "realistic MakePri dump (35-locale, missing zh-Hant 34!=35, LIGHTUNPLATED-only, QualifierSet) verified"
 
 
 def verify_msix_archive(
@@ -261,6 +502,7 @@ def _write_sha256sums(art_dir: Path, filename: str) -> None:
 
 def run_cross_platform_tests(repo_root: Path) -> dict[str, dict[str, Any]]:
     results: dict[str, dict[str, Any]] = {}
+    sh_exe = _resolve_sh()
     artifact_name, msix_version = resolve_recipe_artifact_name(repo_root, "x86_64")
     build_sh = repo_root / "subplatforms" / "msix" / "x86_64" / "build.sh"
     verify_sh = repo_root / "subplatforms" / "msix" / "x86_64" / "verify.sh"
@@ -273,8 +515,9 @@ def run_cross_platform_tests(repo_root: Path) -> dict[str, dict[str, Any]]:
             results[test_id] = {"status": "FAIL", "detail": str(exc)}
 
     def t1_f06_05() -> str:
+        pri_note = self_test_pri_dump()
         p_check = subprocess.run(
-            ["sh", str(build_sh), "--check-recipe"],
+            [sh_exe, str(build_sh), "--check-recipe"],
             cwd=str(repo_root),
             capture_output=True,
             text=True,
@@ -293,7 +536,7 @@ def run_cross_platform_tests(repo_root: Path) -> dict[str, dict[str, Any]]:
             verify_msix_archive(msix_path, arch="x64", milestone="M1", expect_signed=False)
 
             p_ver = subprocess.run(
-                ["sh", str(verify_sh), str(art_dir)],
+                [sh_exe, str(verify_sh), str(art_dir)],
                 cwd=str(repo_root),
                 capture_output=True,
                 text=True,
@@ -306,7 +549,7 @@ def run_cross_platform_tests(repo_root: Path) -> dict[str, dict[str, Any]]:
             empty_stage.mkdir()
             out_dir = tmp_root / "out"
             p_empty = subprocess.run(
-                ["sh", str(build_sh), "--package-staged", str(empty_stage), str(out_dir)],
+                [sh_exe, str(build_sh), "--package-staged", str(empty_stage), str(out_dir)],
                 cwd=str(repo_root),
                 capture_output=True,
                 text=True,
@@ -314,7 +557,7 @@ def run_cross_platform_tests(repo_root: Path) -> dict[str, dict[str, Any]]:
             )
             if p_empty.returncode == 0:
                 raise AssertionError("build.sh --package-staged unexpectedly succeeded on empty staging dir")
-        return f"verified recipe ({artifact_name}), verify.sh PASS on OPC fixture, build.sh refuses empty stage"
+        return f"verified recipe ({artifact_name}), verify.sh PASS on OPC fixture, build.sh refuses empty stage; {pri_note}"
 
     def t2_f06_01() -> str:
         with tempfile.TemporaryDirectory(prefix="td-f06-01-") as tmp:
@@ -333,7 +576,7 @@ def run_cross_platform_tests(repo_root: Path) -> dict[str, dict[str, Any]]:
             _write_sha256sums(art_dir, artifact_name)
 
             p = subprocess.run(
-                ["sh", str(verify_sh), str(art_dir)],
+                [sh_exe, str(verify_sh), str(art_dir)],
                 cwd=str(repo_root),
                 capture_output=True,
                 text=True,
@@ -360,7 +603,7 @@ def run_cross_platform_tests(repo_root: Path) -> dict[str, dict[str, Any]]:
             _write_sha256sums(art_dir, artifact_name)
 
             p = subprocess.run(
-                ["sh", str(verify_sh), str(art_dir)],
+                [sh_exe, str(verify_sh), str(art_dir)],
                 cwd=str(repo_root),
                 capture_output=True,
                 text=True,
@@ -388,7 +631,7 @@ def run_cross_platform_tests(repo_root: Path) -> dict[str, dict[str, Any]]:
             msix_path.write_bytes(bytes(raw))
 
             p = subprocess.run(
-                ["sh", str(verify_sh), str(art_dir)],
+                [sh_exe, str(verify_sh), str(art_dir)],
                 cwd=str(repo_root),
                 capture_output=True,
                 text=True,
@@ -431,6 +674,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pri-dump", type=Path, default=None, help="Path to MakePri.exe XML dump.")
     parser.add_argument("--check-pri-file", type=Path, default=None, help="Verify standalone resources.pri file.")
     parser.add_argument("--resolve-recipe", action="store_true", help="Print artifact_name from RECIPE.toml.")
+    parser.add_argument("--self-test-pri", action="store_true", help="Run realistic MakePri.exe XML dump self-tests.")
     parser.add_argument("--run-tests", action="store_true", help="Run cross-platform F06 tests (T1-F06-05, T2-F06-01..04).")
     parser.add_argument("--json-out", type=Path, default=None)
     args = parser.parse_args(argv)
@@ -439,6 +683,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.resolve_recipe:
             name, _ver = resolve_recipe_artifact_name(args.root, args.arch)
             print(name)
+            return 0
+        if args.self_test_pri:
+            note = self_test_pri_dump()
+            print(f"verify_msix_opc PRI self-test OK: {note}")
             return 0
         if args.run_tests:
             results = run_cross_platform_tests(args.root)
@@ -466,7 +714,9 @@ def main(argv: list[str] | None = None) -> int:
             verify_pri_dump(args.pri_dump)
             print(f"verify_msix_opc PRI dump OK: {args.pri_dump}")
             return 0
-        parser.error("specify one of --msix, --check-pri-file, --pri-dump, --resolve-recipe, or --run-tests")
+        parser.error(
+            "specify one of --msix, --check-pri-file, --pri-dump, --resolve-recipe, --self-test-pri, or --run-tests"
+        )
     except Exception as exc:  # noqa: BLE001
         print(f"error: {exc}", file=sys.stderr)
         return 1
