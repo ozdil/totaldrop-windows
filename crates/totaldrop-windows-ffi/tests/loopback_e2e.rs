@@ -1665,3 +1665,196 @@ fn read_only_destination_emits_storage_permission_error_on_unix() -> TestResult 
     let _ = ptr::null::<c_char>();
     Ok(())
 }
+
+struct LoopbackCanary {
+    url: String,
+    accepted: Arc<AtomicU64>,
+    abort: tokio::task::AbortHandle,
+}
+
+impl Drop for LoopbackCanary {
+    fn drop(&mut self) {
+        self.abort.abort();
+    }
+}
+
+impl LoopbackCanary {
+    fn start() -> Result<Self, Box<dyn StdError>> {
+        let accepted = Arc::new(AtomicU64::new(0));
+        let counter = Arc::clone(&accepted);
+        let (url, abort) = TEST_RUNTIME.block_on(async move {
+            let listener = TcpListener::bind("127.0.0.1:0").await?;
+            let local = listener.local_addr()?;
+            let url = format!("ws://{local}");
+            let task = tokio::spawn(async move {
+                while let Ok((stream, _)) = listener.accept().await {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    drop(stream);
+                }
+            });
+            Ok::<_, std::io::Error>((url, task.abort_handle()))
+        })?;
+        Ok(Self {
+            url,
+            accepted,
+            abort,
+        })
+    }
+}
+
+#[test]
+fn malformed_relay_urls_fail_offline_before_contacting_rendezvous_canary() -> TestResult {
+    let _guard = SHUTDOWN_GATE.read().map_err(|_| "lock poisoned")?;
+    let canary = LoopbackCanary::start()?;
+    let tmp = TempDirGuard::new("bad-relay")?;
+    let src_file = tmp.path().join("payload.txt");
+    std::fs::write(&src_file, b"offline relay validation check")?;
+
+    let paths_c = c_str(&serde_json::to_string(&vec![
+        src_file.to_string_lossy().into_owned(),
+    ])?)?;
+    let txt_c = c_str("offline relay validation text")?;
+    let code_c = c_str("7-harbor-rocket")?;
+    let en = c_str("en-US")?;
+
+    const MALFORMED_RELAY_URLS: [&str; 13] = [
+        "wss://host:443:443",
+        "wss://user@example.invalid",
+        "ws://192.168.1.5:4000",
+        "http://127.0.0.1:4000",
+        "https://example.invalid",
+        "not-a-url",
+        "wss://",
+        "wss:///",
+        "ws://127.0.0.2:4000",
+        "ws://0.0.0.0:4000",
+        "WSS://example.invalid",
+        "wss://example.invalid /bad",
+        "wss://:443",
+    ];
+
+    for bad_relay in MALFORMED_RELAY_URLS {
+        for privacy_relay_only in [false, true] {
+            let cfg_c = c_str(&make_cfg_json(&canary.url, bad_relay, privacy_relay_only))?;
+
+            // 1. totaldrop_win_send_text_start
+            // SAFETY: All pointers are live NUL-terminated CStrings.
+            let text_sid = unsafe {
+                totaldrop_win_send_text_start(
+                    cfg_c.as_ptr(),
+                    txt_c.as_ptr(),
+                    en.as_ptr(),
+                    en.as_ptr(),
+                )
+            };
+            assert_ne!(text_sid, 0);
+            let mut text_evs = Vec::new();
+            let text_fail =
+                wait_for_event(text_sid, &mut text_evs, "failed", Duration::from_secs(2))?;
+            assert_eq!(
+                text_fail.get("kind").and_then(Value::as_str),
+                Some("bad_server"),
+                "send_text bad_relay={bad_relay:?} priv={privacy_relay_only}: {text_fail}"
+            );
+            assert_eq!(
+                text_fail.get("l10n_key").and_then(Value::as_str),
+                Some("errorBadServer"),
+                "send_text bad_relay={bad_relay:?} priv={privacy_relay_only}: {text_fail}"
+            );
+            assert_eq!(totaldrop_win_session_destroy(text_sid), FFI_OK);
+
+            // 2. totaldrop_win_send_files_start
+            // SAFETY: All pointers are live NUL-terminated CStrings.
+            let files_sid = unsafe {
+                totaldrop_win_send_files_start(
+                    cfg_c.as_ptr(),
+                    paths_c.as_ptr(),
+                    en.as_ptr(),
+                    en.as_ptr(),
+                )
+            };
+            assert_ne!(files_sid, 0);
+            let mut files_evs = Vec::new();
+            let files_fail =
+                wait_for_event(files_sid, &mut files_evs, "failed", Duration::from_secs(2))?;
+            assert_eq!(
+                files_fail.get("kind").and_then(Value::as_str),
+                Some("bad_server"),
+                "send_files bad_relay={bad_relay:?} priv={privacy_relay_only}: {files_fail}"
+            );
+            assert_eq!(
+                files_fail.get("l10n_key").and_then(Value::as_str),
+                Some("errorBadServer"),
+                "send_files bad_relay={bad_relay:?} priv={privacy_relay_only}: {files_fail}"
+            );
+            assert_eq!(totaldrop_win_session_destroy(files_sid), FFI_OK);
+
+            // 3. totaldrop_win_receive_connect_start
+            // SAFETY: All pointers are live NUL-terminated CStrings.
+            let recv_sid = unsafe {
+                totaldrop_win_receive_connect_start(
+                    cfg_c.as_ptr(),
+                    code_c.as_ptr(),
+                    en.as_ptr(),
+                    en.as_ptr(),
+                )
+            };
+            assert_ne!(recv_sid, 0);
+            let mut recv_evs = Vec::new();
+            let recv_fail =
+                wait_for_event(recv_sid, &mut recv_evs, "failed", Duration::from_secs(2))?;
+            assert_eq!(
+                recv_fail.get("kind").and_then(Value::as_str),
+                Some("bad_server"),
+                "receive_connect bad_relay={bad_relay:?} priv={privacy_relay_only}: {recv_fail}"
+            );
+            assert_eq!(
+                recv_fail.get("l10n_key").and_then(Value::as_str),
+                Some("errorBadServer"),
+                "receive_connect bad_relay={bad_relay:?} priv={privacy_relay_only}: {recv_fail}"
+            );
+            assert_eq!(totaldrop_win_session_destroy(recv_sid), FFI_OK);
+        }
+    }
+
+    // Confirm zero TCP connections reached the loopback rendezvous canary across all 78 calls.
+    std::thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        canary.accepted.load(Ordering::SeqCst),
+        0,
+        "loopback rendezvous canary accepted unexpected connections for malformed relay_server URLs"
+    );
+
+    // Confirm core-rejected rendezvous_server URLs still preserve totaldrop-core's technical_english.
+    let http_rdv_cfg = c_str(&make_cfg_json("http://127.0.0.1:4000", "", false))?;
+    // SAFETY: All pointers are live NUL-terminated CStrings.
+    let http_sid = unsafe {
+        totaldrop_win_send_text_start(
+            http_rdv_cfg.as_ptr(),
+            txt_c.as_ptr(),
+            en.as_ptr(),
+            en.as_ptr(),
+        )
+    };
+    assert_ne!(http_sid, 0);
+    let mut http_evs = Vec::new();
+    let http_fail = wait_for_event(http_sid, &mut http_evs, "failed", Duration::from_secs(2))?;
+    assert_eq!(
+        http_fail.get("kind").and_then(Value::as_str),
+        Some("bad_server")
+    );
+    assert_eq!(
+        http_fail.get("l10n_key").and_then(Value::as_str),
+        Some("errorBadServer")
+    );
+    assert!(
+        http_fail
+            .get("technical_english")
+            .and_then(Value::as_str)
+            .is_some_and(|t| t.contains("must start with wss://")),
+        "expected core technical_english for http:// rendezvous_server: {http_fail}"
+    );
+    assert_eq!(totaldrop_win_session_destroy(http_sid), FFI_OK);
+
+    Ok(())
+}

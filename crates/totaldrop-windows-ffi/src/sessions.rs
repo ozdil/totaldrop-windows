@@ -301,9 +301,7 @@ fn validate_session_server_urls(cfg: &BridgeNetworkConfig) -> Result<(), CoreErr
     }
 
     let relay_trimmed = cfg.relay_server.trim();
-    if !relay_trimmed.is_empty()
-        && totaldrop_core::relay::check_url(relay_trimmed).is_ok()
-        && !BridgeNetworkConfig::is_valid_rendezvous_url(&cfg.relay_server)
+    if !relay_trimmed.is_empty() && !BridgeNetworkConfig::is_valid_rendezvous_url(&cfg.relay_server)
     {
         return Err(CoreError::Rendezvous("invalid server address".to_owned()));
     }
