@@ -1,0 +1,1744 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 The TotalDrop Contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""Pure-Python stdlib static contract, negative-mutation & anti-prod-probe verifier.
+
+Implements M1 and M2 static & mutation tests from test_blueprint.md and
+TEST_INFRA.md sections 3.3, 5.4, and 5.5 with zero third-party dependencies.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import tomllib
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+# Construct forbidden version/CLSID literals dynamically so tools/check-versions.py
+# never flags this verifier script itself.
+STALE_SUBPLATFORM_VER = "0.3.0-" + "beta.6"
+STALE_MSIX_VER = "0.2." + "0.0"
+DRIFTED_CLSID = "8E6D76B4-" + "54A9-4D92-9A57-2F7D25F8B216"
+CANONICAL_CLSID = "8F6E3D72-4B9A-4E1C-9D3A-7C2F5A81E4B0"
+
+FORBID_UNSAFE_CRATES: tuple[str, ...] = (
+    "totaldrop-crypto",
+    "totaldrop-proto",
+    "totaldrop-core",
+    "totaldrop-l10n",
+    "totaldrop-windows-bridge",
+)
+
+APP_CRITICAL_KEYS: tuple[str, ...] = (
+    "verificationTitle",
+    "verificationHint",
+    "errorWrongCode",
+    "errorInvalidOffer",
+    "receiveAccept",
+    "receiveDecline",
+)
+
+ALLOWLISTED_XAML_LITERALS: frozenset[str] = frozenset({
+    "",
+    "TotalDrop",
+    "7-harbor-rocket",
+    "totaldrop.app",
+})
+
+INTERACTIVE_XAML_TAGS: frozenset[str] = frozenset({
+    "Button",
+    "HyperlinkButton",
+    "TextBox",
+    "AutoSuggestBox",
+    "ToggleSwitch",
+    "NavigationView",
+    "NavigationViewItem",
+    "ProgressBar",
+})
+
+USER_VISIBLE_XAML_ATTRS: tuple[str, ...] = (
+    "Text",
+    "Content",
+    "Header",
+    "PlaceholderText",
+    "Title",
+    "OffContent",
+    "OnContent",
+)
+
+FORBIDDEN_SIGNING_EXTS: frozenset[str] = frozenset({
+    ".pfx", ".p12", ".snk", ".cer", ".jks", ".keystore", ".pepk",
+})
+FORBIDDEN_SIGNING_NAMES: frozenset[str] = frozenset({
+    "key.properties", ".gitleaksignore",
+})
+
+APPX_NS = "http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+
+
+# ---------------------------------------------------------------------------
+# Lexers & File Helpers
+
+
+def _is_excluded_app_path(path: Path) -> bool:
+    parts = set(path.parts)
+    return bool(parts & {"TotalDrop.WinUI.Tests", "bin", "obj", ".git"})
+
+
+def iter_app_files(root: Path, pattern: str) -> list[Path]:
+    ui_dir = root / "ui-winui3-fluent2"
+    if not ui_dir.is_dir():
+        return []
+    return sorted(p for p in ui_dir.rglob(pattern) if p.is_file() and not _is_excluded_app_path(p))
+
+
+def strip_rust_comments_and_strings(src: str) -> str:
+    """Strip Rust // comments, nested /* */ comments, raw strings, strings, and char literals."""
+    out: list[str] = []
+    i = 0
+    n = len(src)
+    while i < n:
+        ch = src[i]
+        nxt = src[i + 1] if i + 1 < n else ""
+        # Line comment
+        if ch == "/" and nxt == "/":
+            i += 2
+            while i < n and src[i] != "\n":
+                i += 1
+            continue
+        # Nested block comment
+        if ch == "/" and nxt == "*":
+            depth = 1
+            i += 2
+            while i < n and depth > 0:
+                if src[i : i + 2] == "/*":
+                    depth += 1
+                    i += 2
+                elif src[i : i + 2] == "*/":
+                    depth -= 1
+                    i += 2
+                else:
+                    if src[i] == "\n":
+                        out.append("\n")
+                    i += 1
+            out.append(" ")
+            continue
+        # Raw string r#"..."# or br#"..."#
+        if (ch == "r" or (ch == "b" and nxt == "r")) and i + 1 < n:
+            start = i + 2 if ch == "b" else i + 1
+            hashes = 0
+            j = start
+            while j < n and src[j] == "#":
+                hashes += 1
+                j += 1
+            if j < n and src[j] == '"':
+                j += 1
+                end_marker = '"' + ("#" * hashes)
+                end_pos = src.find(end_marker, j)
+                if end_pos == -1:
+                    break
+                i = end_pos + len(end_marker)
+                out.append('""')
+                continue
+        # Regular string "..."
+        if ch == '"':
+            i += 1
+            while i < n:
+                if src[i] == "\\":
+                    i += 2
+                    continue
+                if src[i] == '"':
+                    i += 1
+                    break
+                i += 1
+            out.append('""')
+            continue
+        # Character literal (not lifetime 'a)
+        if ch == "'":
+            if i + 2 < n and src[i + 1] == "\\":
+                end_q = src.find("'", i + 2)
+                if end_q != -1 and end_q - i <= 12:
+                    i = end_q + 1
+                    out.append("''")
+                    continue
+            elif i + 2 < n and src[i + 2] == "'":
+                i += 3
+                out.append("''")
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def strip_csharp_comments(src: str) -> str:
+    """Strip C# // and /* */ comments while preserving string contents."""
+    out: list[str] = []
+    i = 0
+    n = len(src)
+    while i < n:
+        ch = src[i]
+        nxt = src[i + 1] if i + 1 < n else ""
+        if ch == "/" and nxt == "/":
+            while i < n and src[i] != "\n":
+                i += 1
+            continue
+        if ch == "/" and nxt == "*":
+            i += 2
+            while i + 1 < n and src[i : i + 2] != "*/":
+                if src[i] == "\n":
+                    out.append("\n")
+                i += 1
+            i += 2
+            out.append(" ")
+            continue
+        if ch == '"':
+            out.append(ch)
+            i += 1
+            while i < n:
+                out.append(src[i])
+                if src[i] == "\\" and i + 1 < n:
+                    out.append(src[i + 1])
+                    i += 2
+                    continue
+                if src[i] == '"':
+                    i += 1
+                    break
+                i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def strip_cfg_test_modules(src: str) -> str:
+    """Truncate Rust source before `#[cfg(test)]` module blocks for production-code checks."""
+    m = re.search(r"#\[cfg\(test\)\]", src)
+    return src[: m.start()] if m else src
+
+
+# ---------------------------------------------------------------------------
+# M1 Invariant Checks
+
+
+def check_rust_safety_isolation(root: Path) -> None:
+    root_toml = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
+    ws_rust_lints = root_toml.get("workspace", {}).get("lints", {}).get("rust", {})
+    if ws_rust_lints.get("unsafe_code") != "forbid":
+        raise ValueError("Cargo.toml missing [workspace.lints.rust] unsafe_code = 'forbid'")
+
+    for crate in FORBID_UNSAFE_CRATES:
+        crate_dir = root / "crates" / crate
+        ctoml = tomllib.loads((crate_dir / "Cargo.toml").read_text(encoding="utf-8"))
+        if ctoml.get("lints", {}).get("workspace") is not True:
+            raise ValueError(f"crates/{crate}/Cargo.toml does not inherit [lints] workspace = true")
+        for rs in sorted((crate_dir / "src").rglob("*.rs")):
+            text = rs.read_text(encoding="utf-8")
+            stripped = strip_rust_comments_and_strings(text)
+            if re.search(r"\bunsafe\b", stripped):
+                raise ValueError(f"forbidden unsafe token found in {rs.relative_to(root)}")
+            if re.search(r"#!?\[allow\([^]]*unsafe_code", stripped):
+                raise ValueError(f"forbidden allow(unsafe_code) in {rs.relative_to(root)}")
+
+    ffi_dir = root / "crates" / "totaldrop-windows-ffi"
+    ffi_toml = tomllib.loads((ffi_dir / "Cargo.toml").read_text(encoding="utf-8"))
+    crate_types = ffi_toml.get("lib", {}).get("crate-type", [])
+    if set(crate_types) != {"cdylib", "rlib"}:
+        raise ValueError(f"totaldrop-windows-ffi crate-type must be ['cdylib', 'rlib'], got {crate_types}")
+    if ffi_toml.get("package", {}).get("license") != "MIT OR Apache-2.0":
+        raise ValueError("totaldrop-windows-ffi license must be MIT OR Apache-2.0")
+    if ffi_toml.get("lints", {}).get("rust", {}).get("unsafe_op_in_unsafe_fn") != "deny":
+        raise ValueError("totaldrop-windows-ffi missing unsafe_op_in_unsafe_fn = 'deny'")
+    if ffi_toml.get("lints", {}).get("clippy", {}).get("undocumented_unsafe_blocks") != "deny":
+        raise ValueError("totaldrop-windows-ffi missing clippy::undocumented_unsafe_blocks = 'deny'")
+
+    # Inspect FFI production source for // SAFETY: comments and catch_unwind guards.
+    ffi_sources = sorted((ffi_dir / "src").rglob("*.rs"))
+    guard_has_catch_unwind = False
+    for rs in ffi_sources:
+        raw = strip_cfg_test_modules(rs.read_text(encoding="utf-8"))
+        if "fn guard_ffi_" in raw and "catch_unwind" in raw:
+            guard_has_catch_unwind = True
+
+    for rs in ffi_sources:
+        raw = strip_cfg_test_modules(rs.read_text(encoding="utf-8"))
+        lines = raw.splitlines()
+        # Check every `unsafe {` block (ignoring `#[unsafe(no_mangle)]` and `unsafe fn` signatures)
+        for idx, line in enumerate(lines):
+            code_part = line.split("//", 1)[0]
+            if re.search(r"(?<!#\[)\bunsafe\s*\{", code_part):
+                # Look backward over contiguous comments/blank lines for `// SAFETY:`
+                found_safety = False
+                j = idx - 1
+                while j >= 0:
+                    prev = lines[j].strip()
+                    if prev.startswith("// SAFETY:"):
+                        found_safety = True
+                        break
+                    if prev.startswith("//") or prev == "":
+                        j -= 1
+                        continue
+                    break
+                if not found_safety:
+                    raise ValueError(
+                        f"{rs.relative_to(root)}:{idx + 1}: undocumented unsafe block missing preceding '// SAFETY:' comment"
+                    )
+
+        # Check every `pub (unsafe )?extern "C" fn <name>` has unwind protection
+        # (strip_rust_comments_and_strings replaces string literals with `""`).
+        stripped = strip_rust_comments_and_strings(raw)
+        for match in re.finditer(r'\bpub\s+(?:unsafe\s+)?extern\s+(?:"C"|"")\s+fn\s+([A-Za-z0-9_]+)', stripped):
+            fn_name = match.group(1)
+            brace_open = stripped.find("{", match.end())
+            if brace_open == -1:
+                continue
+            depth = 1
+            pos = brace_open + 1
+            while pos < len(stripped) and depth > 0:
+                if stripped[pos] == "{":
+                    depth += 1
+                elif stripped[pos] == "}":
+                    depth -= 1
+                pos += 1
+            body = stripped[brace_open:pos]
+            uses_guard = "guard_ffi_" in body and guard_has_catch_unwind
+            if "catch_unwind" not in body and not uses_guard:
+                raise ValueError(
+                    f"{rs.relative_to(root)}: extern \"C\" export {fn_name!r} is missing catch_unwind / guard_ffi_ unwind protection"
+                )
+
+
+def check_csproj_and_aot_contracts(root: Path) -> None:
+    csproj_path = root / "ui-winui3-fluent2" / "TotalDrop.WinUI.csproj"
+    csproj_text = csproj_path.read_text(encoding="utf-8")
+    tree = ET.fromstring(csproj_text)
+
+    def get_prop(name: str) -> str:
+        el = tree.find(f".//{name}")
+        return (el.text or "").strip() if el is not None else ""
+
+    tf = get_prop("TargetFramework")
+    if tf != "net10.0-windows10.0.26100.0":
+        raise ValueError(f"TotalDrop.WinUI.csproj TargetFramework={tf!r} != 'net10.0-windows10.0.26100.0'")
+    for prop, expected in (
+        ("PublishAot", "true"),
+        ("TreatWarningsAsErrors", "true"),
+        ("CsWinRTAotOptimizerEnabled", "true"),
+        ("EnableTypeInfoReflection", "false"),
+        ("InvariantGlobalization", "false"),
+        ("WindowsAppSDKSelfContained", "false"),
+        ("ApplicationIcon", r"Assets\TotalDrop.ico"),
+    ):
+        actual = get_prop(prop)
+        if actual.lower() != expected.lower():
+            raise ValueError(f"TotalDrop.WinUI.csproj <{prop}>={actual!r} != {expected!r}")
+
+    wasdk_ver = ""
+    for pkg in tree.findall(".//PackageReference"):
+        if pkg.attrib.get("Include") == "Microsoft.WindowsAppSDK":
+            wasdk_ver = pkg.attrib.get("Version", "")
+    if not re.match(r"^1\.8\.", wasdk_ver):
+        raise ValueError(f"TotalDrop.WinUI.csproj Microsoft.WindowsAppSDK Version={wasdk_ver!r} does not match ^1.8.")
+
+    # Check manifest dependency on Microsoft.WindowsAppRuntime.1.8
+    x64_manifest = root / "target-x86_64" / "Package.x64.appxmanifest"
+    m_root = ET.fromstring(x64_manifest.read_text(encoding="utf-8"))
+    deps = [
+        el.attrib.get("Name", "")
+        for el in m_root.findall(f".//{{{APPX_NS}}}PackageDependency")
+    ]
+    if "Microsoft.WindowsAppRuntime.1.8" not in deps:
+        raise ValueError(f"Package.x64.appxmanifest missing Microsoft.WindowsAppRuntime.1.8 dependency (got {deps})")
+
+    # Scan C# & XAML app files (excluding TotalDrop.WinUI.Tests)
+    cs_files = iter_app_files(root, "*.cs")
+    xaml_files = iter_app_files(root, "*.xaml")
+    has_disable_marshalling = False
+    bridge_imports_found = 0
+    allowed_sys_dlls = {"kernel32.dll", "shell32.dll", "ole32.dll"}
+
+    for cs in cs_files:
+        rel = cs.relative_to(root)
+        cleaned = strip_csharp_comments(cs.read_text(encoding="utf-8"))
+        if re.search(r"\[assembly:\s*DisableRuntimeMarshalling\s*\]", cleaned):
+            has_disable_marshalling = True
+        for forbidden_pat, token_label in (
+            (r"\[\s*ComImport\b", "[ComImport]"),
+            (r"\[\s*DllImport\b", "[DllImport]"),
+            (r"\bActivator\.CreateInstance\b", "Activator.CreateInstance"),
+            (r"\bSystem\.Security\.Cryptography\b", "System.Security.Cryptography"),
+        ):
+            if re.search(forbidden_pat, cleaned):
+                raise ValueError(f"{rel}: forbidden construct {token_label} found")
+
+        # Resolve local const string definitions (e.g., BridgeDll = "totaldrop_windows_ffi")
+        consts = dict(re.findall(r'\bconst\s+string\s+(\w+)\s*=\s*"([^"]+)"\s*;', cleaned))
+        for m in re.finditer(r'\[LibraryImport\(\s*(?:"([^"]+)"|(\w+))([^]]*)\)\]', cleaned):
+            dll_lit, dll_const, rest = m.group(1), m.group(2), m.group(3)
+            dll_val = dll_lit if dll_lit is not None else consts.get(dll_const or "", "")
+            if "totaldrop_win_" in rest or dll_val == "totaldrop_windows_ffi":
+                if dll_val != "totaldrop_windows_ffi":
+                    raise ValueError(f"{rel}: totaldrop_win_* LibraryImport targets {dll_val!r} instead of 'totaldrop_windows_ffi'")
+                bridge_imports_found += 1
+            elif dll_val.lower() not in allowed_sys_dlls:
+                raise ValueError(f"{rel}: unexpected LibraryImport target {dll_val!r}")
+
+        # Verify every JsonSerializer.Serialize / Deserialize passes TotalDropJsonContext.Default.*
+        for jm in re.finditer(r"\bJsonSerializer\.(?:De)?[Ss]erialize(?:\s*<[^>]+>)?\s*\(", cleaned):
+            start_paren = jm.end() - 1
+            depth = 1
+            pos = start_paren + 1
+            while pos < len(cleaned) and depth > 0:
+                if cleaned[pos] == "(":
+                    depth += 1
+                elif cleaned[pos] == ")":
+                    depth -= 1
+                pos += 1
+            call_text = cleaned[jm.start() : pos]
+            if "TotalDropJsonContext.Default." not in call_text:
+                raise ValueError(
+                    f"{rel}: reflection-based JsonSerializer call without TotalDropJsonContext.Default: {call_text.strip()!r}"
+                )
+
+    if not has_disable_marshalling:
+        raise ValueError("ui-winui3-fluent2: missing [assembly: DisableRuntimeMarshalling]")
+    if bridge_imports_found < 6:
+        raise ValueError(f"ui-winui3-fluent2: expected >= 6 totaldrop_windows_ffi [LibraryImport] declarations, found {bridge_imports_found}")
+
+    for xaml in xaml_files:
+        rel = xaml.relative_to(root)
+        # Strip XML comments before scanning for reflection {Binding ...}
+        text = re.sub(r"<!--.*?-->", "", xaml.read_text(encoding="utf-8"), flags=re.DOTALL)
+        if "{Binding " in text or "{Binding}" in text:
+            raise ValueError(f"{rel}: forbidden reflection '{{Binding ' expression found (must use {{x:Bind}})")
+
+
+def check_4way_35_locale_parity(root: Path) -> None:
+    l10n_dir = root / "l10n"
+    neg_data = json.loads((l10n_dir / "tests" / "negotiation.json").read_text(encoding="utf-8"))
+    neg_avail = set(neg_data["available"])
+
+    status_data = json.loads((l10n_dir / "status.json").read_text(encoding="utf-8"))
+    status_set = (set(status_data["languages"].keys()) | {"en"}) - {"pt", "zh"}
+
+    arb_files = sorted((l10n_dir / "app").glob("app_*.arb"))
+    arb_stems = {p.stem[len("app_") :].replace("_", "-") for p in arb_files} - {"pt", "zh"}
+
+    if len(neg_avail) != 35 or neg_avail != status_set or neg_avail != arb_stems:
+        raise ValueError(
+            f"canonical 35-locale mismatch inside l10n/: neg={len(neg_avail)}, status={len(status_set)}, arb={len(arb_stems)}"
+        )
+
+    en_arb = json.loads((l10n_dir / "app" / "app_en.arb").read_text(encoding="utf-8"))
+    expected_keys = {k for k in en_arb if not k.startswith("@")}
+    if len(expected_keys) < 176:
+        raise ValueError(f"l10n/app/app_en.arb key count {len(expected_keys)} < 176")
+
+    # 1. Manifests Package.{x64,arm64}.appxmanifest
+    for rel_manifest in (
+        "target-x86_64/Package.x64.appxmanifest",
+        "target-arm64/Package.arm64.appxmanifest",
+    ):
+        m_path = root / rel_manifest
+        m_root = ET.fromstring(m_path.read_text(encoding="utf-8"))
+        langs = [
+            el.attrib.get("Language", "")
+            for el in m_root.findall(f".//{{{APPX_NS}}}Resources/{{{APPX_NS}}}Resource")
+        ]
+        if "en-US" in langs:
+            raise ValueError(f"{rel_manifest}: forbidden <Resource Language=\"en-US\" /> mismatch against Strings/en/Resources.resw")
+        if "en" not in langs:
+            raise ValueError(f"{rel_manifest}: missing <Resource Language=\"en\" />")
+        if len(langs) != len(set(langs)):
+            dups = sorted({t for t in langs if langs.count(t) > 1})
+            raise ValueError(f"{rel_manifest}: duplicate <Resource Language> entries ({len(langs)} != 35): {dups}")
+        if set(langs) != neg_avail:
+            missing = sorted(neg_avail - set(langs))
+            extra = sorted(set(langs) - neg_avail)
+            raise ValueError(
+                f"{rel_manifest}: locale set mismatch ({len(langs)} != 35); missing={missing}, extra={extra}"
+            )
+
+    # 2. Strings/locales.json
+    strings_dir = root / "ui-winui3-fluent2" / "Strings"
+    locales_json = json.loads((strings_dir / "locales.json").read_text(encoding="utf-8"))
+    if locales_json.get("defaultLocale") != "en" or locales_json.get("localeCount") != 35:
+        raise ValueError(f"Strings/locales.json invalid header: {locales_json.get('defaultLocale')}, {locales_json.get('localeCount')}")
+    json_tags = {item["tag"] for item in locales_json.get("locales", [])}
+    if json_tags != neg_avail:
+        raise ValueError(f"Strings/locales.json tag mismatch: diff={sorted(json_tags ^ neg_avail)}")
+
+    # 3. Strings/<tag>/Resources.resw directories and key completeness
+    resw_dirs = {p.name for p in strings_dir.iterdir() if p.is_dir()}
+    for forbidden_base in ("pt", "zh"):
+        if forbidden_base in resw_dirs:
+            raise ValueError(f"Strings/{forbidden_base}: forbidden base fallback directory leaked into WinUI Strings/")
+    if resw_dirs != neg_avail:
+        missing = sorted(neg_avail - resw_dirs)
+        extra = sorted(resw_dirs - neg_avail)
+        raise ValueError(
+            f"Strings/ locale directory mismatch ({len(resw_dirs)} != 35); missing={missing}, extra={extra}"
+        )
+
+    for tag in sorted(neg_avail):
+        resw_path = strings_dir / tag / "Resources.resw"
+        if not resw_path.is_file():
+            raise ValueError(f"missing {resw_path.relative_to(root)}")
+        resw_root = ET.fromstring(resw_path.read_text(encoding="utf-8"))
+        keys = {el.attrib.get("name", "") for el in resw_root.findall("data")}
+        if keys != expected_keys:
+            missing_k = sorted(expected_keys - keys)
+            extra_k = sorted(keys - expected_keys)
+            raise ValueError(
+                f"Strings/{tag}/Resources.resw key count mismatch ({len(keys)} != {len(expected_keys)}); "
+                f"missing={missing_k[:5]}, extra={extra_k[:5]}"
+            )
+
+
+def _analyze_ps1_hardening(ps1_path: Path, rel_label: str) -> None:
+    raw = ps1_path.read_text(encoding="utf-8")
+    # Strip block comments <# ... #>
+    text = re.sub(r"<#.*?#>", "", raw, flags=re.DOTALL)
+    lines = text.splitlines()
+
+    brace_depth = 0
+    finally_entry_depths: list[int] = []
+    pending_finally = False
+    cleared_rustflags = False
+    cleared_encoded = False
+    saw_cargo_build = False
+
+    for line_no, raw_line in enumerate(lines, start=1):
+        # Strip inline # comments (outside double/single quotes)
+        buf: list[str] = []
+        in_sq = False
+        in_dq = False
+        idx = 0
+        while idx < len(raw_line):
+            c = raw_line[idx]
+            if c == "`" and in_dq and idx + 1 < len(raw_line):
+                buf.append(c)
+                buf.append(raw_line[idx + 1])
+                idx += 2
+                continue
+            if c == "'" and not in_dq:
+                in_sq = not in_sq
+            elif c == '"' and not in_sq:
+                in_dq = not in_dq
+            elif c == "#" and not in_sq and not in_dq:
+                break
+            buf.append(c)
+            idx += 1
+        code = "".join(buf)
+
+        if re.search(r"\bfinally\b", code, flags=re.IGNORECASE):
+            pending_finally = True
+        in_finally = bool(finally_entry_depths)
+
+        if re.search(r"Remove-Item\s+Env:RUSTFLAGS\b", code, flags=re.IGNORECASE) and not saw_cargo_build:
+            cleared_rustflags = True
+        if re.search(r"Remove-Item\s+Env:CARGO_ENCODED_RUSTFLAGS\b", code, flags=re.IGNORECASE) and not saw_cargo_build:
+            cleared_encoded = True
+        if re.search(r"\bcargo\s+build\b", code):
+            saw_cargo_build = True
+
+        # Active $env:RUSTFLAGS = ... or $env:CARGO_ENCODED_RUSTFLAGS = ... outside finally
+        if not in_finally:
+            m_rf = re.search(r"\$env:(RUSTFLAGS|CARGO_ENCODED_RUSTFLAGS)\s*=", code, flags=re.IGNORECASE)
+            if m_rf:
+                raise ValueError(
+                    f"{rel_label}:{line_no}: active $env:{m_rf.group(1)} assignment outside finally block"
+                )
+
+        # Check makeappx invocations (ignoring Write-Host lines and quoted strings)
+        if not re.match(r"^\s*Write-Host\b", code, flags=re.IGNORECASE):
+            no_quotes = re.sub(r'"[^"]*"|\'[^\']*\'', "", code)
+            if re.search(r"makeappx", no_quotes, flags=re.IGNORECASE):
+                if re.search(r"(?:^|\s)[/-]nv(?:\s|$)", no_quotes, flags=re.IGNORECASE):
+                    raise ValueError(
+                        f"{rel_label}:{line_no}: forbidden makeappx '/nv' flag found on command invocation"
+                    )
+
+        # Update brace depth tracking for finally blocks
+        no_q_braces = re.sub(r'"[^"]*"|\'[^\']*\'', "", code)
+        for ch in no_q_braces:
+            if ch == "{":
+                brace_depth += 1
+                if pending_finally:
+                    finally_entry_depths.append(brace_depth)
+                    pending_finally = False
+            elif ch == "}":
+                if finally_entry_depths and finally_entry_depths[-1] == brace_depth:
+                    finally_entry_depths.pop()
+                brace_depth = max(0, brace_depth - 1)
+
+    if not cleared_rustflags or not cleared_encoded:
+        raise ValueError(
+            f"{rel_label}: must clear both Env:RUSTFLAGS and Env:CARGO_ENCODED_RUSTFLAGS before cargo build"
+        )
+
+
+def check_cargo_hardening_and_ps1(root: Path) -> None:
+    x64_cfg = (root / "target-x86_64" / "cargo-config.toml").read_text(encoding="utf-8")
+    x64_parsed = tomllib.loads(x64_cfg)
+    x64_flags = " ".join(x64_parsed.get("target", {}).get("x86_64-pc-windows-msvc", {}).get("rustflags", []))
+    for req in ("+crt-static", "/DEPENDENTLOADFLAG:0x800", "/CETCOMPAT", "/DYNAMICBASE", "/HIGHENTROPYVA", "/NXCOMPAT"):
+        if req not in x64_flags:
+            raise ValueError(f"target-x86_64/cargo-config.toml missing required hardening flag {req}")
+
+    arm_cfg = (root / "target-arm64" / "cargo-config.toml").read_text(encoding="utf-8")
+    arm_parsed = tomllib.loads(arm_cfg)
+    arm_flags = " ".join(arm_parsed.get("target", {}).get("aarch64-pc-windows-msvc", {}).get("rustflags", []))
+    for req in ("+crt-static", "/DEPENDENTLOADFLAG:0x800", "/DYNAMICBASE", "/HIGHENTROPYVA", "/NXCOMPAT"):
+        if req not in arm_flags:
+            raise ValueError(f"target-arm64/cargo-config.toml missing required hardening flag {req}")
+
+    _analyze_ps1_hardening(root / "target-x86_64" / "build-x64.ps1", "target-x86_64/build-x64.ps1")
+    _analyze_ps1_hardening(root / "target-arm64" / "build-arm64.ps1", "target-arm64/build-arm64.ps1")
+
+    # Signing-material / secret-extension scan (T2-F05-05b)
+    for p in root.rglob("*"):
+        if not p.is_file():
+            continue
+        if any(part in {".git", "target"} for part in p.parts):
+            continue
+        if p.name in FORBIDDEN_SIGNING_NAMES or p.suffix.lower() in FORBIDDEN_SIGNING_EXTS:
+            raise ValueError(f"forbidden signing/secret material found in repository tree: {p.relative_to(root)}")
+
+
+def _parse_ci_jobs(ci_text: str) -> dict[str, str]:
+    """Extract top-level `jobs:` blocks by 2-space YAML indentation (pure stdlib)."""
+    jobs: dict[str, list[str]] = {}
+    in_jobs = False
+    cur_job: str | None = None
+    for line in ci_text.splitlines():
+        if re.match(r"^jobs:\s*$", line):
+            in_jobs = True
+            continue
+        if in_jobs and line and not line.startswith(" ") and not line.startswith("#"):
+            break
+        if not in_jobs:
+            continue
+        m = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
+        if m:
+            cur_job = m.group(1)
+            jobs[cur_job] = []
+        elif cur_job is not None:
+            jobs[cur_job].append(line)
+    return {k: "\n".join(v) for k, v in jobs.items()}
+
+
+def check_workflows_and_subplatform_scripts(root: Path) -> None:
+    wf_dir = root / ".github" / "workflows"
+    workflows = sorted(wf_dir.glob("*.yml"))
+    if not workflows:
+        raise ValueError("no .github/workflows/*.yml found")
+
+    for wf in workflows:
+        rel = wf.relative_to(root)
+        for line_no, line in enumerate(wf.read_text(encoding="utf-8").splitlines(), start=1):
+            stripped = line.split("#", 1)[0].strip()
+            m = re.match(r"^(?:-\s*)?uses:\s*([^\s]+)$", stripped)
+            if not m:
+                continue
+            ref = m.group(1).strip("'\"")
+            if ref.startswith("./"):
+                continue
+            if not re.search(r"@[0-9a-f]{40}$", ref):
+                raise ValueError(f"{rel}:{line_no}: unpinned mutable action ref {ref!r} (must pin 40-hex commit SHA)")
+
+    ci_text = (wf_dir / "ci.yml").read_text(encoding="utf-8")
+    jobs = _parse_ci_jobs(ci_text)
+    if "windows-x64-msix" not in jobs:
+        raise ValueError(".github/workflows/ci.yml missing job 'windows-x64-msix'")
+    win_job = jobs["windows-x64-msix"]
+    if not re.search(r"runs-on:\s*(windows-latest|windows-2025)\b", win_job):
+        raise ValueError("ci.yml windows-x64-msix must run on windows-latest or windows-2025")
+    if not re.search(r'dotnet-version:\s*["\']?10\.0\.x["\']?', win_job):
+        raise ValueError("ci.yml windows-x64-msix must pin .NET 10 (dotnet-version: 10.0.x)")
+    if "rustup" not in win_job:
+        raise ValueError("ci.yml windows-x64-msix must verify Rust toolchain via rustup")
+    rt_toml = tomllib.loads((root / "rust-toolchain.toml").read_text(encoding="utf-8"))
+    if rt_toml.get("toolchain", {}).get("channel") != "1.99.1":
+        raise ValueError("rust-toolchain.toml must pin channel = '1.99.1'")
+    if "if-no-files-found: error" not in win_job:
+        raise ValueError("ci.yml windows-x64-msix upload must set if-no-files-found: error")
+    if ".msix" not in win_job or "SHA256SUMS" not in win_job:
+        raise ValueError("ci.yml windows-x64-msix must upload .msix and SHA256SUMS")
+
+    gate_job = jobs.get("gate", "")
+    if "windows-x64-msix" not in gate_job:
+        raise ValueError("ci.yml jobs.gate.needs is missing required 'windows-x64-msix' dependency")
+
+    # Verify check-versions.py is invoked in a job required by gate (T1-F07-05)
+    version_jobs = [name for name, body in jobs.items() if "tools/check-versions.py" in body]
+    if not any(name in gate_job for name in version_jobs):
+        raise ValueError("ci.yml does not enforce tools/check-versions.py in any job feeding jobs.gate.needs")
+
+    # Verify subplatform POSIX shell scripts (T1-F06-02)
+    build_sh = root / "subplatforms" / "msix" / "x86_64" / "build.sh"
+    verify_sh = root / "subplatforms" / "msix" / "x86_64" / "verify.sh"
+    for sh_path in (build_sh, verify_sh):
+        for shell in ("sh", "dash"):
+            p = subprocess.run([shell, "-n", str(sh_path)], capture_output=True, text=True, check=False)
+            if p.returncode != 0:
+                raise ValueError(f"{shell} -n failed on {sh_path.relative_to(root)}: {p.stderr}")
+    build_text = build_sh.read_text(encoding="utf-8")
+    if re.search(r"\btar\b[^|\n]*\|\s*gzip\b", build_text):
+        raise ValueError("subplatforms/msix/x86_64/build.sh still contains forbidden tar | gzip stub")
+    verify_text = verify_sh.read_text(encoding="utf-8")
+    if "sha256sum" not in verify_text or "AppxManifest.xml" not in verify_text:
+        raise ValueError("subplatforms/msix/x86_64/verify.sh must validate both SHA256SUMS and OPC/ZIP AppxManifest.xml")
+
+
+def _validate_msix_quad(version: str, source_label: str) -> None:
+    parts = version.split(".")
+    if len(parts) != 4 or not all(p.isdigit() for p in parts):
+        raise ValueError(
+            f"{source_label}: invalid 4-part quad MSIX version {version!r} (must have 4 numeric parts)"
+        )
+    nums = [int(p) for p in parts]
+    for idx, val in enumerate(nums):
+        if not (0 <= val <= 65535):
+            raise ValueError(
+                f"{source_label}: MSIX quad component {idx} ({val}) exceeds uint16 bounds 0..=65535"
+            )
+    if nums[3] != 0:
+        raise ValueError(
+            f"{source_label}: MSIX version {version!r} violates Microsoft Store Revision == 0 rule"
+        )
+
+
+def check_versions_quad_and_clsid(root: Path) -> None:
+    # Check 4-part MSIX quad rules across manifests & scripts
+    versions_found: dict[str, str] = {}
+    for rel in (
+        "target-x86_64/Package.x64.appxmanifest",
+        "target-arm64/Package.arm64.appxmanifest",
+    ):
+        m_root = ET.fromstring((root / rel).read_text(encoding="utf-8"))
+        ident = m_root.find(f"{{{APPX_NS}}}Identity")
+        if ident is None:
+            raise ValueError(f"{rel}: missing <Identity>")
+        ver = ident.attrib.get("Version", "")
+        _validate_msix_quad(ver, f"{rel} Identity/@Version")
+        versions_found[rel] = ver
+
+    app_manifest_root = ET.fromstring((root / "ui-winui3-fluent2" / "app.manifest").read_text(encoding="utf-8"))
+    asm_ident = app_manifest_root.find("{urn:schemas-microsoft-com:asm.v1}assemblyIdentity")
+    if asm_ident is None:
+        raise ValueError("ui-winui3-fluent2/app.manifest missing <assemblyIdentity>")
+    app_ver = asm_ident.attrib.get("version", "")
+    _validate_msix_quad(app_ver, "ui-winui3-fluent2/app.manifest")
+    versions_found["ui-winui3-fluent2/app.manifest"] = app_ver
+
+    for rel in ("target-x86_64/build-x64.ps1", "target-arm64/build-arm64.ps1"):
+        m = re.search(r'\[string\]\$Version\s*=\s*"([^"]+)"', (root / rel).read_text(encoding="utf-8"))
+        if not m:
+            raise ValueError(f"{rel}: missing default $Version parameter")
+        _validate_msix_quad(m.group(1), rel)
+        versions_found[rel] = m.group(1)
+
+    if len(set(versions_found.values())) != 1:
+        raise ValueError(f"MSIX version mismatch across manifests/scripts: {versions_found}")
+
+    # Core crate version isolation (0.2.0-beta.5) vs Windows FFI app SemVer (0.1.0-beta.1)
+    root_toml = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
+    ws_ver = root_toml.get("workspace", {}).get("package", {}).get("version")
+    if ws_ver != "0.2.0-beta.5":
+        raise ValueError(f"workspace core version {ws_ver!r} != '0.2.0-beta.5'")
+    for crate in FORBID_UNSAFE_CRATES:
+        ct = tomllib.loads((root / "crates" / crate / "Cargo.toml").read_text(encoding="utf-8"))
+        if ct.get("package", {}).get("version", {}).get("workspace") is not True:
+            raise ValueError(f"crates/{crate}/Cargo.toml must inherit version.workspace = true")
+    ffi_toml = tomllib.loads((root / "crates" / "totaldrop-windows-ffi" / "Cargo.toml").read_text(encoding="utf-8"))
+    if ffi_toml.get("package", {}).get("version") != "0.1.0-beta.1":
+        raise ValueError("crates/totaldrop-windows-ffi/Cargo.toml version != '0.1.0-beta.1'")
+
+    # Specifically validate the coclass TotalDropSendExplorerCommand UUID in ExplorerCommand.idl first
+    # so malformed GUID mutations explicitly report the malformed token and ExplorerCommand.idl.
+    idl_rel = "ui-winui3-fluent2/ExplorerExtension/ExplorerCommand.idl"
+    idl_text = (root / idl_rel).read_text(encoding="utf-8")
+    m_block = re.search(
+        r"\[([^]]*)\]\s*coclass\s+TotalDropSendExplorerCommand\b",
+        idl_text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not m_block:
+        raise ValueError(f"{idl_rel}: missing attribute block on coclass TotalDropSendExplorerCommand")
+    m_uuid = re.search(r"uuid\(\s*([^)]+)\s*\)", m_block.group(1), flags=re.IGNORECASE)
+    if not m_uuid:
+        raise ValueError(f"{idl_rel}: missing uuid(...) attribute on coclass TotalDropSendExplorerCommand")
+    coclass_guid = m_uuid.group(1).strip().strip("{}")
+    if not re.fullmatch(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}", coclass_guid):
+        raise ValueError(f"{idl_rel}: malformed CLSID GUID {coclass_guid!r} on coclass TotalDropSendExplorerCommand")
+    if coclass_guid.upper() != CANONICAL_CLSID:
+        raise ValueError(f"{idl_rel}: mismatched CLSID {coclass_guid!r} != {CANONICAL_CLSID}")
+
+    # CLSID consistency across README, ExplorerExtension README/IDL, manifests
+    clsid_files = (
+        "README.md",
+        "ui-winui3-fluent2/ExplorerExtension/README.md",
+        idl_rel,
+        "target-x86_64/Package.x64.appxmanifest",
+        "target-arm64/Package.arm64.appxmanifest",
+    )
+    for rel in clsid_files:
+        text = (root / rel).read_text(encoding="utf-8")
+        if DRIFTED_CLSID.lower() in text.lower():
+            raise ValueError(f"{rel}: drifted CLSID {DRIFTED_CLSID} found!")
+        if CANONICAL_CLSID.lower() not in text.lower():
+            raise ValueError(f"{rel}: canonical CLSID {CANONICAL_CLSID} missing!")
+
+
+# ---------------------------------------------------------------------------
+# M2 Invariant Checks
+
+
+def check_no_cloud_roaming(root: Path) -> None:
+    store_path = root / "ui-winui3-fluent2" / "Services" / "SettingsStore.cs"
+    store_text = store_path.read_text(encoding="utf-8")
+    if "LocalApplicationData" not in store_text or "settings.json" not in store_text:
+        raise ValueError("Services/SettingsStore.cs must persist to LocalApplicationData/TotalDrop/settings.json")
+
+    for cs in iter_app_files(root, "*.cs"):
+        cleaned = strip_csharp_comments(cs.read_text(encoding="utf-8"))
+        for forbidden in ("RoamingFolder", "RoamingSettings"):
+            if re.search(rf"\b{forbidden}\b", cleaned):
+                raise ValueError(f"{cs.relative_to(root)}: forbidden cloud-sync API '{forbidden}' found")
+
+
+def check_resw_critical_security_keys(root: Path) -> None:
+    status_data = json.loads((root / "l10n" / "status.json").read_text(encoding="utf-8"))
+    en_arb = json.loads((root / "l10n" / "app" / "app_en.arb").read_text(encoding="utf-8"))
+    strings_dir = root / "ui-winui3-fluent2" / "Strings"
+
+    for tag, meta in sorted(status_data["languages"].items()):
+        if tag in ("pt", "zh") or meta.get("reviewed") is True:
+            continue
+        resw_path = strings_dir / tag / "Resources.resw"
+        if not resw_path.is_file():
+            raise ValueError(f"missing {resw_path.relative_to(root)}")
+        resw_root = ET.fromstring(resw_path.read_text(encoding="utf-8"))
+        values = {
+            el.attrib.get("name", ""): (el.findtext("value") or "")
+            for el in resw_root.findall("data")
+        }
+        for key in APP_CRITICAL_KEYS:
+            expected = en_arb[key]
+            actual = values.get(key)
+            if actual != expected:
+                raise ValueError(
+                    f"unauthorized unreviewed critical-key translation in {tag}:{key} "
+                    f"(got {actual!r}, expected English {expected!r})"
+                )
+
+
+def check_zero_hardcoded_english_xaml(root: Path) -> None:
+    for xaml in iter_app_files(root, "*.xaml"):
+        rel = xaml.relative_to(root)
+        el_root = ET.fromstring(xaml.read_text(encoding="utf-8"))
+        for el in el_root.iter():
+            for attr_k, attr_v in el.attrib.items():
+                local_attr = attr_k.split("}", 1)[-1]
+                is_a11y_name = local_attr == "AutomationProperties.Name"
+                if local_attr not in USER_VISIBLE_XAML_ATTRS and not is_a11y_name:
+                    continue
+                val = attr_v.strip()
+                if val.startswith(("{x:Bind ", "{StaticResource ", "{ThemeResource ")):
+                    continue
+                if val in ALLOWLISTED_XAML_LITERALS:
+                    continue
+                raise ValueError(
+                    f"{rel}: hardcoded user-visible literal {local_attr}=\"{attr_v}\" (must bind via {{x:Bind}})"
+                )
+
+
+def check_kose_motion_rtl_hc_a11y(root: Path) -> None:
+    app_xaml_path = root / "ui-winui3-fluent2" / "App.xaml"
+    app_xaml = app_xaml_path.read_text(encoding="utf-8")
+    for token in (
+        "#6D4AE0",
+        "#F4F2FB",
+        "#A68BFF",
+        "#22184F",
+        "M55 15H97V57A42 42 0 1 1 55 15Z",
+        "M37 58 L50 71 L74 45",
+        "HighContrast",
+        "SystemColorHighlightColor",
+        "SystemColorWindowColor",
+        "SystemColorWindowTextColor",
+    ):
+        if token not in app_xaml:
+            raise ValueError(f"ui-winui3-fluent2/App.xaml missing required Kose/HighContrast token {token!r}")
+
+    # Check Kose Viewbox FlowDirection="LeftToRight", pivot (55, 57), 3.2s storyboard, Done StrokeThickness=9
+    kose_pages = (
+        "ui-winui3-fluent2/MainWindow.xaml",
+        "ui-winui3-fluent2/Views/SendPage.xaml",
+        "ui-winui3-fluent2/Views/ReceivePage.xaml",
+    )
+    for rel in kose_pages:
+        raw = (root / rel).read_text(encoding="utf-8")
+        tree = ET.fromstring(raw)
+        parent_map = {child: parent for parent in tree.iter() for child in parent}
+
+        kose_paths = 0
+        done_checks = 0
+        for el in tree.iter():
+            tag = el.tag.split("}", 1)[-1]
+            if tag == "Path":
+                data_attr = el.attrib.get("Data", "")
+                if data_attr == "M55 15H97V57A42 42 0 1 1 55 15Z":
+                    kose_paths += 1
+                    # Must have ancestor Viewbox with FlowDirection="LeftToRight"
+                    cur = parent_map.get(el)
+                    found_ltr_vb = False
+                    while cur is not None:
+                        ctag = cur.tag.split("}", 1)[-1]
+                        if ctag == "Viewbox" and cur.attrib.get("FlowDirection") == "LeftToRight":
+                            found_ltr_vb = True
+                            break
+                        cur = parent_map.get(cur)
+                    if not found_ltr_vb:
+                        raise ValueError(f"{rel}: Kose mark <Path> is missing ancestor <Viewbox FlowDirection=\"LeftToRight\">")
+                elif data_attr == "M37 58 L50 71 L74 45":
+                    done_checks += 1
+                    if el.attrib.get("StrokeThickness") != "9":
+                        raise ValueError(f"{rel}: Done checkmark StrokeThickness != '9'")
+            elif tag == "RotateTransform":
+                if el.attrib.get("CenterX") != "55" or el.attrib.get("CenterY") != "57":
+                    raise ValueError(f"{rel}: RotateTransform pivot must be (55, 57), got ({el.attrib.get('CenterX')}, {el.attrib.get('CenterY')})")
+
+        if kose_paths == 0:
+            raise ValueError(f"{rel}: missing Kose mark <Path Data='M55 15H97V57A42 42 0 1 1 55 15Z'>")
+        if done_checks == 0:
+            raise ValueError(f"{rel}: missing Done checkmark <Path Data='M37 58 L50 71 L74 45'>")
+        if "0:0:3.2" not in raw or (
+            'ControlPoint1="0.65,0"' not in raw or 'ControlPoint2="0.35,1"' not in raw
+        ):
+            raise ValueError(
+                f"{rel}: missing 3.2s Kose Storyboard with KeySpline ControlPoint1='0.65,0' ControlPoint2='0.35,1'"
+            )
+
+    # Reduced-motion UISettings.AnimationsEnabled & HighContrast SystemBackdrop = null in C#
+    for rel in (
+        "ui-winui3-fluent2/MainWindow.xaml.cs",
+        "ui-winui3-fluent2/Views/SendPage.xaml.cs",
+        "ui-winui3-fluent2/Views/ReceivePage.xaml.cs",
+    ):
+        text = (root / rel).read_text(encoding="utf-8")
+        if "AnimationsEnabled" not in text:
+            raise ValueError(f"{rel}: missing UISettings.AnimationsEnabled reduced-motion gate")
+    mw_cs = strip_csharp_comments((root / "ui-winui3-fluent2" / "MainWindow.xaml.cs").read_text(encoding="utf-8"))
+    if not re.search(r"if\s*\([^)]*HighContrast[^)]*\)\s*\{[^}]*SystemBackdrop\s*=\s*null\s*;", mw_cs, flags=re.DOTALL):
+        raise ValueError("MainWindow.xaml.cs: missing HighContrast SystemBackdrop = null handling")
+
+    # TransferCode & VerificationWords LTR + Language="en-US"
+    send_tree = ET.fromstring((root / "ui-winui3-fluent2" / "Views" / "SendPage.xaml").read_text(encoding="utf-8"))
+    recv_tree = ET.fromstring((root / "ui-winui3-fluent2" / "Views" / "ReceivePage.xaml").read_text(encoding="utf-8"))
+
+    def _find_control(tree: ET.Element, target_xname: str, target_bind: str) -> ET.Element | None:
+        for el in tree.iter():
+            for k, v in el.attrib.items():
+                if k.endswith("}Name") and v == target_xname:
+                    return el
+            text_attr = el.attrib.get("Text", "")
+            if target_bind and target_bind in text_attr:
+                return el
+        return None
+
+    for tree, page_name, ctrl_name, bind_hint in (
+        (send_tree, "Views/SendPage.xaml", "TransferCodeTextBlock", "ViewModel.TransferCode"),
+        (send_tree, "Views/SendPage.xaml", "VerificationWords", "ViewModel.VerificationWords"),
+        (recv_tree, "Views/ReceivePage.xaml", "CodeInputBox", ""),
+        (recv_tree, "Views/ReceivePage.xaml", "VerificationWords", "ViewModel.VerificationWords"),
+    ):
+        el = _find_control(tree, ctrl_name, bind_hint)
+        if el is None:
+            raise ValueError(f"{page_name}: missing expected control matching {ctrl_name}")
+        if el.attrib.get("FlowDirection") != "LeftToRight":
+            raise ValueError(f"{page_name}: {ctrl_name} missing FlowDirection='LeftToRight'")
+        if el.attrib.get("Language") != "en-US":
+            raise ValueError(f"{page_name}: {ctrl_name} missing Language='en-US'")
+
+    # T1-F14-03: All interactive controls have non-empty AutomationProperties.Name,
+    # and all TextBlocks enable TextWrapping="Wrap" and IsTextScaleFactorEnabled="True".
+    for xaml in iter_app_files(root, "*.xaml"):
+        rel = xaml.relative_to(root)
+        el_root = ET.fromstring(xaml.read_text(encoding="utf-8"))
+        for el in el_root.iter():
+            tag = el.tag.split("}", 1)[-1]
+            if tag in INTERACTIVE_XAML_TAGS:
+                a11y_name = el.attrib.get("AutomationProperties.Name", "").strip()
+                if not a11y_name:
+                    xname = next((v for k, v in el.attrib.items() if k.endswith("}Name")), "<unnamed>")
+                    raise ValueError(f"{rel}: interactive <{tag} x:Name='{xname}'> missing AutomationProperties.Name")
+            elif tag == "TextBlock":
+                if el.attrib.get("TextWrapping") != "Wrap":
+                    raise ValueError(f"{rel}: <TextBlock> missing TextWrapping='Wrap'")
+                if el.attrib.get("IsTextScaleFactorEnabled") != "True":
+                    raise ValueError(f"{rel}: <TextBlock> missing IsTextScaleFactorEnabled='True'")
+
+
+def check_m2_ui_page_audits(root: Path) -> None:
+    """Static UI page contract audits used by T1-F10-05, T1-F11-05, and T1-F12-05."""
+    send_cs = (root / "ui-winui3-fluent2" / "Views" / "SendPage.xaml.cs").read_text(encoding="utf-8")
+    if r'"\\\\?\\"' in send_cs or r'@"\\?\"' in send_cs:
+        raise ValueError("SendPage.xaml.cs contains forbidden naive '\\\\?\\' path concatenation")
+    if "TryAddRawPaths" not in send_cs or "CancelTransferTitle" not in send_cs or "CancelTransferBody" not in send_cs:
+        raise ValueError("SendPage.xaml.cs missing TryAddRawPaths or localized cancel confirmation dialog bindings")
+
+    recv_xaml = (root / "ui-winui3-fluent2" / "Views" / "ReceivePage.xaml").read_text(encoding="utf-8")
+    recv_cs = (root / "ui-winui3-fluent2" / "Views" / "ReceivePage.xaml.cs").read_text(encoding="utf-8")
+    vm_cs = (root / "ui-winui3-fluent2" / "ViewModels" / "TransferViewModels.cs").read_text(encoding="utf-8")
+    if "ReceiveCodeHint" not in recv_xaml or '"7-harbor-rocket"' not in vm_cs:
+        raise ValueError("ReceivePage.xaml missing ReceiveCodeHint -> '7-harbor-rocket' binding chain")
+    if "IsReceivedTextVisible" not in recv_cs or "VirtualKey.Escape" not in recv_cs:
+        raise ValueError("ReceivePage.xaml.cs missing Escape suppression while IsReceivedTextVisible")
+    if "ResolveDefaultDownloadsFolder" not in vm_cs:
+        raise ValueError("TransferViewModels.cs missing ResolveDefaultDownloadsFolder (Downloads\\TotalDrop)")
+
+    mw_cs = (root / "ui-winui3-fluent2" / "MainWindow.xaml.cs").read_text(encoding="utf-8")
+    settings_xaml = (root / "ui-winui3-fluent2" / "Views" / "SettingsPage.xaml").read_text(encoding="utf-8")
+    settings_cs = (root / "ui-winui3-fluent2" / "Views" / "SettingsPage.xaml.cs").read_text(encoding="utf-8")
+    if "typeof(SettingsPage)" not in mw_cs or "IsSettingsSelected" not in mw_cs:
+        raise ValueError("MainWindow.xaml.cs does not navigate NavigationView Settings to SettingsPage")
+    for token in ("DraftTranslation", "SettingsWordsEnglish", "VersionLabel", "https://totaldrop.app"):
+        if token not in settings_xaml:
+            raise ValueError(f"SettingsPage.xaml missing required binding/link {token!r}")
+    if "CanSaveServer" not in vm_cs or "HasUnsavedServerEdit" not in settings_cs:
+        raise ValueError("SettingsPage missing CanSaveServer trim check or Escape revert on HasUnsavedServerEdit")
+
+
+def scan_no_live_production_probing(root: Path) -> list[str]:
+    """Static anti-production-probing scanner (TEST_INFRA.md section 3.3)."""
+    forbidden_hosts = (
+        "rendezvous.totaldrop.app",
+        "relay.totaldrop.app",
+        "stun.cloudflare.com",
+        "totaldrop.app",
+    )
+    connect_patterns = (
+        r"TcpStream::connect\s*\(",
+        r"UdpSocket::connect\s*\(",
+        r"connect_async\s*\(",
+        r"urlopen\s*\(",
+        r"HttpClient",
+        r"ClientWebSocket",
+        r"Invoke-WebRequest",
+        r"Invoke-RestMethod",
+        r"\bcurl\b",
+    )
+    scan_paths: list[Path] = []
+    for base in (
+        root / "crates" / "totaldrop-windows-ffi" / "tests",
+        root / "tools" / "e2e",
+        root / "tests" / "e2e",
+        root / "ui-winui3-fluent2" / "TotalDrop.WinUI.Tests",
+    ):
+        if base.is_dir():
+            for p in sorted(base.rglob("*")):
+                if p.is_file() and p.suffix in {".rs", ".py", ".ps1", ".cs"} and not _is_excluded_scan_path(p):
+                    scan_paths.append(p)
+
+    violations: list[str] = []
+    for p in scan_paths:
+        rel = p.relative_to(root)
+        # Skip this scanner's own pattern table
+        if rel == Path("tools/e2e/verify_static_contracts.py"):
+            continue
+        text = p.read_text(encoding="utf-8", errors="replace")
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            stripped = line.strip()
+            if stripped.startswith(("//", "#", "///")):
+                continue
+            for host in forbidden_hosts:
+                if host in line:
+                    for cpat in connect_patterns:
+                        if re.search(cpat, line):
+                            violations.append(
+                                f"{rel}:{line_no}: forbidden live network call targeting {host!r}: {stripped}"
+                            )
+            # Check make_cfg_json / BridgeNetworkConfigDto live session fixtures do not default STUN to Cloudflare
+            if "stun.cloudflare.com" in line and "DefaultStunServer" not in line and "offline" not in line.lower():
+                violations.append(f"{rel}:{line_no}: unexpected stun.cloudflare.com reference: {stripped}")
+    return violations
+
+
+def _is_excluded_scan_path(p: Path) -> bool:
+    return bool(set(p.parts) & {"bin", "obj", "__pycache__", ".git"})
+
+
+def verify_all_static(root: Path, milestone: str) -> None:
+    check_rust_safety_isolation(root)
+    check_csproj_and_aot_contracts(root)
+    check_4way_35_locale_parity(root)
+    check_cargo_hardening_and_ps1(root)
+    check_workflows_and_subplatform_scripts(root)
+    check_versions_quad_and_clsid(root)
+    if milestone == "M2":
+        check_no_cloud_roaming(root)
+        check_resw_critical_security_keys(root)
+        check_zero_hardcoded_english_xaml(root)
+        check_kose_motion_rtl_hc_a11y(root)
+        check_m2_ui_page_audits(root)
+
+
+# ---------------------------------------------------------------------------
+# Mutation Test Helpers & Runner
+
+
+def _clone_temp_git_repo(root: Path, dest: Path) -> None:
+    p = subprocess.run(
+        ["git", "clone", "--local", "--no-hardlinks", "-q", str(root), str(dest)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if p.returncode != 0:
+        raise AssertionError(f"git clone --local failed: {p.stderr}")
+
+
+def _copy_lightweight_tree(root: Path, dest: Path, rel_paths: list[str]) -> None:
+    for rel in rel_paths:
+        src = root / rel
+        dst = dest / rel
+        if src.is_dir():
+            shutil.copytree(
+                src,
+                dst,
+                ignore=shutil.ignore_patterns("bin", "obj", "TotalDrop.WinUI.Tests", "__pycache__"),
+            )
+        elif src.is_file():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+
+
+def _run_self_on(tmp_root: Path, milestone: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(Path(__file__).resolve()), "--milestone", milestone, "--root", str(tmp_root)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _run_check_versions(repo_dir: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(repo_dir / "tools" / "check-versions.py")],
+        cwd=str(repo_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _expect_fail_proc(proc: subprocess.CompletedProcess[str], label: str, must_contain: tuple[str, ...]) -> None:
+    combined = f"{proc.stdout}\n{proc.stderr}"
+    if proc.returncode == 0:
+        raise AssertionError(f"{label}: expected non-zero exit, got 0 (out={combined})")
+    for tok in must_contain:
+        if tok.lower() not in combined.lower():
+            raise AssertionError(f"{label}: expected {tok!r} in failure output, got: {combined}")
+
+
+def run_test_suite(root: Path, milestone: str) -> dict[str, dict[str, Any]]:
+    results: dict[str, dict[str, Any]] = {}
+
+    def record(test_id: str, fn: Any) -> None:
+        try:
+            detail = fn()
+            results[test_id] = {"status": "PASS", "detail": detail or "ok"}
+        except Exception as exc:  # noqa: BLE001
+            results[test_id] = {"status": "FAIL", "detail": str(exc)}
+
+    m1_light_paths = [
+        "Cargo.toml",
+        "rust-toolchain.toml",
+        "README.md",
+        "crates",
+        "l10n",
+        "ui-winui3-fluent2",
+        "target-x86_64",
+        "target-arm64",
+        "subplatforms",
+        ".github/workflows",
+    ]
+
+    # --- M1 Tests (28 static + mutation tests) ---
+    def t1_f01_01() -> str:
+        check_rust_safety_isolation(root)
+        p = subprocess.run(
+            ["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if p.returncode != 0:
+            raise AssertionError(f"cargo clippy failed:\n{p.stderr}")
+        return "unsafe_code=forbid on 5 crates, FFI cdylib+rlib MIT/Apache-2.0, clippy -D warnings exit 0"
+
+    def t2_f01_05() -> str:
+        check_rust_safety_isolation(root)
+        with tempfile.TemporaryDirectory(prefix="td-f01-05-") as tmp:
+            t = Path(tmp)
+            # (a) inject unsafe {} into totaldrop-windows-bridge
+            a = t / "a"
+            _copy_lightweight_tree(root, a, m1_light_paths)
+            p_a = a / "crates" / "totaldrop-windows-bridge" / "src" / "uri.rs"
+            p_a.write_text(p_a.read_text(encoding="utf-8") + "\nfn bad() { unsafe {} }\n", encoding="utf-8")
+            _expect_fail_proc(_run_self_on(a, "M1"), "T2-F01-05(a)", ("unsafe", "totaldrop-windows-bridge"))
+
+            # (b) inject undocumented unsafe {} into totaldrop-windows-ffi
+            b = t / "b"
+            _copy_lightweight_tree(root, b, m1_light_paths)
+            p_b = b / "crates" / "totaldrop-windows-ffi" / "src" / "lib.rs"
+            raw_b = p_b.read_text(encoding="utf-8")
+            idx_test = raw_b.find("#[cfg(test)]")
+            ins = "\nfn bad_undoc() {\n    unsafe {}\n}\n"
+            p_b.write_text((raw_b[:idx_test] + ins + raw_b[idx_test:]) if idx_test != -1 else (raw_b + ins), encoding="utf-8")
+            _expect_fail_proc(_run_self_on(b, "M1"), "T2-F01-05(b)", ("SAFETY:",))
+
+            # (c) inject unguarded extern "C" export into totaldrop-windows-ffi
+            c = t / "c"
+            _copy_lightweight_tree(root, c, m1_light_paths)
+            p_c = c / "crates" / "totaldrop-windows-ffi" / "src" / "lib.rs"
+            raw_c = p_c.read_text(encoding="utf-8")
+            idx_test = raw_c.find("#[cfg(test)]")
+            ins_c = '\n#[unsafe(no_mangle)]\npub extern "C" fn totaldrop_win_unguarded() -> i32 { 0 }\n'
+            p_c.write_text((raw_c[:idx_test] + ins_c + raw_c[idx_test:]) if idx_test != -1 else (raw_c + ins_c), encoding="utf-8")
+            _expect_fail_proc(_run_self_on(c, "M1"), "T2-F01-05(c)", ("totaldrop_win_unguarded", "catch_unwind"))
+        return "clean PASS; all 3 safety mutations caught"
+
+    def t1_f02_01() -> str:
+        check_csproj_and_aot_contracts(root)
+        return ".NET 10 LTS + WinAppSDK 1.8 + AOT/WAE/Icon + Microsoft.WindowsAppRuntime.1.8 verified"
+
+    def t1_f02_02() -> str:
+        check_csproj_and_aot_contracts(root)
+        return "DisableRuntimeMarshalling + LibraryImport(totaldrop_windows_ffi) + 0 ComImport/DllImport/Binding"
+
+    def t2_f02_02() -> str:
+        with tempfile.TemporaryDirectory(prefix="td-f02-02-") as tmp:
+            t = Path(tmp)
+            cases = (
+                ("a", "ui-winui3-fluent2/TotalDrop.WinUI.csproj", "net10.0-windows10.0.26100.0", "net9.0-windows10.0.26100.0", ("net9.0",)),
+                ("b", "ui-winui3-fluent2/TotalDrop.WinUI.csproj", "1.8.", "1.7.", ("1.7",)),
+                ("c", "ui-winui3-fluent2/TotalDrop.WinUI.csproj", "<InvariantGlobalization>false</InvariantGlobalization>", "<InvariantGlobalization>true</InvariantGlobalization>", ("InvariantGlobalization",)),
+                ("d", "ui-winui3-fluent2/TotalDrop.WinUI.csproj", "<PublishAot>true</PublishAot>", "<PublishAot>false</PublishAot>", ("PublishAot",)),
+            )
+            for tag, rel, old, new, toks in cases:
+                d = t / tag
+                _copy_lightweight_tree(root, d, m1_light_paths)
+                f = d / rel
+                txt = f.read_text(encoding="utf-8")
+                assert old in txt, f"{old} not found in {rel}"
+                f.write_text(txt.replace(old, new, 1), encoding="utf-8")
+                _expect_fail_proc(_run_self_on(d, "M1"), f"T2-F02-02({tag})", toks)
+        return "all 4 csproj/manifest AOT & SDK regressions caught"
+
+    def t2_f02_03() -> str:
+        with tempfile.TemporaryDirectory(prefix="td-f02-03-") as tmp:
+            t = Path(tmp)
+            cs_cases = (
+                ("a", "[ComImport]\ninterface IFoo {}", ("[ComImport]",)),
+                ("b", '[DllImport("totaldrop_windows_ffi")] static extern void Bad();', ("[DllImport]",)),
+                ("c", "class Bad { object X() => Activator.CreateInstance(typeof(object))!; }", ("Activator.CreateInstance",)),
+                ("d", "using System.Security.Cryptography;", ("System.Security.Cryptography",)),
+            )
+            for tag, snippet, toks in cs_cases:
+                d = t / tag
+                _copy_lightweight_tree(root, d, m1_light_paths)
+                (d / "ui-winui3-fluent2" / "BadInjected.cs").write_text(snippet + "\n", encoding="utf-8")
+                _expect_fail_proc(_run_self_on(d, "M1"), f"T2-F02-03({tag})", toks)
+            e = t / "e"
+            _copy_lightweight_tree(root, e, m1_light_paths)
+            (e / "ui-winui3-fluent2" / "BadBinding.xaml").write_text('<Page><TextBlock Text="{Binding Text}" /></Page>\n', encoding="utf-8")
+            _expect_fail_proc(_run_self_on(e, "M1"), "T2-F02-03(e)", ("{Binding ",))
+        return "all 5 forbidden AOT/Rule-2 constructs caught"
+
+    def t2_f02_05() -> str:
+        check_csproj_and_aot_contracts(root)
+        with tempfile.TemporaryDirectory(prefix="td-f02-05-") as tmp:
+            d = Path(tmp) / "m"
+            _copy_lightweight_tree(root, d, m1_light_paths)
+            (d / "ui-winui3-fluent2" / "Interop" / "BadJson.cs").write_text(
+                "using System.Text.Json;\nclass Bad { object? Parse(string raw) => JsonSerializer.Deserialize<object>(raw); }\n",
+                encoding="utf-8",
+            )
+            _expect_fail_proc(_run_self_on(d, "M1"), "T2-F02-05", ("JsonSerializer.Deserialize<object>",))
+        return "clean source-gen JSON passes; reflection Deserialize<object> mutation caught"
+
+    def t1_f04_01() -> str:
+        check_4way_35_locale_parity(root)
+        return "both x64 and arm64 manifests declare <Resource Language='en'/> and exact 35-locale parity"
+
+    def t2_f04_01() -> str:
+        with tempfile.TemporaryDirectory(prefix="td-f04-01-") as tmp:
+            t = Path(tmp)
+            for tag, rel in (
+                ("x64", "target-x86_64/Package.x64.appxmanifest"),
+                ("arm64", "target-arm64/Package.arm64.appxmanifest"),
+            ):
+                d = t / tag
+                _copy_lightweight_tree(root, d, m1_light_paths)
+                f = d / rel
+                f.write_text(f.read_text(encoding="utf-8").replace('Language="en"', 'Language="en-US"', 1), encoding="utf-8")
+                _expect_fail_proc(_run_self_on(d, "M1"), f"T2-F04-01({tag})", ("en-US",))
+        return "mutated <Resource Language='en-US'/> rejected on both x64 and arm64 manifests"
+
+    def t2_f04_02() -> str:
+        check_4way_35_locale_parity(root)
+        with tempfile.TemporaryDirectory(prefix="td-f04-02-") as tmp:
+            t = Path(tmp)
+            # (a) stray pt and zh directories
+            for base_tag in ("pt", "zh"):
+                d = t / f"stray-{base_tag}"
+                _copy_lightweight_tree(root, d, m1_light_paths)
+                (d / "ui-winui3-fluent2" / "Strings" / base_tag).mkdir()
+                shutil.copy2(
+                    d / "ui-winui3-fluent2" / "Strings" / "en" / "Resources.resw",
+                    d / "ui-winui3-fluent2" / "Strings" / base_tag / "Resources.resw",
+                )
+                _expect_fail_proc(_run_self_on(d, "M1"), f"T2-F04-02a({base_tag})", (base_tag,))
+
+            # (b) remove Strings/sw and <Resource Language="sw" />
+            b = t / "drop-sw"
+            _copy_lightweight_tree(root, b, m1_light_paths)
+            shutil.rmtree(b / "ui-winui3-fluent2" / "Strings" / "sw")
+            for rel in ("target-x86_64/Package.x64.appxmanifest", "target-arm64/Package.arm64.appxmanifest"):
+                f = b / rel
+                f.write_text(re.sub(r'\s*<Resource Language="sw"\s*/>\s*', "\n", f.read_text(encoding="utf-8")), encoding="utf-8")
+            _expect_fail_proc(_run_self_on(b, "M1"), "T2-F04-02b", ("sw", "34 != 35"))
+
+            # (c) remove <Resource Language="zh-Hant" /> while keeping Strings/zh-Hant/
+            c = t / "drop-zh-hant"
+            _copy_lightweight_tree(root, c, m1_light_paths)
+            f = c / "target-x86_64" / "Package.x64.appxmanifest"
+            f.write_text(re.sub(r'\s*<Resource Language="zh-Hant"\s*/>\s*', "\n", f.read_text(encoding="utf-8")), encoding="utf-8")
+            _expect_fail_proc(_run_self_on(c, "M1"), "T2-F04-02c", ("zh-Hant",))
+        return "clean 35==35 PASS; stray pt/zh, dropped sw, and orphan zh-Hant all caught"
+
+    def t2_f04_03() -> str:
+        with tempfile.TemporaryDirectory(prefix="td-f04-03-") as tmp:
+            d = Path(tmp) / "m"
+            _copy_lightweight_tree(root, d, m1_light_paths)
+            tr_resw = d / "ui-winui3-fluent2" / "Strings" / "tr" / "Resources.resw"
+            txt = tr_resw.read_text(encoding="utf-8")
+            mutated = re.sub(r'<data name="verificationTitle".*?</data>', "", txt, count=1, flags=re.DOTALL)
+            assert mutated != txt
+            tr_resw.write_text(mutated, encoding="utf-8")
+            _expect_fail_proc(_run_self_on(d, "M1"), "T2-F04-03", ("verificationTitle", "tr"))
+        return "missing verificationTitle key in tr/Resources.resw caught"
+
+    def t1_f05_01() -> str:
+        check_cargo_hardening_and_ps1(root)
+        return "x64+arm64 cargo-config.toml hardening & PS1 RUSTFLAGS/no-/nv checks pass"
+
+    def t2_f05_01() -> str:
+        check_cargo_hardening_and_ps1(root)
+        with tempfile.TemporaryDirectory(prefix="td-f05-01-") as tmp:
+            t = Path(tmp)
+            # (a) inject $env:RUSTFLAGS = "-D warnings" before cargo build
+            a = t / "a"
+            _copy_lightweight_tree(root, a, m1_light_paths)
+            ps_a = a / "target-x86_64" / "build-x64.ps1"
+            ps_a.write_text(ps_a.read_text(encoding="utf-8").replace("cargo build", '$env:RUSTFLAGS = "-D warnings"\n    cargo build', 1), encoding="utf-8")
+            _expect_fail_proc(_run_self_on(a, "M1"), "T2-F05-01(a)", ("RUSTFLAGS",))
+
+            # (b) inject $env:CARGO_ENCODED_RUSTFLAGS before cargo build
+            b = t / "b"
+            _copy_lightweight_tree(root, b, m1_light_paths)
+            ps_b = b / "target-arm64" / "build-arm64.ps1"
+            ps_b.write_text(ps_b.read_text(encoding="utf-8").replace("cargo build", '$env:CARGO_ENCODED_RUSTFLAGS = "-D"\n    cargo build', 1), encoding="utf-8")
+            _expect_fail_proc(_run_self_on(b, "M1"), "T2-F05-01(b)", ("CARGO_ENCODED_RUSTFLAGS",))
+
+            # (c) append /nv to makeappx pack
+            c = t / "c"
+            _copy_lightweight_tree(root, c, m1_light_paths)
+            ps_c = c / "target-x86_64" / "build-x64.ps1"
+            ps_c.write_text(ps_c.read_text(encoding="utf-8").replace("& $MakeAppxExe pack ", "& $MakeAppxExe pack /nv ", 1), encoding="utf-8")
+            _expect_fail_proc(_run_self_on(c, "M1"), "T2-F05-01(c)", ("/nv",))
+        return "clean PS1 passes; RUSTFLAGS, CARGO_ENCODED_RUSTFLAGS, and /nv mutations all caught"
+
+    def t1_f06_01() -> str:
+        check_workflows_and_subplatform_scripts(root)
+        return "ci.yml windows-x64-msix job, SHA pinning, .NET 10, Rust 1.99.1, and gate.needs verified"
+
+    def t1_f06_02() -> str:
+        check_workflows_and_subplatform_scripts(root)
+        return "subplatforms/msix/x86_64/{build.sh,verify.sh} POSIX syntax & non-stub checks verified"
+
+    def t1_f06_03() -> str:
+        p = subprocess.run(
+            [sys.executable, str(root / "tools" / "verify-subplatforms.py")],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if p.returncode != 0 or "6/6" not in p.stdout:
+            raise AssertionError(f"verify-subplatforms.py failed: rc={p.returncode}, out={p.stdout}\n{p.stderr}")
+        return p.stdout.strip()
+
+    def t2_f06_05() -> str:
+        check_workflows_and_subplatform_scripts(root)
+        with tempfile.TemporaryDirectory(prefix="td-f06-05-") as tmp:
+            t = Path(tmp)
+            # (a) mutable @v4 in ci.yml
+            a = t / "a"
+            _copy_lightweight_tree(root, a, m1_light_paths)
+            ci_a = a / ".github" / "workflows" / "ci.yml"
+            ci_a.write_text(re.sub(r"actions/checkout@[0-9a-f]{40}", "actions/checkout@v4", ci_a.read_text(encoding="utf-8"), count=1), encoding="utf-8")
+            _expect_fail_proc(_run_self_on(a, "M1"), "T2-F06-05(a)", ("@v4",))
+
+            # (b) mutable @main in pkg-msix-x86_64.yml
+            b = t / "b"
+            _copy_lightweight_tree(root, b, m1_light_paths)
+            pkg_b = b / ".github" / "workflows" / "pkg-msix-x86_64.yml"
+            pkg_b.write_text(re.sub(r"actions/checkout@[0-9a-f]{40}", "actions/checkout@main", pkg_b.read_text(encoding="utf-8"), count=1), encoding="utf-8")
+            _expect_fail_proc(_run_self_on(b, "M1"), "T2-F06-05(b)", ("@main",))
+
+            # (c) drop windows-x64-msix from jobs.gate.needs
+            c = t / "c"
+            _copy_lightweight_tree(root, c, m1_light_paths)
+            ci_c = c / ".github" / "workflows" / "ci.yml"
+            txt_c = ci_c.read_text(encoding="utf-8")
+            gate_pos = txt_c.find("\n  gate:\n")
+            assert gate_pos != -1
+            patched = txt_c[:gate_pos] + txt_c[gate_pos:].replace("windows-x64-msix", "other-job", 1)
+            ci_c.write_text(patched, encoding="utf-8")
+            _expect_fail_proc(_run_self_on(c, "M1"), "T2-F06-05(c)", ("windows-x64-msix",))
+        return "clean workflows PASS; @v4, @main, and dropped windows-x64-msix gate all caught"
+
+    def t1_f07_01() -> str:
+        p = _run_check_versions(root)
+        if p.returncode != 0:
+            raise AssertionError(f"check-versions.py failed: {p.stdout}\n{p.stderr}")
+        return p.stdout.strip()
+
+    def t1_f07_02() -> str:
+        check_versions_quad_and_clsid(root)
+        return "all 5 manifest/script sources + FFI version aligned at 0.1.1.0 (Revision == 0)"
+
+    def t1_f07_03() -> str:
+        check_versions_quad_and_clsid(root)
+        p = _run_check_versions(root)
+        if p.returncode != 0:
+            raise AssertionError(p.stderr)
+        return "core crates isolated at 0.2.0-beta.5 vs Windows app 0.1.0-beta.1"
+
+    def t1_f07_04() -> str:
+        check_versions_quad_and_clsid(root)
+        return f"canonical CLSID {{{CANONICAL_CLSID}}} consistent; zero drifted CLSID references"
+
+    def t1_f07_05() -> str:
+        check_workflows_and_subplatform_scripts(root)
+        return "ci.yml enforces tools/check-versions.py in required job(s) feeding gate"
+
+    def t2_f07_01() -> str:
+        with tempfile.TemporaryDirectory(prefix="td-f07-01-") as tmp:
+            clone = Path(tmp) / "repo"
+            _clone_temp_git_repo(root, clone)
+            recipe = clone / "subplatforms" / "msix" / "x86_64" / "RECIPE.toml"
+            recipe.write_text(recipe.read_text(encoding="utf-8").replace('version = "0.1.0-beta.1"', f'version = "{STALE_SUBPLATFORM_VER}"', 1), encoding="utf-8")
+            _expect_fail_proc(_run_check_versions(clone), "T2-F07-01", ("RECIPE.toml", STALE_SUBPLATFORM_VER))
+        return "mutated RECIPE.toml stale version caught by tools/check-versions.py"
+
+    def t2_f07_02() -> str:
+        with tempfile.TemporaryDirectory(prefix="td-f07-02-") as tmp:
+            clone = Path(tmp) / "repo"
+            _clone_temp_git_repo(root, clone)
+            man = clone / "target-x86_64" / "Package.x64.appxmanifest"
+            man.write_text(man.read_text(encoding="utf-8").replace('Version="0.1.1.0"', 'Version="0.1.1.1"', 1), encoding="utf-8")
+            _expect_fail_proc(_run_check_versions(clone), "T2-F07-02(check-versions)", ("Package.x64.appxmanifest", "0.1.1.1"))
+            _expect_fail_proc(_run_self_on(clone, "M1"), "T2-F07-02(static)", ("Revision == 0",))
+        return "non-zero Revision 0.1.1.1 caught by both check-versions.py and Revision == 0 oracle"
+
+    def t2_f07_03() -> str:
+        with tempfile.TemporaryDirectory(prefix="td-f07-03-") as tmp:
+            t = Path(tmp)
+            for tag, bad_ver, token in (
+                ("overflow", "0.1.65536.0", "65535"),
+                ("threepart", "0.1.1", "4-part"),
+            ):
+                clone = t / tag
+                _clone_temp_git_repo(root, clone)
+                man = clone / "target-x86_64" / "Package.x64.appxmanifest"
+                man.write_text(man.read_text(encoding="utf-8").replace('Version="0.1.1.0"', f'Version="{bad_ver}"', 1), encoding="utf-8")
+                _expect_fail_proc(_run_check_versions(clone), f"T2-F07-03({tag},cv)", ("Package.x64.appxmanifest",))
+                _expect_fail_proc(_run_self_on(clone, "M1"), f"T2-F07-03({tag},static)", (token,))
+        return "uint16 overflow 0.1.65536.0 and 3-part 0.1.1 caught by both tools"
+
+    def t2_f07_04() -> str:
+        with tempfile.TemporaryDirectory(prefix="td-f07-04-") as tmp:
+            clone = Path(tmp) / "repo"
+            _clone_temp_git_repo(root, clone)
+            man = clone / "target-arm64" / "Package.arm64.appxmanifest"
+            man.write_text(man.read_text(encoding="utf-8").replace('Version="0.1.1.0"', 'Version="0.1.2.0"', 1), encoding="utf-8")
+            _expect_fail_proc(_run_check_versions(clone), "T2-F07-04", ("Package.arm64.appxmanifest", "0.1.2.0"))
+        return "cross-arch x64!=arm64 manifest version drift caught"
+
+    def t2_f07_05() -> str:
+        with tempfile.TemporaryDirectory(prefix="td-f07-05-") as tmp:
+            t = Path(tmp)
+            # (a) Re-introduce drifted CLSID in README.md
+            a = t / "a"
+            _clone_temp_git_repo(root, a)
+            readme = a / "README.md"
+            readme.write_text(readme.read_text(encoding="utf-8").replace(CANONICAL_CLSID, DRIFTED_CLSID, 1), encoding="utf-8")
+            _expect_fail_proc(_run_check_versions(a), "T2-F07-05a(cv)", ("README.md", DRIFTED_CLSID))
+            _expect_fail_proc(_run_self_on(a, "M1"), "T2-F07-05a(static)", ("README.md", DRIFTED_CLSID))
+
+            # (b) Malformed GUID in ExplorerCommand.idl
+            b = t / "b"
+            _clone_temp_git_repo(root, b)
+            idl = b / "ui-winui3-fluent2" / "ExplorerExtension" / "ExplorerCommand.idl"
+            idl.write_text(idl.read_text(encoding="utf-8").replace(CANONICAL_CLSID, "8F6E3D72-BAD", 1), encoding="utf-8")
+            _expect_fail_proc(_run_self_on(b, "M1"), "T2-F07-05b(static)", ("ExplorerCommand.idl", "8F6E3D72-BAD"))
+        return "drifted README.md CLSID and malformed ExplorerCommand.idl GUID both caught"
+
+    def t3_16() -> str:
+        # Clean repo passes both check-versions.py and verify-subplatforms.py
+        if _run_check_versions(root).returncode != 0:
+            raise AssertionError("clean check-versions.py failed")
+        p_sub = subprocess.run([sys.executable, str(root / "tools" / "verify-subplatforms.py")], cwd=str(root), capture_output=True, text=True, check=False)
+        if p_sub.returncode != 0:
+            raise AssertionError(f"clean verify-subplatforms.py failed: {p_sub.stderr}")
+
+        with tempfile.TemporaryDirectory(prefix="td-t3-16-") as tmp:
+            t = Path(tmp)
+            clone = t / "repo"
+            _clone_temp_git_repo(root, clone)
+            recipe = clone / "subplatforms" / "msix" / "x86_64" / "RECIPE.toml"
+            recipe.write_text(recipe.read_text(encoding="utf-8").replace('version = "0.1.0-beta.1"', 'version = "9.9.9"', 1), encoding="utf-8")
+            _expect_fail_proc(_run_check_versions(clone), "T3-16(version)", ("RECIPE.toml",))
+
+            # Gzip fake .msix fails verify.sh
+            art = t / "art"
+            art.mkdir()
+            rec_data = tomllib.loads((root / "subplatforms" / "msix" / "x86_64" / "RECIPE.toml").read_text(encoding="utf-8"))
+            art_name = rec_data["artifact_name"]
+            import gzip as _gz
+            fake = art / art_name
+            fake.write_bytes(_gz.compress(b"not-an-msix"))
+            import hashlib as _hl
+            (art / "SHA256SUMS").write_text(f"{_hl.sha256(fake.read_bytes()).hexdigest()}  {art_name}\n", encoding="utf-8")
+            p_ver = subprocess.run(["sh", str(root / "subplatforms" / "msix" / "x86_64" / "verify.sh"), str(art)], cwd=str(root), capture_output=True, text=True, check=False)
+            if p_ver.returncode == 0:
+                raise AssertionError("T3-16: verify.sh did not reject gzip fake .msix")
+        return "clean check-versions + verify-subplatforms PASS; version drift & gzip fake .msix both caught"
+
+    record("T1-F01-01", t1_f01_01)
+    record("T2-F01-05", t2_f01_05)
+    record("T1-F02-01", t1_f02_01)
+    record("T1-F02-02", t1_f02_02)
+    record("T2-F02-02", t2_f02_02)
+    record("T2-F02-03", t2_f02_03)
+    record("T2-F02-05", t2_f02_05)
+    record("T1-F04-01", t1_f04_01)
+    record("T2-F04-01", t2_f04_01)
+    record("T2-F04-02", t2_f04_02)
+    record("T2-F04-03", t2_f04_03)
+    record("T1-F05-01", t1_f05_01)
+    record("T2-F05-01", t2_f05_01)
+    record("T1-F06-01", t1_f06_01)
+    record("T1-F06-02", t1_f06_02)
+    record("T1-F06-03", t1_f06_03)
+    record("T2-F06-05", t2_f06_05)
+    record("T1-F07-01", t1_f07_01)
+    record("T1-F07-02", t1_f07_02)
+    record("T1-F07-03", t1_f07_03)
+    record("T1-F07-04", t1_f07_04)
+    record("T1-F07-05", t1_f07_05)
+    record("T2-F07-01", t2_f07_01)
+    record("T2-F07-02", t2_f07_02)
+    record("T2-F07-03", t2_f07_03)
+    record("T2-F07-04", t2_f07_04)
+    record("T2-F07-05", t2_f07_05)
+    record("T3-16", t3_16)
+
+    if milestone == "M2":
+        def t2_f12_05() -> str:
+            check_no_cloud_roaming(root)
+            with tempfile.TemporaryDirectory(prefix="td-f12-05-") as tmp:
+                t = Path(tmp)
+                for tag, token in (("a", "RoamingFolder"), ("b", "RoamingSettings")):
+                    d = t / tag
+                    _copy_lightweight_tree(root, d, m1_light_paths)
+                    (d / "ui-winui3-fluent2" / "Services" / "BadSync.cs").write_text(
+                        f"class BadSync {{ object X() => ApplicationData.Current.{token}; }}\n",
+                        encoding="utf-8",
+                    )
+                    _expect_fail_proc(_run_self_on(d, "M2"), f"T2-F12-05({tag})", (token,))
+            return "clean local settings.json PASS; RoamingFolder & RoamingSettings mutations caught"
+
+        def t2_f13_01_part_b() -> str:
+            check_resw_critical_security_keys(root)
+            with tempfile.TemporaryDirectory(prefix="td-f13-01b-") as tmp:
+                d = Path(tmp) / "m"
+                _copy_lightweight_tree(root, d, m1_light_paths)
+                de_resw = d / "ui-winui3-fluent2" / "Strings" / "de" / "Resources.resw"
+                de_resw.write_text(
+                    de_resw.read_text(encoding="utf-8").replace(
+                        '<data name="verificationTitle" xml:space="preserve">\n    <value>Verification words</value>',
+                        '<data name="verificationTitle" xml:space="preserve">\n    <value>Pr\u00fcfw\u00f6rter</value>',
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
+                _expect_fail_proc(_run_self_on(d, "M2"), "T2-F13-01b(de)", ("de:verificationTitle",))
+
+                d2 = Path(tmp) / "m2"
+                _copy_lightweight_tree(root, d2, m1_light_paths)
+                ar_resw = d2 / "ui-winui3-fluent2" / "Strings" / "ar" / "Resources.resw"
+                ar_resw.write_text(
+                    ar_resw.read_text(encoding="utf-8").replace(
+                        '<data name="receiveAccept" xml:space="preserve">\n    <value>Accept</value>',
+                        '<data name="receiveAccept" xml:space="preserve">\n    <value>\u0642\u0628\u0648\u0644</value>',
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
+                _expect_fail_proc(_run_self_on(d2, "M2"), "T2-F13-01b(ar)", ("ar:receiveAccept",))
+            return "clean 33 unreviewed .resw critical keys PASS; de:verificationTitle & ar:receiveAccept tampering caught"
+
+        def t2_f13_06() -> str:
+            check_zero_hardcoded_english_xaml(root)
+            with tempfile.TemporaryDirectory(prefix="td-f13-06-") as tmp:
+                t = Path(tmp)
+                for tag, snippet, expected in (
+                    ("a", '<TextBlock Text="Send files" TextWrapping="Wrap" IsTextScaleFactorEnabled="True" />', 'Text="Send files"'),
+                    ("b", '<Button Content="Connect" AutomationProperties.Name="TotalDrop" />', 'Content="Connect"'),
+                    ("c", '<TextBox Header="Server" AutomationProperties.Name="TotalDrop" />', 'Header="Server"'),
+                ):
+                    d = t / tag
+                    _copy_lightweight_tree(root, d, m1_light_paths)
+                    (d / "ui-winui3-fluent2" / "Views" / "InjectedHardcoded.xaml").write_text(
+                        f'<Page xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">{snippet}</Page>\n',
+                        encoding="utf-8",
+                    )
+                    _expect_fail_proc(_run_self_on(d, "M2"), f"T2-F13-06({tag})", (expected,))
+            return "zero hardcoded English XAML literals PASS; all 3 injected literals caught"
+
+        def t1_f14_01() -> str:
+            check_kose_motion_rtl_hc_a11y(root)
+            return "Kose path, pivot (55,57), palette, 3.2s spline storyboard, Done check, AnimationsEnabled verified"
+
+        def t1_f14_02() -> str:
+            check_kose_motion_rtl_hc_a11y(root)
+            return "Kose/TransferCode/VerificationWords LTR + en-US and HighContrast SystemColor dictionary verified"
+
+        def t1_f14_03() -> str:
+            check_kose_motion_rtl_hc_a11y(root)
+            return "100% interactive controls have AutomationProperties.Name & TextBlocks wrap+scale"
+
+        def t2_f14_01() -> str:
+            check_kose_motion_rtl_hc_a11y(root)
+            with tempfile.TemporaryDirectory(prefix="td-f14-01-") as tmp:
+                t = Path(tmp)
+                # (a) remove FlowDirection="LeftToRight" from Kose mark Viewbox
+                a = t / "a"
+                _copy_lightweight_tree(root, a, m1_light_paths)
+                mw_a = a / "ui-winui3-fluent2" / "MainWindow.xaml"
+                mw_a.write_text(mw_a.read_text(encoding="utf-8").replace('FlowDirection="LeftToRight"', 'FlowDirection="RightToLeft"', 1), encoding="utf-8")
+                _expect_fail_proc(_run_self_on(a, "M2"), "T2-F14-01(a)", ("LeftToRight",))
+
+                # (b) remove Language="en-US" from VerificationWords in SendPage.xaml
+                b = t / "b"
+                _copy_lightweight_tree(root, b, m1_light_paths)
+                sp_b = b / "ui-winui3-fluent2" / "Views" / "SendPage.xaml"
+                sp_b.write_text(sp_b.read_text(encoding="utf-8").replace('Language="en-US"', "", 2), encoding="utf-8")
+                _expect_fail_proc(_run_self_on(b, "M2"), "T2-F14-01(b)", ("en-US",))
+
+                # (c) alter pivot (55,57), Done path, AnimationsEnabled, HighContrast SystemBackdrop
+                c = t / "c"
+                _copy_lightweight_tree(root, c, m1_light_paths)
+                mw_c = c / "ui-winui3-fluent2" / "MainWindow.xaml"
+                mw_c.write_text(mw_c.read_text(encoding="utf-8").replace('CenterX="55"', 'CenterX="50"', 1), encoding="utf-8")
+                _expect_fail_proc(_run_self_on(c, "M2"), "T2-F14-01(c1)", ("(55, 57)",))
+
+                c2 = t / "c2"
+                _copy_lightweight_tree(root, c2, m1_light_paths)
+                mw_cs = c2 / "ui-winui3-fluent2" / "MainWindow.xaml.cs"
+                mw_cs.write_text(mw_cs.read_text(encoding="utf-8").replace("SystemBackdrop = null", "// removed", 1), encoding="utf-8")
+                _expect_fail_proc(_run_self_on(c2, "M2"), "T2-F14-01(c2)", ("SystemBackdrop = null",))
+
+                # (d) delete AutomationProperties.Name from an interactive Button
+                d = t / "d"
+                _copy_lightweight_tree(root, d, m1_light_paths)
+                sp_d = d / "ui-winui3-fluent2" / "Views" / "SendPage.xaml"
+                sp_d.write_text(re.sub(r'(<Button\b[^>]*?)\s+AutomationProperties\.Name="[^"]*"', r"\1", sp_d.read_text(encoding="utf-8"), count=1), encoding="utf-8")
+                _expect_fail_proc(_run_self_on(d, "M2"), "T2-F14-01(d)", ("AutomationProperties.Name",))
+            return "all 4 F14 brand/RTL/reduced-motion/HC/a11y regressions caught"
+
+        record("T2-F12-05", t2_f12_05)
+        record("T2-F13-01-part-b", t2_f13_01_part_b)
+        record("T2-F13-06", t2_f13_06)
+        record("T1-F14-01", t1_f14_01)
+        record("T1-F14-02", t1_f14_02)
+        record("T1-F14-03", t1_f14_03)
+        record("T2-F14-01", t2_f14_01)
+
+    return results
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Static contract, negative-mutation & anti-prod-probing verifier.")
+    parser.add_argument("--milestone", choices=("M1", "M2"), default="M2")
+    parser.add_argument("--root", type=Path, default=REPO_ROOT)
+    parser.add_argument("--run-tests", action="store_true", help="Run all static + negative-mutation test IDs.")
+    parser.add_argument("--check-m2-ui-audit", action="store_true", help="Run M2 Send/Receive/Settings UI static audits.")
+    parser.add_argument("--scan-no-prod-probing", action="store_true", help="Run TEST_INFRA.md section 3.3 scanner.")
+    parser.add_argument("--json-out", type=Path, default=None)
+    args = parser.parse_args(argv)
+
+    if args.scan_no_prod_probing:
+        violations = scan_no_live_production_probing(args.root)
+        if violations:
+            for v in violations:
+                print(f"error: {v}", file=sys.stderr)
+            return 1
+        print("anti-production-probing scanner OK: 0 live production probes found")
+        return 0
+
+    if args.check_m2_ui_audit:
+        try:
+            check_m2_ui_page_audits(args.root)
+            print("M2 SendPage/ReceivePage/SettingsPage static audit OK")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    if args.run_tests:
+        results = run_test_suite(args.root, args.milestone)
+        if args.json_out is not None:
+            args.json_out.write_text(json.dumps(results, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        failed = [k for k, v in results.items() if v["status"] != "PASS"]
+        for k, v in sorted(results.items()):
+            print(f"[{v['status']}] {k}: {v['detail']}")
+        return 1 if failed else 0
+
+    try:
+        verify_all_static(args.root, args.milestone)
+    except Exception as exc:  # noqa: BLE001
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"verify_static_contracts OK ({args.milestone}): {args.root}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

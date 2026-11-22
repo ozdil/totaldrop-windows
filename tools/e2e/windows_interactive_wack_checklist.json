@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "scope": "TotalDrop for Windows x64 — Phase B (M1-M2) Interactive Windows 11 & WACK Checklist",
+  "environment": "windows-interactive-wack",
+  "host_requirements": "Interactive Windows 11 desktop session (>= 1024x768, UAC enabled, DWM + WPN + Explorer shell active, UI Automation / FlaUI, local ephemeral loopback servers only — zero live production probing)",
+  "total_tests": 14,
+  "tests": [
+    {
+      "test_id": "T1-F12-03",
+      "features": ["F12"],
+      "milestone": "M2",
+      "env": "windows-interactive-wack",
+      "status": "WINDOWS_ONLY_READY",
+      "preconditions": "Packaged M2 WinUI 3 app running on interactive Windows 11 desktop; open SettingsPage.",
+      "inputs": "Toggle Privacy Mode switch ON -> confirm modal ContentDialog (privacyModeConfirmTitle/privacyModeConfirmBody) -> toggle switch OFF.",
+      "exact_oracle": "Turning ON displays localized modal confirmation dialog before persisting privacy_relay_only = true to %LOCALAPPDATA%\\TotalDrop\\settings.json; toggling OFF persists privacy_relay_only = false immediately without showing a dialog.",
+      "verification_evidence_required": "UIA dialog capture + settings.json snapshots before/after ON and OFF."
+    },
+    {
+      "test_id": "T1-F14-04",
+      "features": ["F14"],
+      "milestone": "M2",
+      "env": "windows-interactive-wack",
+      "status": "WINDOWS_ONLY_READY",
+      "preconditions": "Packaged M2 app running on Windows 11 desktop in Light theme.",
+      "inputs": "Switch Windows OS theme live from Light to Dark without restarting; walk full UI Automation tree.",
+      "exact_oracle": "Backdrop uses MicaBackdrop (or DesktopAcrylicBackdrop fallback), DWM caption colors update live, Kose brush switches #6D4AE0 -> #A68BFF, every focusable UIA control exposes non-empty Name and valid ControlType, and ProgressBar exposes RangeValuePattern.",
+      "verification_evidence_required": "UIA tree dump JSON + Light/Dark titlebar & Kose pixel captures."
+    },
+    {
+      "test_id": "T1-F14-05",
+      "features": ["F14"],
+      "milestone": "M2",
+      "env": "windows-interactive-wack",
+      "status": "WINDOWS_ONLY_READY",
+      "preconditions": "Packaged M2 app running on Windows 11 desktop (>= 1366x768 display).",
+      "inputs": "Capture Light, Dark, High Contrast, RTL (ar), and CJK (ja) screenshots of Send, Receive, and Settings pages.",
+      "exact_oracle": "All PNG screenshots render cleanly (>= 1366x768), High Contrast sets SystemBackdrop == null and honors system palette, and zero text overlap or missing glyphs appear in CJK/RTL views.",
+      "verification_evidence_required": "Archived PNG screenshot matrix (>= 1366x768) for Light, Dark, High Contrast, ar, and ja."
+    },
+    {
+      "test_id": "T2-F12-03",
+      "features": ["F12"],
+      "milestone": "M2",
+      "env": "windows-interactive-wack",
+      "status": "WINDOWS_ONLY_READY",
+      "preconditions": "Packaged M2 app open on SettingsPage.",
+      "inputs": "Edit Server URL TextBox to 'ws://127.0.0.1:9999' without clicking Save, then send VirtualKey.Escape twice via UIA.",
+      "exact_oracle": "First Escape reverts the TextBox back to previously saved URL without leaving SettingsPage; second Escape (clean input) navigates back.",
+      "verification_evidence_required": "UIA active-page & TextBox.Value log before, after Escape #1, and after Escape #2."
+    },
+    {
+      "test_id": "T2-F12-04",
+      "features": ["F12"],
+      "milestone": "M2",
+      "env": "windows-interactive-wack",
+      "status": "WINDOWS_ONLY_READY",
+      "preconditions": "Packaged M2 app open on SettingsPage.",
+      "inputs": "(a) Toggle Privacy Mode ON -> click Cancel in modal dialog; (b) lock %LOCALAPPDATA%\\TotalDrop read-only -> toggle ON -> click Confirm.",
+      "exact_oracle": "(a) Cancel leaves privacy_relay_only == false and ToggleSwitch OFF; (b) failed disk persistence reverts ToggleSwitch OFF (never falsely indicates persisted Privacy Mode).",
+      "verification_evidence_required": "UIA ToggleSwitch.ToggleState log + settings.json verification for both paths."
+    },
+    {
+      "test_id": "T2-F14-02",
+      "features": ["F14"],
+      "milestone": "M2",
+      "env": "windows-interactive-wack",
+      "status": "WINDOWS_ONLY_READY",
+      "preconditions": "Packaged M2 app connected to local throttled loopback servers (127.0.0.1:0, stun_server = '').",
+      "inputs": "Exercise full 2x2 reduced-motion matrix + live SPI_SETCLIENTAREAANIMATION toggle: (1) Idle + AnimationsEnabled=true, (2) Idle + false, (3) Transferring + false, (4) toggle -> true mid-transfer, (5) toggle -> false mid-transfer, (6) toggle -> true and complete to Done.",
+      "exact_oracle": "Kose mark stays static at 0 deg in (1)-(3), begins 4x90 deg CW 3200 ms rotation around (55, 57) in (4), halts and resets to 0 deg in (5), resumes in (6), and stops at 0 deg displaying Done checkmark M37 58 L50 71 L74 45 upon Done. Advisory: verify both page-level Kose marks (80 ms poll) and MainWindow TitleBar Kose mark refresh cleanly on live SPI_SETCLIENTAREAANIMATION toggle.",
+      "verification_evidence_required": "Frame-sampled animation angle log across all 6 steps + Done checkmark screenshot."
+    },
+    {
+      "test_id": "T2-F14-03",
+      "features": ["F14"],
+      "milestone": "M2",
+      "env": "windows-interactive-wack",
+      "status": "WINDOWS_ONLY_READY",
+      "preconditions": "Packaged M2 app running on Windows 11 desktop.",
+      "inputs": "Switch Windows OS live into High Contrast theme (AccessibilitySettings.HighContrast == true) without restarting.",
+      "exact_oracle": "MainWindow.SystemBackdrop becomes null immediately (neither MicaBackdrop nor DesktopAcrylicBackdrop), Kose mark switches to SystemColorHighlightColor, and DWM caption buttons update live.",
+      "verification_evidence_required": "High Contrast screenshot + runtime SystemBackdrop/brush diagnostic log."
+    },
+    {
+      "test_id": "T2-F14-04",
+      "features": ["F14"],
+      "milestone": "M2",
+      "env": "windows-interactive-wack",
+      "status": "WINDOWS_ONLY_READY",
+      "preconditions": "Packaged M2 app at default window size (720x640) under German (de) or Finnish (fi) locale.",
+      "inputs": "Set Windows UISettings.TextScaleFactor = 2.25 (225%) and walk UIA bounding rectangles across Send, Receive, and Settings.",
+      "exact_oracle": "All labels wrap cleanly inside ScrollViewer with zero clipped/zero-width controls and zero overlapping interactive button bounding rectangles.",
+      "verification_evidence_required": "UIA BoundingRectangle intersection check report + 225% scale screenshots."
+    },
+    {
+      "test_id": "T2-F14-05",
+      "features": ["F14"],
+      "milestone": "M2",
+      "env": "windows-interactive-wack",
+      "status": "WINDOWS_ONLY_READY",
+      "preconditions": "Packaged M2 app on Windows 11 desktop.",
+      "inputs": "Switch UI locale to RTL (ar, he, fa, ur, and ar-XB) and inspect UIA FlowDirection + rendered Kose mark.",
+      "exact_oracle": "Root shell uses FlowDirection.RightToLeft while Kose mark (square corner at upper-right), transfer code, and 4 verification words strictly retain FlowDirection.LeftToRight and Language='en-US'.",
+      "verification_evidence_required": "UIA FlowDirection/Language dump + RTL rendered Kose corner pixel probe."
+    },
+    {
+      "test_id": "T3-02",
+      "features": ["F13", "F14"],
+      "milestone": "M2",
+      "env": "windows-interactive-wack",
+      "status": "WINDOWS_ONLY_READY",
+      "preconditions": "Packaged M2 app under RTL locales (ar, fa, he, ur) with AnimationsEnabled = false; local loopback transfer servers running.",
+      "inputs": "Start active throttled loopback transfer (127.0.0.1:0), then toggle AnimationsEnabled = true live.",
+      "exact_oracle": "Root FlowDirection == RightToLeft with mirrored nav chrome, yet Kose mark keeps FlowDirection == LeftToRight (square corner at upper-right), remains fixed at 0 deg while false, and switches to 3200 ms CW rotation around (55, 57) when toggled true.",
+      "verification_evidence_required": "UIA FlowDirection dump + live animation state capture across toggle."
+    },
+    {
+      "test_id": "T3-03",
+      "features": ["F12", "F14"],
+      "milestone": "M2",
+      "env": "windows-interactive-wack",
+      "status": "WINDOWS_ONLY_READY",
+      "preconditions": "Windows High Contrast active (HighContrast == true) AND TextScaleFactor == 2.25 (225%).",
+      "inputs": "Open SettingsPage and inspect UIA tree and bounding boxes of Server URL box, Save/Reset buttons, Privacy Mode toggle, and About/Version card.",
+      "exact_oracle": "SystemBackdrop == null; all SettingsPage controls expose non-empty AutomationProperties.Name and render inside ScrollViewer with zero clipped or overlapping bounding boxes.",
+      "verification_evidence_required": "UIA bounding-rect audit report + High Contrast 225% SettingsPage screenshot."
+    },
+    {
+      "test_id": "T3-20",
+      "features": ["F09", "F10", "F14"],
+      "milestone": "M2",
+      "env": "windows-interactive-wack",
+      "status": "WINDOWS_ONLY_READY",
+      "preconditions": "Packaged M2 SendPage transferring over local throttled loopback (127.0.0.1:0).",
+      "inputs": "Open Stop/Cancel confirmation ContentDialog (cancelTransferTitle) while transfer is running; allow final chunk to complete (Done) while dialog is open; trigger a late cancel.",
+      "exact_oracle": "Kose mark halts immediately at 0 deg displaying Done checkmark M37 58 L50 71 L74 45, modal dialog auto-dismisses immediately, and any late cancel is an idempotent no-op preserving completed state.",
+      "verification_evidence_required": "UIA dialog dismissal event log + final SendPage Done state capture."
+    },
+    {
+      "test_id": "T4-04",
+      "features": ["F08", "F09", "F12"],
+      "milestone": "M2",
+      "env": "windows-interactive-wack",
+      "status": "WINDOWS_ONLY_READY",
+      "preconditions": "Packaged M2 app on Windows 11 with local totaldrop-rendezvous.exe and totaldrop-relay.exe on 127.0.0.1:0 (stun_server = '').",
+      "inputs": "On SettingsPage: submit invalid 'wss://attacker@evil.example' (rejected), save local loopback URLs + toggle Privacy Mode ON via modal confirm, restart app, execute both a file and a text transfer over loopback relay, edit URL without saving and press Escape, then click Reset.",
+      "exact_oracle": "%LOCALAPPDATA%\\TotalDrop\\settings.json persists across restart (never cloud-roamed), both transfers complete strictly over local loopback relay, Escape reverts unsaved edit without leaving SettingsPage, and Reset restores canonical default rendezvous URL (offline metadata check — zero live production connection).",
+      "verification_evidence_required": "End-to-end UIA log + BLAKE3/text integrity verification + settings.json snapshots."
+    },
+    {
+      "test_id": "T4-05",
+      "features": ["F10", "F11", "F12", "F13", "F14"],
+      "milestone": "M2",
+      "env": "windows-interactive-wack",
+      "status": "WINDOWS_ONLY_READY",
+      "preconditions": "Packaged M2 app on interactive Windows 11 with local loopback servers (127.0.0.1:0) at 225% text scale.",
+      "inputs": "Walk Send -> Receive (peer filename 'fatura<U+202E>fdp.exe' + plain-text receive checking Escape suppression and explicit Reset) -> Settings across ar (with tr-TR region), ur, ja, en-XA, and ar-XB; capture Light, Dark, and High Contrast screenshots.",
+      "exact_oracle": "RTL on ar/ur/ar-XB; Kose/code/4 SAS words stay LTR + en-US; all 6 App critical keys stay English in unreviewed locales (draftTranslation visible in Settings, hidden in tr); <U+202E> visibly escaped; '%99' prefix format for tr-TR region; Escape keeps received text card visible until explicit Reset; zero clipped controls at 225%; High Contrast sets SystemBackdrop == null.",
+      "verification_evidence_required": "Complete UIA audit JSON + Light/Dark/High Contrast/RTL/CJK/pseudo-locale screenshot archive."
+    }
+  ]
+}
