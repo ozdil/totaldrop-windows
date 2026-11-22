@@ -178,7 +178,7 @@ function Assert-WackInteractivePreconditions {
     Write-Host "    WACK preconditions OK: SessionId=$sessionId, EnableLUA=1, Display=${width}x${height}"
 }
 
-function Get-XmlAttributeValue {
+function Get-XmlAttributeValues {
     param(
         [Parameter(Mandatory = $true)]
         [System.Xml.XmlNode]$Node,
@@ -187,15 +187,19 @@ function Get-XmlAttributeValue {
         [string]$AttributeName
     )
 
+    $values = [System.Collections.Generic.List[string]]::new()
     if ($null -eq $Node.Attributes) {
-        return $null
+        return ,$values
     }
     foreach ($attr in $Node.Attributes) {
-        if ($attr.Name.Equals($AttributeName, [System.StringComparison]::OrdinalIgnoreCase)) {
-            return [string]$attr.Value
+        if ($attr.NamespaceURI -eq "http://www.w3.org/2000/xmlns/") {
+            continue
+        }
+        if ($attr.LocalName.Equals($AttributeName, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $values.Add([string]$attr.Value)
         }
     }
-    return $null
+    return ,$values
 }
 
 function Test-WackReportXml {
@@ -235,11 +239,28 @@ function Test-WackReportXml {
         return $false
     }
 
-    $overallRaw = Get-XmlAttributeValue -Node $reportNode -AttributeName "OVERALL_RESULT"
-    if ($null -eq $overallRaw) {
-        $overallRaw = ""
+    $overallValues = Get-XmlAttributeValues -Node $reportNode -AttributeName "OVERALL_RESULT"
+    $overallError = $null
+    $overallRaw = ""
+    $overall = ""
+    if ($overallValues.Count -eq 0) {
+        $overallRaw = "<missing>"
+        $overallError = "WACK error: <REPORT> is missing OVERALL_RESULT attribute"
     }
-    $overall = $overallRaw.Trim().ToUpperInvariant()
+    elseif ($overallValues.Count -gt 1) {
+        $overallParts = [System.Collections.Generic.List[string]]::new()
+        foreach ($ov in $overallValues) {
+            $ovPart = if ([string]::IsNullOrWhiteSpace($ov)) { "<empty>" } else { $ov.Trim() }
+            $overallParts.Add($ovPart)
+        }
+        $overallJoined = $overallParts -join ", "
+        $overallRaw = "<duplicate: $overallJoined>"
+        $overallError = "WACK error: <REPORT> contains duplicate case-variant OVERALL_RESULT attributes ($overallJoined)"
+    }
+    else {
+        $overallRaw = $overallValues[0]
+        $overall = $overallRaw.Trim().ToUpperInvariant()
+    }
 
     $allElements = $doc.SelectNodes("//*")
     $testNodes = [System.Collections.Generic.List[System.Xml.XmlNode]]::new()
@@ -254,30 +275,69 @@ function Test-WackReportXml {
     $allowedTestResults = @("PASS", "NOT APPLICABLE", "SKIPPED")
     $failedTests = [System.Collections.Generic.List[string]]::new()
     foreach ($testNode in $testNodes) {
-        $resultRaw = Get-XmlAttributeValue -Node $testNode -AttributeName "RESULT"
-        if ($null -eq $resultRaw) {
-            $resultRaw = ""
+        $resultValues = Get-XmlAttributeValues -Node $testNode -AttributeName "RESULT"
+        foreach ($child in $testNode.ChildNodes) {
+            if (
+                $child.NodeType -eq [System.Xml.XmlNodeType]::Element -and
+                $child.LocalName.Equals("RESULT", [System.StringComparison]::OrdinalIgnoreCase)
+            ) {
+                $resultValues.Add([string]$child.InnerText)
+            }
         }
-        $resultNorm = $resultRaw.Trim().ToUpperInvariant()
-        if ($allowedTestResults -notcontains $resultNorm) {
-            $testName = Get-XmlAttributeValue -Node $testNode -AttributeName "NAME"
+
+        $testFailed = $false
+        $displayResult = ""
+        if ($resultValues.Count -eq 0) {
+            $testFailed = $true
+            $displayResult = "<missing>"
+        }
+        elseif ($resultValues.Count -gt 1) {
+            $testFailed = $true
+            $dupParts = [System.Collections.Generic.List[string]]::new()
+            foreach ($rv in $resultValues) {
+                $rvPart = if ([string]::IsNullOrWhiteSpace($rv)) { "<empty>" } else { $rv.Trim() }
+                $dupParts.Add($rvPart)
+            }
+            $displayResult = "<duplicate: $($dupParts -join ', ')>"
+        }
+        else {
+            $resultRaw = $resultValues[0]
+            $resultNorm = $resultRaw.Trim().ToUpperInvariant()
+            if ($allowedTestResults -notcontains $resultNorm) {
+                $testFailed = $true
+                $displayResult = if ([string]::IsNullOrWhiteSpace($resultRaw)) { "<missing>" } else { $resultRaw.Trim() }
+            }
+        }
+
+        if ($testFailed) {
+            $testName = ""
+            foreach ($nv in (Get-XmlAttributeValues -Node $testNode -AttributeName "NAME")) {
+                if (-not [string]::IsNullOrWhiteSpace($nv)) {
+                    $testName = $nv.Trim()
+                    break
+                }
+            }
             if ([string]::IsNullOrWhiteSpace($testName)) {
-                $testIdx = Get-XmlAttributeValue -Node $testNode -AttributeName "INDEX"
-                if (-not [string]::IsNullOrWhiteSpace($testIdx)) {
-                    $testName = "TEST#" + $testIdx.Trim()
+                foreach ($iv in (Get-XmlAttributeValues -Node $testNode -AttributeName "INDEX")) {
+                    if (-not [string]::IsNullOrWhiteSpace($iv)) {
+                        $testName = "TEST#" + $iv.Trim()
+                        break
+                    }
                 }
             }
             if ([string]::IsNullOrWhiteSpace($testName)) {
                 $testName = "<unnamed test>"
             }
-            $displayResult = if ([string]::IsNullOrWhiteSpace($resultRaw)) { "<missing>" } else { $resultRaw.Trim() }
-            $failedTests.Add("$($testName.Trim()) (RESULT='$displayResult')")
+            $failedTests.Add("$testName (RESULT='$displayResult')")
         }
     }
 
-    $passed = ($overall -eq "PASS") -and ($testNodes.Count -ge 1) -and ($failedTests.Count -eq 0)
+    $passed = ($null -eq $overallError) -and ($overall -eq "PASS") -and ($testNodes.Count -ge 1) -and ($failedTests.Count -eq 0)
     if (-not $passed) {
         [Console]::Error.WriteLine("WACK report FAILED: $ReportFile (OVERALL_RESULT='$overallRaw', tests=$($testNodes.Count), failed=$($failedTests.Count))")
+        if ($null -ne $overallError) {
+            [Console]::Error.WriteLine($overallError)
+        }
         if ($testNodes.Count -lt 1) {
             [Console]::Error.WriteLine("WACK error: report contains zero <TEST> elements")
         }

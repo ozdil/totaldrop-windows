@@ -280,7 +280,11 @@ def inspect_png(path: Path, rel_label: str) -> tuple[dict[str, Any] | None, str 
     chunk_index = 0
     width = 0
     height = 0
+    color_type = -1
     idat_count = 0
+    idat_total_bytes = 0
+    plte_seen = False
+    plte_seen_before_idat = False
     seen_iend = False
 
     while pos < size:
@@ -331,8 +335,24 @@ def inspect_png(path: Path, rel_label: str) -> tuple[dict[str, Any] | None, str 
         else:
             if chunk_type == b"IHDR":
                 return None, f"{rel_label}: duplicate PNG IHDR chunk at offset {pos}"
-            if chunk_type == b"IDAT":
+            if chunk_type == b"PLTE":
+                if color_type in (0, 4):
+                    return None, f"{rel_label}: PNG PLTE chunk is forbidden for grayscale color_type={color_type}"
+                if plte_seen:
+                    return None, f"{rel_label}: duplicate PNG PLTE chunk at offset {pos}"
+                if idat_count > 0:
+                    return None, f"{rel_label}: PNG PLTE chunk must appear before IDAT"
+                if chunk_len < 3 or chunk_len > 768 or (chunk_len % 3) != 0:
+                    return (
+                        None,
+                        f"{rel_label}: invalid PNG PLTE chunk length {chunk_len} "
+                        "(must be 3..=768 and divisible by 3)",
+                    )
+                plte_seen = True
+                plte_seen_before_idat = True
+            elif chunk_type == b"IDAT":
                 idat_count += 1
+                idat_total_bytes += chunk_len
             elif chunk_type == b"IEND":
                 if chunk_len != 0:
                     return None, f"{rel_label}: PNG IEND chunk must have length 0 (got {chunk_len})"
@@ -343,8 +363,10 @@ def inspect_png(path: Path, rel_label: str) -> tuple[dict[str, Any] | None, str 
 
     if chunk_index == 0:
         return None, f"{rel_label}: PNG contains zero chunks"
-    if idat_count < 1:
-        return None, f"{rel_label}: PNG contains zero IDAT image data chunks"
+    if idat_count < 1 or idat_total_bytes < 1:
+        return None, f"{rel_label}: PNG contains zero IDAT image data bytes"
+    if color_type == 3 and not plte_seen_before_idat:
+        return None, f"{rel_label}: indexed PNG (color_type=3) missing required PLTE palette chunk before IDAT"
     if not seen_iend or pos != size:
         return None, f"{rel_label}: PNG missing terminating IEND chunk at EOF"
 
@@ -373,6 +395,22 @@ def inspect_png(path: Path, rel_label: str) -> tuple[dict[str, Any] | None, str 
     )
 
 
+def _is_unsafe_screenshot_rel_path(rel_file: str) -> bool:
+    return (
+        rel_file != rel_file.strip()
+        or any(
+            is_forbidden_char(ch, allow_newline=False) or ch in ("\u200C", "\u200D", "\u200E", "\u200F")
+            for ch in rel_file
+        )
+        or rel_file.startswith("/")
+        or rel_file.startswith("\\")
+        or "\\" in rel_file
+        or ":" in rel_file
+        or Path(rel_file).is_absolute()
+        or any(part in ("", ".", "..") for part in rel_file.split("/"))
+    )
+
+
 def collect_screenshots(screenshots_dir: Path) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
     """Validate screenshot directory (flat shared or per-locale tree) and map screenshots per locale."""
     errors: list[str] = []
@@ -393,6 +431,12 @@ def collect_screenshots(screenshots_dir: Path) -> tuple[dict[str, list[dict[str,
         valid_entries: list[dict[str, Any]] = []
         for fpath in sorted(files, key=lambda p: p.name):
             rel = fpath.relative_to(screenshots_dir).as_posix()
+            if _is_unsafe_screenshot_rel_path(rel):
+                errors.append(
+                    f"{context}: unsafe screenshot relative path {rel!r} "
+                    "(control/Bidi characters, whitespace padding, drive colons, backslashes, and '.'/'..' segments are forbidden)"
+                )
+                continue
             resolved = fpath.resolve()
             if not resolved.is_relative_to(root_resolved) or resolved == root_resolved:
                 errors.append(f"{context}: screenshot path {rel!r} escapes --screenshots-dir")
@@ -857,20 +901,15 @@ def validate_document(
                 if not isinstance(rel_file, str) or not rel_file.strip():
                     errors.append(f"locale {loc} Screenshots[{idx}]: missing non-empty `file` path")
                 else:
-                    path_unsafe = (
-                        rel_file != rel_file.strip()
-                        or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in rel_file)
-                        or rel_file.startswith("/")
-                        or rel_file.startswith("\\")
-                        or "\\" in rel_file
-                        or ":" in rel_file
-                        or Path(rel_file).is_absolute()
-                        or any(part in ("", ".", "..") for part in rel_file.split("/"))
-                    )
-                    if path_unsafe:
+                    if _is_unsafe_screenshot_rel_path(rel_file):
                         errors.append(
                             f"locale {loc} Screenshots[{idx}]: unsafe screenshot relative path {rel_file!r} "
-                            "(absolute paths, drive colons, backslashes, and '.'/'..' segments are forbidden)"
+                            "(control/Bidi characters, absolute paths, drive colons, backslashes, and '.'/'..' segments are forbidden)"
+                        )
+                    elif not rel_file.lower().endswith(".png"):
+                        errors.append(
+                            f"locale {loc} Screenshots[{idx}]: non-PNG screenshot path {rel_file!r} "
+                            "(Partner Center screenshots must use .png files)"
                         )
                     elif screenshots_dir is not None and screenshots_root_resolved is not None:
                         candidate = (screenshots_dir / rel_file).resolve()

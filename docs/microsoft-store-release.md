@@ -130,7 +130,7 @@ pwsh -NoProfile -File .\tools\run-wack.ps1 `
 1. Verifies non-Session 0 interactive desktop, UAC `EnableLUA == 1`, and physical display resolution via Win32 `EnumDisplaySettingsW`.
 2. Locates `appcert.exe` via Windows Kits registry `KitsRoot10`, standard SDK paths, or `PATH`.
 3. Deletes any stale report, runs `appcert.exe reset` cleanly before `appcert.exe test -appxpackagepath <pkg> -reportoutputpath <xml>`.
-4. Parses the XML with DTD processing prohibited (`XmlResolver = $null`, catching `XmlException` cleanly) and fails non-zero unless `<REPORT OVERALL_RESULT="PASS">`, at least one `<TEST>` element exists, and every `<TEST>` result (matched case-insensitively) is in the explicit allowlist (`PASS`, `NOT APPLICABLE`, `SKIPPED`), printing every non-passing test name and raw result explicitly.
+4. Parses the XML with DTD processing prohibited (`XmlResolver = $null`, catching `XmlException` cleanly) and fails non-zero unless `<REPORT>` declares a single `OVERALL_RESULT="PASS"` attribute (rejecting missing or duplicate case-variant attributes), at least one `<TEST>` element exists, and every `<TEST>` element supplies exactly one `RESULT` value—either the real Windows 11 `appcert.exe` child `<RESULT><![CDATA[...]]></RESULT>` element or a `RESULT="..."` attribute (rejecting missing or duplicate/conflicting values)—whose trimmed uppercase value is in the explicit allowlist (`PASS`, `NOT APPLICABLE`, `SKIPPED`), printing every non-passing test name and raw result explicitly.
 
 ---
 

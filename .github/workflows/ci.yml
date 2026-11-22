@@ -187,27 +187,54 @@ jobs:
           $ErrorActionPreference = "Stop"
           $tmpDir = Join-Path $env:RUNNER_TEMP "wack-smoke"
           New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
-          $passXml = Join-Path $tmpDir "pass.xml"
-          Set-Content -LiteralPath $passXml -Encoding UTF8 -Value '<REPORT OVERALL_RESULT="PASS"><REQUIREMENTS><REQUIREMENT><TEST NAME="Supported APIs" RESULT="PASS" /></REQUIREMENT></REQUIREMENTS></REPORT>'
-          pwsh -NoProfile -File .\tools\run-wack.ps1 -CheckReportOnly -ReportPath $passXml
-          if ($LASTEXITCODE -ne 0) {
-            throw "Expected tools/run-wack.ps1 -CheckReportOnly to PASS on clean report (exit=$LASTEXITCODE)"
+          $posCases = @(
+            @{
+              Name = "synthetic-attr-pass"
+              Xml  = '<REPORT OVERALL_RESULT="PASS"><REQUIREMENTS><REQUIREMENT><TEST NAME="Supported APIs" RESULT="PASS" /></REQUIREMENT></REQUIREMENTS></REPORT>'
+            },
+            @{
+              Name = "real-appcert-child-result-pass"
+              Xml  = '<?xml version="1.0" encoding="utf-8"?><?xml-stylesheet type="text/xsl" href="C:\ProgramData\Windows App Certification Kit\results.xsl"?><REPORT OVERALL_RESULT="PASS" VERSION="10.0.26100.1"><REQUIREMENTS><REQUIREMENT NUMBER="10" TITLE="Deployment and launch tests"><TEST INDEX="47" NAME="App launch" EXECUTIONTIME="00h:00m:11s.42" OPTIONAL="FALSE"><RESULT><![CDATA[PASS]]></RESULT><MESSAGES /></TEST></REQUIREMENT></REQUIREMENTS></REPORT>'
+            }
+          )
+          foreach ($case in $posCases) {
+            $casePath = Join-Path $tmpDir "$($case.Name).xml"
+            Set-Content -LiteralPath $casePath -Encoding UTF8 -Value $case.Xml
+            pwsh -NoProfile -File .\tools\run-wack.ps1 -CheckReportOnly -ReportPath $casePath
+            if ($LASTEXITCODE -ne 0) {
+              throw "Expected tools/run-wack.ps1 -CheckReportOnly to PASS on positive case '$($case.Name)' (exit=$LASTEXITCODE)"
+            }
           }
           $negCases = @(
             @{
-              Name   = "lowercase-fail"
-              Xml    = '<REPORT OVERALL_RESULT="PASS"><REQUIREMENTS><REQUIREMENT><TEST NAME="Supported APIs" result="fail" /></REQUIREMENT></REQUIREMENTS></REPORT>'
-              Expect = "Supported APIs"
+              Name      = "real-appcert-child-result-fail"
+              Xml       = '<?xml version="1.0" encoding="utf-8"?><?xml-stylesheet type="text/xsl" href="C:\ProgramData\Windows App Certification Kit\results.xsl"?><REPORT OVERALL_RESULT="PASS" VERSION="10.0.26100.1"><REQUIREMENTS><REQUIREMENT NUMBER="10" TITLE="Deployment and launch tests"><TEST INDEX="47" NAME="App launch" EXECUTIONTIME="00h:00m:11s.42" OPTIONAL="FALSE"><RESULT><![CDATA[FAIL]]></RESULT><MESSAGES /></TEST></REQUIREMENT></REQUIREMENTS></REPORT>'
+              ExpectAll = @("App launch", "FAIL")
             },
             @{
-              Name   = "error-result"
-              Xml    = '<REPORT OVERALL_RESULT="PASS"><REQUIREMENTS><REQUIREMENT><TEST NAME="Crash Test" RESULT="ERROR" /></REQUIREMENT></REQUIREMENTS></REPORT>'
-              Expect = "Crash Test"
+              Name      = "lowercase-fail"
+              Xml       = '<REPORT OVERALL_RESULT="PASS"><REQUIREMENTS><REQUIREMENT><TEST NAME="Supported APIs" result="fail" /></REQUIREMENT></REQUIREMENTS></REPORT>'
+              ExpectAll = @("Supported APIs", "fail")
             },
             @{
-              Name   = "empty-report"
-              Xml    = '<REPORT OVERALL_RESULT="PASS"></REPORT>'
-              Expect = "zero <TEST>"
+              Name      = "error-result"
+              Xml       = '<REPORT OVERALL_RESULT="PASS"><REQUIREMENTS><REQUIREMENT><TEST NAME="Crash Test" RESULT="ERROR" /></REQUIREMENT></REQUIREMENTS></REPORT>'
+              ExpectAll = @("Crash Test", "ERROR")
+            },
+            @{
+              Name      = "empty-report"
+              Xml       = '<REPORT OVERALL_RESULT="PASS"></REPORT>'
+              ExpectAll = @("zero <TEST>")
+            },
+            @{
+              Name      = "duplicate-test-result-attr"
+              Xml       = '<REPORT OVERALL_RESULT="PASS"><TEST NAME="Shadowed" RESULT="PASS" result="FAIL" /></REPORT>'
+              ExpectAll = @("Shadowed", "duplicate")
+            },
+            @{
+              Name      = "duplicate-overall-result-attr"
+              Xml       = '<REPORT OVERALL_RESULT="PASS" overall_result="FAIL"><TEST NAME="Supported APIs" RESULT="PASS" /></REPORT>'
+              ExpectAll = @("OVERALL_RESULT", "duplicate")
             }
           )
           foreach ($case in $negCases) {
@@ -225,11 +252,13 @@ jobs:
             if ($failCode -eq 0) {
               throw "Expected tools/run-wack.ps1 -CheckReportOnly to FAIL on negative case '$($case.Name)'"
             }
-            if ($failOut -notmatch [regex]::Escape($case.Expect)) {
-              throw "Expected '$($case.Expect)' in WACK error output for '$($case.Name)', got: $failOut"
+            foreach ($needle in $case.ExpectAll) {
+              if ($failOut -notmatch [regex]::Escape($needle)) {
+                throw "Expected '$needle' in WACK error output for '$($case.Name)', got: $failOut"
+              }
             }
           }
-          Write-Host "WACK -CheckReportOnly positive & 3 negative smoke tests OK"
+          Write-Host "WACK -CheckReportOnly 2 positive & 6 negative smoke tests OK"
       - name: Validate XML well-formedness (.xaml, .appxmanifest, app.manifest, and 35-locale .resw)
         shell: pwsh
         run: |

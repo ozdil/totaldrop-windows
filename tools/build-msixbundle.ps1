@@ -141,11 +141,18 @@ function Assert-AppxSymArchive {
         $zip = [System.IO.Compression.ZipArchive]::new($fs, [System.IO.Compression.ZipArchiveMode]::Read, $false)
         try {
             $pdbCount = 0
-            $forbiddenExts = @(".pfx", ".p12", ".cer", ".snk", ".key", ".pem", ".msix", ".appx", ".exe", ".dll")
+            $seenNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $forbiddenExts = @(".pfx", ".p12", ".cer", ".snk", ".key", ".pem", ".jks", ".keystore", ".msix", ".appx", ".msixbundle", ".exe", ".dll")
             foreach ($entry in $zip.Entries) {
                 $name = $entry.FullName
-                if ([string]::IsNullOrWhiteSpace($name) -or $name.EndsWith("/")) {
-                    continue
+                if ([string]::IsNullOrWhiteSpace($name)) {
+                    throw "$Label contains an empty ZIP entry name."
+                }
+                if ($name.Contains("/") -or $name.Contains("\") -or $name.Contains(":")) {
+                    throw "$Label contains nested, trailing-slash, or unsafe path entry '$name' (flat root .pdb files only)."
+                }
+                if (-not $seenNames.Add($name)) {
+                    throw "$Label contains duplicate or case-colliding entry '$name'."
                 }
                 $lower = $name.ToLowerInvariant()
                 foreach ($badExt in $forbiddenExts) {

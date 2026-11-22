@@ -38,7 +38,8 @@ BARE_GUID_RE = re.compile(
 QUAD_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$", re.ASCII)
 IDENTITY_NAME_RE = re.compile(r"^[A-Za-z0-9.-]{3,50}$")
 RDN_KEY_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?\d+(?:\.\d+)+)$")
-HEX_RDN_VAL_RE = re.compile(r"^#(?:[0-9A-Fa-f]{2})+$")
+RFC2253_ESCAPABLE_CHARS: frozenset[str] = frozenset({",", "+", '"', "\\", "<", ">", ";", "#", "=", " "})
+ASCII_HEX_DIGITS: frozenset[str] = frozenset("0123456789ABCDEFabcdef")
 FORBIDDEN_UNQUOTED_RDN_CHARS: frozenset[str] = frozenset({'"', ";", "<", ">", "`", "$", "|", "&"})
 
 APPX_NS = "{http://schemas.microsoft.com/appx/manifest/foundation/windows10}"
@@ -646,22 +647,94 @@ def _validate_msix_version_quad(version: str, label: str, *, store_mode: bool) -
             )
 
 
-def _parse_x500_publisher(publisher: str, label: str) -> list[tuple[str, str]]:
-    """Parse and strictly validate an RFC 2253 X.500 Publisher DN, returning (KEY_UPPER, unescaped_value) pairs."""
-    if not isinstance(publisher, str) or not publisher.strip():
-        raise ValueError(f"{label}: Publisher must be a non-empty X.500 CN=... distinguished name")
-    if len(publisher) > 8192:
-        raise ValueError(f"{label}: Publisher exceeds 8192 characters")
-    for ch in publisher:
+def _check_no_control_or_bidi(text: str, label: str) -> None:
+    for ch in text:
         cp = ord(ch)
         if (
             cp < 0x20
             or cp == 0x7F
+            or 0x80 <= cp <= 0x9F
             or 0x202A <= cp <= 0x202E
             or 0x2066 <= cp <= 0x2069
             or cp == 0x061C
         ):
-            raise ValueError(f"{label}: Publisher contains forbidden control/Bidi char U+{cp:04X}")
+            raise ValueError(f"{label}: contains forbidden control/Bidi char U+{cp:04X}")
+
+
+def _strip_unescaped_x500_whitespace(text: str) -> str:
+    """Strip unescaped leading/trailing whitespace while preserving RFC 2253 escaped trailing spaces."""
+    n = len(text)
+    start = 0
+    while start < n and text[start].isspace():
+        start += 1
+    last_sig_end = start
+    escaped = False
+    for idx in range(start, n):
+        ch = text[idx]
+        if escaped:
+            escaped = False
+            last_sig_end = idx + 1
+            continue
+        if ch == "\\":
+            escaped = True
+            last_sig_end = idx + 1
+            continue
+        if not ch.isspace():
+            last_sig_end = idx + 1
+    return text[start:last_sig_end]
+
+
+def _decode_rfc2253_rdn_value(raw_text: str, *, quoted: bool, label: str, rdn: str) -> str:
+    """Decode RFC 2253/4514 escapes (escapable punctuation/space and UTF-8 \\XX hexpairs)."""
+    chars: list[str] = []
+    i = 0
+    n = len(raw_text)
+    while i < n:
+        c = raw_text[i]
+        if c == "\\":
+            if i + 1 >= n:
+                raise ValueError(f"{label}: trailing escape in X.500 Publisher RDN {rdn!r}")
+            nxt = raw_text[i + 1]
+            if nxt in RFC2253_ESCAPABLE_CHARS:
+                chars.append(nxt)
+                i += 2
+            elif i + 2 < n and nxt in ASCII_HEX_DIGITS and raw_text[i + 2] in ASCII_HEX_DIGITS:
+                hex_bytes = bytearray()
+                while (
+                    i + 2 < n
+                    and raw_text[i] == "\\"
+                    and raw_text[i + 1] in ASCII_HEX_DIGITS
+                    and raw_text[i + 2] in ASCII_HEX_DIGITS
+                ):
+                    hex_bytes.append(int(raw_text[i + 1 : i + 3], 16))
+                    i += 3
+                try:
+                    chars.append(hex_bytes.decode("utf-8", errors="strict"))
+                except UnicodeDecodeError as exc:
+                    raise ValueError(
+                        f"{label}: invalid UTF-8 byte sequence in RFC 2253 hex escape in RDN {rdn!r}: {exc}"
+                    ) from exc
+            else:
+                raise ValueError(
+                    f"{label}: invalid RFC 2253 escape sequence '\\{nxt}' in X.500 Publisher RDN {rdn!r}"
+                )
+        else:
+            if not quoted and c in FORBIDDEN_UNQUOTED_RDN_CHARS:
+                raise ValueError(
+                    f"{label}: forbidden unescaped character {c!r} in unquoted X.500 RDN {rdn!r}"
+                )
+            chars.append(c)
+            i += 1
+    return "".join(chars)
+
+
+def _parse_x500_publisher(publisher: str, label: str) -> list[tuple[str, str]]:
+    """Parse and strictly validate an RFC 2253/4514 X.500 Publisher DN, returning (KEY_UPPER, decoded_value) pairs."""
+    if not isinstance(publisher, str) or not _strip_unescaped_x500_whitespace(publisher):
+        raise ValueError(f"{label}: Publisher must be a non-empty X.500 CN=... distinguished name")
+    if len(publisher) > 8192:
+        raise ValueError(f"{label}: Publisher exceeds 8192 characters")
+    _check_no_control_or_bidi(publisher, f"{label} Publisher")
     if UNSIGNED_PACKAGE_OID in publisher.lower():
         raise ValueError(
             f"{label}: Publisher contains forbidden unsigned-package OID {UNSIGNED_PACKAGE_OID}"
@@ -685,13 +758,13 @@ def _parse_x500_publisher(publisher: str, label: str) -> list[tuple[str, str]]:
             buf.append(ch)
             continue
         if ch == "," and not in_quotes:
-            rdns.append("".join(buf).strip())
+            rdns.append(_strip_unescaped_x500_whitespace("".join(buf)))
             buf.clear()
             continue
         buf.append(ch)
     if in_quotes or escaped:
         raise ValueError(f"{label}: malformed X.500 Publisher {publisher!r} (unterminated quote/escape)")
-    rdns.append("".join(buf).strip())
+    rdns.append(_strip_unescaped_x500_whitespace("".join(buf)))
 
     parsed: list[tuple[str, str]] = []
     has_cn = False
@@ -702,24 +775,26 @@ def _parse_x500_publisher(publisher: str, label: str) -> list[tuple[str, str]]:
             )
         raw_key, raw_val = rdn.split("=", 1)
         key = raw_key.strip()
-        val = raw_val.strip()
+        val = _strip_unescaped_x500_whitespace(raw_val)
         if not RDN_KEY_RE.fullmatch(key) or not val:
             raise ValueError(
                 f"{label}: malformed X.500 Publisher RDN {rdn!r} in {publisher!r} (expected e.g. 'CN=...')"
             )
 
+        if val.startswith("#"):
+            raise ValueError(
+                f"{label}: ASN.1 BER #hex RDN values are not permitted in MSIX Identity/@Publisher ({rdn!r})"
+            )
         if val.startswith('"'):
             if len(val) < 2:
                 raise ValueError(
                     f"{label}: malformed quoted X.500 Publisher RDN {rdn!r} in {publisher!r}"
                 )
-            chars: list[str] = []
             q_escaped = False
             closed = False
             for idx in range(1, len(val)):
                 c = val[idx]
                 if q_escaped:
-                    chars.append(c)
                     q_escaped = False
                     continue
                 if c == "\\":
@@ -732,45 +807,24 @@ def _parse_x500_publisher(publisher: str, label: str) -> list[tuple[str, str]]:
                         )
                     closed = True
                     break
-                chars.append(c)
             if not closed or q_escaped:
                 raise ValueError(
                     f"{label}: unterminated quoted X.500 Publisher RDN {rdn!r} in {publisher!r}"
                 )
-            decoded_val = "".join(chars).strip()
-            if not decoded_val:
-                raise ValueError(f"{label}: empty quoted X.500 Publisher RDN value in {rdn!r}")
-        elif val.startswith("#"):
-            if not HEX_RDN_VAL_RE.fullmatch(val):
-                raise ValueError(
-                    f"{label}: invalid hex X.500 Publisher RDN value {val!r} in {publisher!r} "
-                    "(leading '#' requires even-length hexadecimal bytes)"
-                )
-            decoded_val = val.lower()
+            decoded_val = _decode_rfc2253_rdn_value(val[1:-1], quoted=True, label=label, rdn=rdn)
         else:
-            chars = []
-            u_escaped = False
-            for c in val:
-                if u_escaped:
-                    chars.append(c)
-                    u_escaped = False
-                    continue
-                if c == "\\":
-                    u_escaped = True
-                    continue
-                if c in FORBIDDEN_UNQUOTED_RDN_CHARS:
-                    raise ValueError(
-                        f"{label}: forbidden unescaped character {c!r} in unquoted X.500 RDN {rdn!r}"
-                    )
-                chars.append(c)
-            if u_escaped:
-                raise ValueError(f"{label}: trailing escape in X.500 Publisher RDN {rdn!r}")
-            decoded_val = "".join(chars).strip()
-            if not decoded_val:
-                raise ValueError(f"{label}: empty X.500 Publisher RDN value in {rdn!r}")
+            decoded_val = _decode_rfc2253_rdn_value(val, quoted=False, label=label, rdn=rdn)
+
+        _check_no_control_or_bidi(decoded_val, f"{label} decoded RDN {rdn!r}")
+        if UNSIGNED_PACKAGE_OID in decoded_val.lower():
+            raise ValueError(
+                f"{label}: decoded Publisher RDN contains forbidden unsigned-package OID {UNSIGNED_PACKAGE_OID}"
+            )
+        if not decoded_val.strip():
+            raise ValueError(f"{label}: empty X.500 Publisher RDN value in {rdn!r}")
 
         key_upper = key.upper()
-        if key_upper == "CN" and decoded_val:
+        if key_upper == "CN" and decoded_val.strip():
             has_cn = True
         parsed.append((key_upper, decoded_val))
 
@@ -824,11 +878,12 @@ def _validate_identity_store_policy(
             )
 
 
-def _read_zip_member(zf: zipfile.ZipFile, member: str, label: str) -> bytes:
+def _read_zip_member(zf: zipfile.ZipFile, member: str | zipfile.ZipInfo, label: str) -> bytes:
+    member_name = member.filename if isinstance(member, zipfile.ZipInfo) else member
     try:
         return zf.read(member)
     except (zlib.error, zipfile.BadZipFile, RuntimeError, EOFError) as exc:
-        raise ValueError(f"{label}: corrupted ZIP member {member!r}: {exc}") from exc
+        raise ValueError(f"{label}: corrupted ZIP member {member_name!r}: {exc}") from exc
 
 
 def _check_opc_zip_entries(
@@ -845,12 +900,15 @@ def _check_opc_zip_entries(
     if bad_member is not None:
         raise ValueError(f"{label}: corrupted ZIP member {bad_member!r}")
 
-    raw_names = zf.namelist()
+    infos = zf.infolist()
+    raw_names = [info.filename for info in infos]
     seen_exact: set[str] = set()
     seen_lower: dict[str, str] = {}
     seen_files: dict[str, str] = {}
     seen_dirs: dict[str, str] = {}
-    for name in raw_names:
+    seen_dir_case: dict[str, str] = {}
+    for info in infos:
+        name = info.filename
         if name in seen_exact:
             raise ValueError(f"{label}: duplicate ZIP entry {name!r}")
         seen_exact.add(name)
@@ -869,6 +927,15 @@ def _check_opc_zip_entries(
             raise ValueError(f"{label}: unsafe relative/traversal path component in ZIP entry {name!r}")
         if "" in check_parts:
             raise ValueError(f"{label}: empty path segment in ZIP entry {name!r}")
+
+        if is_dir:
+            if info.file_size != 0 or len(_read_zip_member(zf, info, label)) != 0:
+                raise ValueError(f"{label}: directory ZIP entry {name!r} carries non-zero payload")
+            if name.rstrip("/").lower().endswith(FORBIDDEN_KEY_EXTS) or any(
+                part.lower().endswith(FORBIDDEN_KEY_EXTS) for part in check_parts
+            ):
+                raise ValueError(f"{label}: forbidden signing/key directory entry {name!r}")
+
         if flat_root_only and ("/" in name):
             raise ValueError(f"{label}: nested directory entry {name!r} not permitted (flat root files only)")
 
@@ -883,20 +950,34 @@ def _check_opc_zip_entries(
         lower_parts = [p.lower() for p in check_parts]
         for depth in range(1, len(lower_parts)):
             parent_dir = "/".join(lower_parts[:depth])
+            parent_exact = "/".join(check_parts[:depth])
             if parent_dir in seen_files:
                 raise ValueError(
                     f"{label}: colliding OPC/ZIP file/directory entry {name!r} "
                     f"(conflicts with file {seen_files[parent_dir]!r})"
                 )
+            prev_exact = seen_dir_case.get(parent_dir)
+            if prev_exact is not None and prev_exact != parent_exact:
+                raise ValueError(
+                    f"{label}: case-colliding directory prefix {parent_exact!r} vs {prev_exact!r}"
+                )
+            seen_dir_case[parent_dir] = parent_exact
             seen_dirs.setdefault(parent_dir, name)
 
         norm_key = "/".join(lower_parts)
+        exact_key = "/".join(check_parts)
         if is_dir:
             if norm_key in seen_files:
                 raise ValueError(
                     f"{label}: colliding OPC/ZIP file/directory entry {name!r} "
                     f"(conflicts with file {seen_files[norm_key]!r})"
                 )
+            prev_exact = seen_dir_case.get(norm_key)
+            if prev_exact is not None and prev_exact != exact_key:
+                raise ValueError(
+                    f"{label}: case-colliding directory prefix {exact_key!r} vs {prev_exact!r}"
+                )
+            seen_dir_case[norm_key] = exact_key
             seen_dirs.setdefault(norm_key, name)
         else:
             if norm_key in seen_dirs:
@@ -1653,7 +1734,7 @@ def verify_msix_archive(
         if expect_signed and zf.getinfo("AppxSignature.p7x").file_size <= 0:
             raise ValueError(f"{label}: AppxSignature.p7x is empty")
 
-        asset_entries = {n for n in names if n.startswith("Assets/") and not n.endswith("/")}
+        asset_entries = {n for n in names if n.lower().startswith("assets/") and not n.endswith("/")}
         expected_asset_entries = {f"Assets/{name}" for name in EXPECTED_ASSETS}
         if asset_entries != expected_asset_entries:
             missing_assets = sorted(expected_asset_entries - asset_entries)
@@ -1994,10 +2075,8 @@ def _verify_appxsym_bytes(data: bytes, label: str) -> set[str]:
     pdb_basenames: set[str] = set()
     forbidden_sym_exts = FORBIDDEN_KEY_EXTS + (".exe", ".dll", ".msix", ".appx", ".msixbundle")
     with zipfile.ZipFile(io.BytesIO(data), "r") as sym_zf:
-        names = _check_opc_zip_entries(sym_zf, label, flat_root_only=False)
+        names = _check_opc_zip_entries(sym_zf, label, flat_root_only=True)
         for name in names:
-            if name.endswith("/"):
-                continue
             lower = name.lower()
             if lower.endswith(forbidden_sym_exts):
                 raise ValueError(f"{label}: forbidden file inside .appxsym archive: {name!r}")
@@ -2005,7 +2084,7 @@ def _verify_appxsym_bytes(data: bytes, label: str) -> set[str]:
                 raise ValueError(f"{label}: unexpected non-PDB file inside .appxsym archive: {name!r}")
             if sym_zf.getinfo(name).file_size <= 0:
                 raise ValueError(f"{label}: empty PDB entry inside .appxsym archive: {name!r}")
-            pdb_basenames.add(Path(name).name.lower())
+            pdb_basenames.add(lower)
     if not pdb_basenames:
         raise ValueError(f"{label}: .appxsym archive contains zero .pdb entries")
     return pdb_basenames
@@ -2395,6 +2474,7 @@ def _make_synthetic_bundle(
     packages: list[tuple[str, str, str, bytes]],
     duplicate_identity: bool = False,
     duplicate_manifest_entry: bool = False,
+    extra_entries: list[tuple[str, bytes]] | None = None,
 ) -> bytes:
     esc_name = _xml_attr_escape(name)
     esc_pub = _xml_attr_escape(publisher)
@@ -2423,14 +2503,23 @@ def _make_synthetic_bundle(
         zf.writestr("[Content_Types].xml", b"<Types />")
         for _, _, p_file, p_bytes in packages:
             zf.writestr(p_file, p_bytes)
+        if extra_entries:
+            for extra_name, extra_bytes in extra_entries:
+                zf.writestr(extra_name, extra_bytes)
     return buf.getvalue()
 
 
-def _make_synthetic_appxsym(pdb_names: tuple[str, ...]) -> bytes:
+def _make_synthetic_appxsym(
+    pdb_names: tuple[str, ...],
+    extra_entries: list[tuple[str, bytes]] | None = None,
+) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for pdb in pdb_names:
             zf.writestr(pdb, b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\x00\x00\x00")
+        if extra_entries:
+            for extra_name, extra_bytes in extra_entries:
+                zf.writestr(extra_name, extra_bytes)
     return buf.getvalue()
 
 
@@ -2443,7 +2532,7 @@ def _make_synthetic_upload(entries: list[tuple[str, bytes]]) -> bytes:
 
 
 def run_self_test_bundle() -> int:
-    """Run 22 positive and negative pure-Python synthetic self-tests against the real verifier."""
+    """Run 25 positive and negative pure-Python synthetic self-tests against the real verifier."""
     repo_root = Path(__file__).resolve().parent.parent
     x64_tpl = (repo_root / "target-x86_64" / "Package.x64.appxmanifest").read_text(encoding="utf-8")
     arm64_tpl = (repo_root / "target-arm64" / "Package.arm64.appxmanifest").read_text(encoding="utf-8")
@@ -2954,12 +3043,17 @@ def run_self_test_bundle() -> int:
             "corrupted ZIP",
         )
 
-        # Case 21: Normalized placeholder identity variants rejected under strict --store-mode.
+        # Case 21: Normalized placeholder identity variants (incl. RFC 2253 hexpair escapes) rejected under strict --store-mode.
         for variant_id, v_name, v_pub in (
             ("21a-space-cn", store_name, "CN = TotalDrop"),
             ("21b-lower-cn", store_name, "cn=totaldrop"),
             ("21c-quoted-cn", store_name, 'CN="TotalDrop"'),
             ("21d-lower-name", "totaldrop.totaldrop", store_pub),
+            ("21e-hexpair-cn", store_name, r"CN=\54otalDrop"),
+            ("21f-quoted-hexpair-cn", store_name, r'CN="\54otalDrop"'),
+            ("21g-full-hexpair-cn", store_name, r"CN=\54\6f\74\61\6c\44\72\6f\70"),
+            ("21h-trailing-hexspace-cn", store_name, r"CN=TotalDrop\20"),
+            ("21i-quoted-padded-cn", store_name, 'CN=" TotalDrop "'),
         ):
             vx = _make_synthetic_msix(x64_tpl, arch="x64", name=v_name, publisher=v_pub, version=store_ver)
             va = _make_synthetic_msix(arm64_tpl, arch="arm64", name=v_name, publisher=v_pub, version=store_ver)
@@ -2980,9 +3074,15 @@ def run_self_test_bundle() -> int:
                 "placeholder",
             )
 
-        # Case 22: Strict RFC 2253 X.500 publisher hardening (shell/quote/Bidi injection rejected; quoted comma accepted).
+        # Case 22: Strict RFC 2253/4514 X.500 publisher hardening (BER #hex, hex-smuggled control/Bidi, invalid escapes rejected; escaped trailing space & UTF-8 hexpairs accepted).
         _validate_x500_publisher('CN=Ozan Özdil, O="TotalDrop, Inc.", C=TR', "selftest-valid-x500")
         _validate_x500_publisher("CN=11111111-2222-3333-4444-555555555555", "selftest-valid-guid")
+        assert _parse_x500_publisher(r"CN=Acme\ ", "selftest-escaped-space") == [("CN", "Acme ")], (
+            "expected RFC 2253 trailing escaped space to parse cleanly as 'Acme '"
+        )
+        assert _parse_x500_publisher(r"CN=Ozan \c3\96zdil", "selftest-utf8-hexpair") == [("CN", "Ozan Özdil")], (
+            "expected RFC 2253 UTF-8 hexpair sequence to decode cleanly"
+        )
         for bad_pub in (
             'CN=Foo"; rm -rf / #',
             'CN="Foo"; rm -rf /',
@@ -2992,13 +3092,177 @@ def run_self_test_bundle() -> int:
             "CN=Foo$(id)",
             "CN=Foo`id`",
             "CN=#nothex",
+            "CN=#0C09546F74616C44726F70",
+            "CN=#1309546F74616C44726F70",
+            r"CN=Foo\0aBar",
+            r"CN=Foo\00Bar",
+            r"CN=Foo\e2\80\aeBar",
+            r"CN=Foo\c2\85Bar",
+            r"CN=Total\Drop",
+            r"CN=\5otalDrop",
+            r"CN=Bad\ffUtf8",
         ):
             expect_fail(
                 f"case-22-bad-x500-{bad_pub!r}",
                 lambda p=bad_pub: _validate_x500_publisher(p, "selftest-bad-x500"),
             )
 
-    print("self-test-bundle OK: 22/22 positive & negative bundle/msixupload/store-mode checks passed.")
+        # Case 23: Non-empty trailing-slash directory ZIP entries & forbidden key directory entries rejected in .msix, .msixbundle, and .appxsym.
+        for sub_id, dir_name, dir_payload, expected_err in (
+            ("23a-msix-nonempty-evil-dll-dir", "evil.dll/", pe_x64, "non-zero payload"),
+            ("23b-msix-nonempty-assets-dir", "Assets/", b"NON_EMPTY_DIR_DATA", "non-zero payload"),
+            ("23c-msix-nonempty-pfx-dir", "signing.pfx/", b"SECRET_KEY", "non-zero payload"),
+            ("23d-msix-empty-pfx-dir", "signing.pfx/", b"", "forbidden signing/key directory"),
+        ):
+            arm64_dir_smuggle = _make_synthetic_msix(
+                arm64_tpl,
+                arch="arm64",
+                name=store_name,
+                publisher=store_pub,
+                version=store_ver,
+                extra_entries=[(dir_name, dir_payload)],
+            )
+            expect_fail(
+                f"case-{sub_id}",
+                lambda m=arm64_dir_smuggle: verify_msix_archive(
+                    m, f"{sub_id}.msix", arch="arm64", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+                ),
+                expected_err,
+            )
+        bundle_dir_smuggle = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_ok),
+            ],
+            extra_entries=[("signing.pfx/", b"SECRET_KEY")],
+        )
+        expect_fail(
+            "case-23e-bundle-nonempty-pfx-dir",
+            lambda: verify_msixbundle_archive(
+                bundle_dir_smuggle, "dir-smuggle.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "non-zero payload",
+        )
+        for sub_id, sym_extra, expected_err in (
+            ("23f-appxsym-nonempty-evil-dll-dir", ("evil.dll/", pe_x64), "non-zero payload"),
+            ("23g-appxsym-nonempty-pfx-dir", ("signing.pfx/", b"SECRET"), "non-zero payload"),
+        ):
+            sym_bad = _make_synthetic_appxsym(all_pdbs, extra_entries=[sym_extra])
+            bad_upload = tmp_dir / f"{sub_id}.msixupload"
+            bad_upload.write_bytes(
+                _make_synthetic_upload(
+                    [
+                        (bundle_ok_path.name, bundle_ok_bytes),
+                        (f"TotalDrop_{store_ver}_x64.appxsym", sym_bad),
+                        (f"TotalDrop_{store_ver}_arm64.appxsym", sym_ok),
+                    ]
+                )
+            )
+            expect_fail(
+                f"case-{sub_id}",
+                lambda p=bad_upload: verify_msixupload_archive(
+                    p, expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+                ),
+                expected_err,
+            )
+
+        # Case 24: Case-mismatched directory prefix collisions rejected while matching-case empty directory entries pass.
+        for sub_id, bad_entry, bad_payload in (
+            ("24a-msix-lowercase-assets-dir", "assets/", b""),
+            ("24b-msix-lowercase-assets-evil-dll", "assets/evil.dll", pe_x64),
+            ("24c-msix-lowercase-assets-extra-png", "assets/extra.png", b"\x89PNG\r\n\x1a\n"),
+        ):
+            arm64_dir_case = _make_synthetic_msix(
+                arm64_tpl,
+                arch="arm64",
+                name=store_name,
+                publisher=store_pub,
+                version=store_ver,
+                extra_entries=[(bad_entry, bad_payload)],
+            )
+            expect_fail(
+                f"case-{sub_id}",
+                lambda m=arm64_dir_case: verify_msix_archive(
+                    m, f"{sub_id}.msix", arch="arm64", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+                ),
+                "case-colliding directory prefix",
+            )
+        bundle_dir_case = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_ok),
+            ],
+            extra_entries=[("appxmetadata/", b"")],
+        )
+        expect_fail(
+            "case-24d-bundle-lowercase-appxmetadata-dir",
+            lambda: verify_msixbundle_archive(
+                bundle_dir_case, "dir-case.msixbundle", expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+            ),
+            "case-colliding directory prefix",
+        )
+        arm64_matching_dirs = _make_synthetic_msix(
+            arm64_tpl,
+            arch="arm64",
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            extra_entries=[("Assets/", b""), ("Views/", b"")],
+        )
+        bundle_matching_dirs = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_matching_dirs),
+            ],
+            extra_entries=[("AppxMetadata/", b"")],
+        )
+        verify_msixbundle_archive(
+            bundle_matching_dirs,
+            "matching-dirs.msixbundle",
+            expected_version=store_ver,
+            expect_signed=False,
+            store_mode=True,
+            allow_test_identity=False,
+            run_live_smoke=False,
+        )
+
+        # Case 25: Flat-root .appxsym enforcement (nested subdirectories & duplicate-basename PDB trees rejected).
+        for sub_id, bad_pdb_tuple in (
+            ("25a-nested-pdbs", tuple(f"nested/{p}" for p in all_pdbs)),
+            (
+                "25b-duplicate-basename-pdbs",
+                ("a/totaldrop-winui.pdb", "b/totaldrop-winui.pdb", "totaldrop_windows_ffi.pdb", "totaldrop_explorer_ext.pdb"),
+            ),
+        ):
+            sym_nested = _make_synthetic_appxsym(bad_pdb_tuple)
+            nested_upload = tmp_dir / f"{sub_id}.msixupload"
+            nested_upload.write_bytes(
+                _make_synthetic_upload(
+                    [
+                        (bundle_ok_path.name, bundle_ok_bytes),
+                        (f"TotalDrop_{store_ver}_x64.appxsym", sym_nested),
+                        (f"TotalDrop_{store_ver}_arm64.appxsym", sym_ok),
+                    ]
+                )
+            )
+            expect_fail(
+                f"case-{sub_id}",
+                lambda p=nested_upload: verify_msixupload_archive(
+                    p, expected_version=store_ver, expect_signed=False, store_mode=True, allow_test_identity=False, run_live_smoke=False
+                ),
+                "flat root",
+            )
+
+    print("self-test-bundle OK: 25/25 positive & negative bundle/msixupload/store-mode checks passed.")
     return 0
 
 

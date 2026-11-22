@@ -139,6 +139,7 @@ jobs:
                   if (
                       cp < 0x20
                       or cp == 0x7F
+                      or 0x80 <= cp <= 0x9F
                       or 0x202A <= cp <= 0x202E
                       or 0x2066 <= cp <= 0x2069
                       or cp == 0x061C
@@ -156,7 +157,7 @@ jobs:
           app_ver = raw_inputs["app_version"].strip()
           msix_ver = raw_inputs["store_msix_version"]
           ident_name = raw_inputs["identity_name"].strip()
-          publisher = raw_inputs["publisher"].strip()
+          publisher = cv.strip_unescaped_x500_whitespace(raw_inputs["publisher"])
           pub_disp = raw_inputs["publisher_display_name"].strip()
           allow_test = os.environ.get("INPUT_ALLOW_TEST_IDENTITY", "false").strip().lower() == "true"
 

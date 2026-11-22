@@ -27,7 +27,8 @@ BARE_GUID_RE = re.compile(
 )
 IDENTITY_NAME_RE = re.compile(r"^[A-Za-z0-9.-]{3,50}$")
 RDN_KEY_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?\d+(?:\.\d+)+)$")
-HEX_RDN_VAL_RE = re.compile(r"^#(?:[0-9A-Fa-f]{2})+$")
+RFC2253_ESCAPABLE_CHARS: frozenset[str] = frozenset({",", "+", '"', "\\", "<", ">", ";", "#", "=", " "})
+ASCII_HEX_DIGITS: frozenset[str] = frozenset("0123456789ABCDEFabcdef")
 FORBIDDEN_UNQUOTED_RDN_CHARS: frozenset[str] = frozenset({'"', ";", "<", ">", "`", "$", "|", "&"})
 QUAD_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$", re.ASCII)
 
@@ -96,25 +97,97 @@ def validate_store_msix_version(version: str, label: str, errors: list[str]) -> 
     return validate_msix_version_quad(version, label, errors, require_store_rules=True)
 
 
-def parse_x500_publisher(publisher: str, label: str) -> list[tuple[str, str]]:
-    """Parse and strictly validate an RFC 2253 X.500 Publisher DN, returning (KEY_UPPER, unescaped_value) pairs."""
-    if not isinstance(publisher, str) or not publisher.strip():
-        raise ValueError(f"{label}: Publisher must be a non-empty X.500 CN=... distinguished name")
-    if len(publisher) > 8192:
-        raise ValueError(f"{label}: Publisher exceeds 8192 characters")
-
-    for ch in publisher:
+def _check_no_control_or_bidi(text: str, label: str) -> None:
+    for ch in text:
         cp = ord(ch)
         if (
             cp < 0x20
             or cp == 0x7F
+            or 0x80 <= cp <= 0x9F
             or 0x202A <= cp <= 0x202E
             or 0x2066 <= cp <= 0x2069
             or cp == 0x061C
         ):
             raise ValueError(
-                f"{label}: Publisher contains forbidden control or Bidi override character U+{cp:04X}"
+                f"{label}: contains forbidden control or Bidi override character U+{cp:04X}"
             )
+
+
+def strip_unescaped_x500_whitespace(text: str) -> str:
+    """Strip unescaped leading/trailing whitespace while preserving RFC 2253 escaped trailing spaces."""
+    n = len(text)
+    start = 0
+    while start < n and text[start].isspace():
+        start += 1
+    last_sig_end = start
+    escaped = False
+    for idx in range(start, n):
+        ch = text[idx]
+        if escaped:
+            escaped = False
+            last_sig_end = idx + 1
+            continue
+        if ch == "\\":
+            escaped = True
+            last_sig_end = idx + 1
+            continue
+        if not ch.isspace():
+            last_sig_end = idx + 1
+    return text[start:last_sig_end]
+
+
+def _decode_rfc2253_rdn_value(raw_text: str, *, quoted: bool, label: str, rdn: str) -> str:
+    """Decode RFC 2253/4514 escapes (escapable punctuation/space and UTF-8 \\XX hexpairs)."""
+    chars: list[str] = []
+    i = 0
+    n = len(raw_text)
+    while i < n:
+        c = raw_text[i]
+        if c == "\\":
+            if i + 1 >= n:
+                raise ValueError(f"{label}: trailing escape in X.500 Publisher RDN {rdn!r}")
+            nxt = raw_text[i + 1]
+            if nxt in RFC2253_ESCAPABLE_CHARS:
+                chars.append(nxt)
+                i += 2
+            elif i + 2 < n and nxt in ASCII_HEX_DIGITS and raw_text[i + 2] in ASCII_HEX_DIGITS:
+                hex_bytes = bytearray()
+                while (
+                    i + 2 < n
+                    and raw_text[i] == "\\"
+                    and raw_text[i + 1] in ASCII_HEX_DIGITS
+                    and raw_text[i + 2] in ASCII_HEX_DIGITS
+                ):
+                    hex_bytes.append(int(raw_text[i + 1 : i + 3], 16))
+                    i += 3
+                try:
+                    chars.append(hex_bytes.decode("utf-8", errors="strict"))
+                except UnicodeDecodeError as exc:
+                    raise ValueError(
+                        f"{label}: invalid UTF-8 byte sequence in RFC 2253 hex escape in RDN {rdn!r}: {exc}"
+                    ) from exc
+            else:
+                raise ValueError(
+                    f"{label}: invalid RFC 2253 escape sequence '\\{nxt}' in X.500 Publisher RDN {rdn!r}"
+                )
+        else:
+            if not quoted and c in FORBIDDEN_UNQUOTED_RDN_CHARS:
+                raise ValueError(
+                    f"{label}: forbidden unescaped character {c!r} in unquoted X.500 RDN {rdn!r}"
+                )
+            chars.append(c)
+            i += 1
+    return "".join(chars)
+
+
+def parse_x500_publisher(publisher: str, label: str) -> list[tuple[str, str]]:
+    """Parse and strictly validate an RFC 2253/4514 X.500 Publisher DN, returning (KEY_UPPER, decoded_value) pairs."""
+    if not isinstance(publisher, str) or not strip_unescaped_x500_whitespace(publisher):
+        raise ValueError(f"{label}: Publisher must be a non-empty X.500 CN=... distinguished name")
+    if len(publisher) > 8192:
+        raise ValueError(f"{label}: Publisher exceeds 8192 characters")
+
+    _check_no_control_or_bidi(publisher, f"{label} Publisher")
 
     if UNSIGNED_PACKAGE_OID in publisher.lower():
         raise ValueError(
@@ -139,7 +212,7 @@ def parse_x500_publisher(publisher: str, label: str) -> list[tuple[str, str]]:
             buf.append(ch)
             continue
         if ch == "," and not in_quotes:
-            rdns.append("".join(buf).strip())
+            rdns.append(strip_unescaped_x500_whitespace("".join(buf)))
             buf.clear()
             continue
         buf.append(ch)
@@ -148,7 +221,7 @@ def parse_x500_publisher(publisher: str, label: str) -> list[tuple[str, str]]:
         raise ValueError(
             f"{label}: malformed X.500 Publisher {publisher!r} (unterminated quote or escape)"
         )
-    rdns.append("".join(buf).strip())
+    rdns.append(strip_unescaped_x500_whitespace("".join(buf)))
 
     parsed: list[tuple[str, str]] = []
     has_cn = False
@@ -159,24 +232,26 @@ def parse_x500_publisher(publisher: str, label: str) -> list[tuple[str, str]]:
             )
         raw_key, raw_val = rdn.split("=", 1)
         key = raw_key.strip()
-        val = raw_val.strip()
+        val = strip_unescaped_x500_whitespace(raw_val)
         if not RDN_KEY_RE.fullmatch(key) or not val:
             raise ValueError(
                 f"{label}: malformed X.500 Publisher RDN {rdn!r} in {publisher!r} (expected e.g. 'CN=...')"
             )
 
+        if val.startswith("#"):
+            raise ValueError(
+                f"{label}: ASN.1 BER #hex RDN values are not permitted in MSIX Identity/@Publisher ({rdn!r})"
+            )
         if val.startswith('"'):
             if len(val) < 2:
                 raise ValueError(
                     f"{label}: malformed quoted X.500 Publisher RDN {rdn!r} in {publisher!r}"
                 )
-            chars: list[str] = []
             q_escaped = False
             closed = False
             for idx in range(1, len(val)):
                 c = val[idx]
                 if q_escaped:
-                    chars.append(c)
                     q_escaped = False
                     continue
                 if c == "\\":
@@ -189,45 +264,24 @@ def parse_x500_publisher(publisher: str, label: str) -> list[tuple[str, str]]:
                         )
                     closed = True
                     break
-                chars.append(c)
             if not closed or q_escaped:
                 raise ValueError(
                     f"{label}: unterminated quoted X.500 Publisher RDN {rdn!r} in {publisher!r}"
                 )
-            decoded_val = "".join(chars).strip()
-            if not decoded_val:
-                raise ValueError(f"{label}: empty quoted X.500 Publisher RDN value in {rdn!r}")
-        elif val.startswith("#"):
-            if not HEX_RDN_VAL_RE.fullmatch(val):
-                raise ValueError(
-                    f"{label}: invalid hex X.500 Publisher RDN value {val!r} in {publisher!r} "
-                    "(leading '#' requires even-length hexadecimal bytes)"
-                )
-            decoded_val = val.lower()
+            decoded_val = _decode_rfc2253_rdn_value(val[1:-1], quoted=True, label=label, rdn=rdn)
         else:
-            chars = []
-            u_escaped = False
-            for c in val:
-                if u_escaped:
-                    chars.append(c)
-                    u_escaped = False
-                    continue
-                if c == "\\":
-                    u_escaped = True
-                    continue
-                if c in FORBIDDEN_UNQUOTED_RDN_CHARS:
-                    raise ValueError(
-                        f"{label}: forbidden unescaped character {c!r} in unquoted X.500 RDN {rdn!r}"
-                    )
-                chars.append(c)
-            if u_escaped:
-                raise ValueError(f"{label}: trailing escape in X.500 Publisher RDN {rdn!r}")
-            decoded_val = "".join(chars).strip()
-            if not decoded_val:
-                raise ValueError(f"{label}: empty X.500 Publisher RDN value in {rdn!r}")
+            decoded_val = _decode_rfc2253_rdn_value(val, quoted=False, label=label, rdn=rdn)
+
+        _check_no_control_or_bidi(decoded_val, f"{label} decoded RDN {rdn!r}")
+        if UNSIGNED_PACKAGE_OID in decoded_val.lower():
+            raise ValueError(
+                f"{label}: decoded Publisher RDN contains forbidden unsigned-package OID {UNSIGNED_PACKAGE_OID}"
+            )
+        if not decoded_val.strip():
+            raise ValueError(f"{label}: empty X.500 Publisher RDN value in {rdn!r}")
 
         key_upper = key.upper()
-        if key_upper == "CN" and decoded_val:
+        if key_upper == "CN" and decoded_val.strip():
             has_cn = True
         parsed.append((key_upper, decoded_val))
 

@@ -106,7 +106,7 @@ function Assert-NoControlOrBidiChars {
 
     foreach ($ch in $Value.ToCharArray()) {
         $cp = [int][char]$ch
-        if ($cp -lt 0x20 -or $cp -eq 0x7F -or ($cp -ge 0x202A -and $cp -le 0x202E) -or ($cp -ge 0x2066 -and $cp -le 0x2069) -or $cp -eq 0x061C) {
+        if ($cp -lt 0x20 -or $cp -eq 0x7F -or ($cp -ge 0x80 -and $cp -le 0x9F) -or ($cp -ge 0x202A -and $cp -le 0x202E) -or ($cp -ge 0x2066 -and $cp -le 0x2069) -or $cp -eq 0x061C) {
             throw "Invalid ${Label}: contains forbidden control or Bidi override character U+$($cp.ToString('X4'))."
         }
     }
@@ -137,13 +137,126 @@ function Read-XmlDocumentStrict {
     return $doc
 }
 
+function Remove-UnescapedX500Whitespace {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Value
+    )
+
+    $len = $Value.Length
+    $start = 0
+    while ($start -lt $len -and [char]::IsWhiteSpace($Value[$start])) {
+        $start++
+    }
+    $lastSigEnd = $start
+    $escaped = $false
+    for ($i = $start; $i -lt $len; $i++) {
+        $ch = $Value[$i]
+        if ($escaped) {
+            $escaped = $false
+            $lastSigEnd = $i + 1
+            continue
+        }
+        if ($ch -eq '\') {
+            $escaped = $true
+            $lastSigEnd = $i + 1
+            continue
+        }
+        if (-not [char]::IsWhiteSpace($ch)) {
+            $lastSigEnd = $i + 1
+        }
+    }
+    return $Value.Substring($start, $lastSigEnd - $start)
+}
+
+function Test-AsciiHexChar {
+    param(
+        [Parameter(Mandatory = $true)]
+        [char]$Ch
+    )
+
+    $code = [int]$Ch
+    return (($code -ge 0x30 -and $code -le 0x39) -or ($code -ge 0x41 -and $code -le 0x46) -or ($code -ge 0x61 -and $code -le 0x66))
+}
+
+function ConvertFrom-Rfc2253RdnValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$RawText,
+
+        [Parameter()]
+        [switch]$Quoted,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Publisher,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Rdn
+    )
+
+    # RFC 2253 / RFC 4514 section 2.4 single-character escapable set: , + " \ < > ; # = <space>
+    $escapableChars = @(
+        [char]0x2C, [char]0x2B, [char]0x22, [char]0x5C, [char]0x3C,
+        [char]0x3E, [char]0x3B, [char]0x23, [char]0x3D, [char]0x20
+    )
+    # Forbidden unescaped chars in unquoted RDN values: ", ;, <, >, `, $, |, &
+    $forbiddenUnquoted = @(
+        [char]0x22, [char]0x3B, [char]0x3C, [char]0x3E,
+        [char]0x60, [char]0x24, [char]0x7C, [char]0x26
+    )
+    $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    $sb = [System.Text.StringBuilder]::new()
+    $len = $RawText.Length
+    $i = 0
+    while ($i -lt $len) {
+        $c = $RawText[$i]
+        if ($c -eq '\') {
+            if (($i + 1) -ge $len) {
+                throw "Invalid X.500 Publisher '$Publisher': trailing escape in RDN '$Rdn'."
+            }
+            $nxt = $RawText[$i + 1]
+            if ($escapableChars -ccontains $nxt) {
+                [void]$sb.Append($nxt)
+                $i += 2
+            }
+            elseif ((($i + 2) -lt $len) -and (Test-AsciiHexChar -Ch $nxt) -and (Test-AsciiHexChar -Ch $RawText[$i + 2])) {
+                $byteList = [System.Collections.Generic.List[byte]]::new()
+                while ((($i + 2) -lt $len) -and ($RawText[$i] -eq '\') -and (Test-AsciiHexChar -Ch $RawText[$i + 1]) -and (Test-AsciiHexChar -Ch $RawText[$i + 2])) {
+                    $hexPair = $RawText.Substring($i + 1, 2)
+                    $byteList.Add([System.Convert]::ToByte($hexPair, 16))
+                    $i += 3
+                }
+                try {
+                    [void]$sb.Append($strictUtf8.GetString($byteList.ToArray()))
+                }
+                catch [System.Text.DecoderFallbackException] {
+                    throw "Invalid X.500 Publisher '$Publisher': invalid UTF-8 byte sequence in RFC 2253 hex escape in RDN '$Rdn'."
+                }
+            }
+            else {
+                throw "Invalid X.500 Publisher '$Publisher': invalid RFC 2253 escape sequence '\$nxt' in RDN '$Rdn'."
+            }
+        }
+        else {
+            if (-not $Quoted -and ($forbiddenUnquoted -ccontains $c)) {
+                throw "Invalid X.500 Publisher '$Publisher': forbidden unescaped character '$c' in unquoted RDN '$Rdn'."
+            }
+            [void]$sb.Append($c)
+            $i++
+        }
+    }
+    return $sb.ToString()
+}
+
 function ConvertFrom-X500Publisher {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Publisher
     )
 
-    if ([string]::IsNullOrWhiteSpace($Publisher) -or $Publisher.Length -gt 8192) {
+    if ([string]::IsNullOrEmpty((Remove-UnescapedX500Whitespace -Value $Publisher)) -or $Publisher.Length -gt 8192) {
         throw "Invalid Publisher: must be a non-empty X.500 distinguished name (<= 8192 chars)."
     }
     Assert-NoControlOrBidiChars -Value $Publisher -Label "Publisher"
@@ -173,7 +286,7 @@ function ConvertFrom-X500Publisher {
             continue
         }
         if ($ch -eq ',' -and -not $inQuotes) {
-            $rdns.Add($current.ToString().Trim())
+            $rdns.Add((Remove-UnescapedX500Whitespace -Value $current.ToString()))
             [void]$current.Clear()
             continue
         }
@@ -182,13 +295,7 @@ function ConvertFrom-X500Publisher {
     if ($inQuotes -or $escaped) {
         throw "Invalid X.500 Publisher '$Publisher': unterminated quote or escape sequence."
     }
-    $rdns.Add($current.ToString().Trim())
-
-    # Forbidden unescaped chars in unquoted RDN values: ", ;, <, >, `, $, |, &
-    $forbiddenUnquoted = @(
-        [char]0x22, [char]0x3B, [char]0x3C, [char]0x3E,
-        [char]0x60, [char]0x24, [char]0x7C, [char]0x26
-    )
+    $rdns.Add((Remove-UnescapedX500Whitespace -Value $current.ToString()))
 
     $parsed = [System.Collections.Generic.List[object]]::new()
     $hasCn = $false
@@ -201,9 +308,13 @@ function ConvertFrom-X500Publisher {
             throw "Invalid X.500 Publisher '$Publisher': malformed RDN '$rdn' (expected e.g. 'CN=...')."
         }
         $key = $rdn.Substring(0, $eqIdx).Trim()
-        $val = $rdn.Substring($eqIdx + 1).Trim()
-        if ($key -notmatch '^(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?\d+(?:\.\d+)+)$' -or [string]::IsNullOrWhiteSpace($val)) {
+        $val = Remove-UnescapedX500Whitespace -Value $rdn.Substring($eqIdx + 1)
+        if ($key -notmatch '^(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?\d+(?:\.\d+)+)$' -or [string]::IsNullOrEmpty($val)) {
             throw "Invalid X.500 Publisher '$Publisher': malformed RDN '$rdn' (expected e.g. 'CN=...')."
+        }
+
+        if ($val.StartsWith('#')) {
+            throw "Invalid X.500 Publisher '$Publisher': ASN.1 BER #hex RDN values are not permitted in MSIX Identity/@Publisher ('$rdn')."
         }
 
         $decodedVal = ""
@@ -211,13 +322,11 @@ function ConvertFrom-X500Publisher {
             if ($val.Length -lt 2) {
                 throw "Invalid X.500 Publisher '$Publisher': malformed quoted RDN '$rdn'."
             }
-            $sb = [System.Text.StringBuilder]::new()
             $qEscaped = $false
             $closed = $false
             for ($i = 1; $i -lt $val.Length; $i++) {
                 $c = $val[$i]
                 if ($qEscaped) {
-                    [void]$sb.Append($c)
                     $qEscaped = $false
                     continue
                 }
@@ -232,47 +341,22 @@ function ConvertFrom-X500Publisher {
                     $closed = $true
                     break
                 }
-                [void]$sb.Append($c)
             }
             if (-not $closed -or $qEscaped) {
                 throw "Invalid X.500 Publisher '$Publisher': unterminated quoted RDN '$rdn'."
             }
-            $decodedVal = $sb.ToString().Trim()
-            if ([string]::IsNullOrWhiteSpace($decodedVal)) {
-                throw "Invalid X.500 Publisher '$Publisher': empty quoted RDN value in '$rdn'."
-            }
-        }
-        elseif ($val.StartsWith('#')) {
-            if ($val -notmatch '^#(?:[0-9A-Fa-f]{2})+$') {
-                throw "Invalid X.500 Publisher '$Publisher': invalid hex RDN value '$val' (leading '#' requires even-length hexadecimal bytes)."
-            }
-            $decodedVal = $val.ToLowerInvariant()
+            $decodedVal = ConvertFrom-Rfc2253RdnValue -RawText $val.Substring(1, $val.Length - 2) -Quoted -Publisher $Publisher -Rdn $rdn
         }
         else {
-            $sb = [System.Text.StringBuilder]::new()
-            $uEscaped = $false
-            foreach ($c in $val.ToCharArray()) {
-                if ($uEscaped) {
-                    [void]$sb.Append($c)
-                    $uEscaped = $false
-                    continue
-                }
-                if ($c -eq '\') {
-                    $uEscaped = $true
-                    continue
-                }
-                if ($forbiddenUnquoted -contains $c) {
-                    throw "Invalid X.500 Publisher '$Publisher': forbidden unescaped character '$c' in unquoted RDN '$rdn'."
-                }
-                [void]$sb.Append($c)
-            }
-            if ($uEscaped) {
-                throw "Invalid X.500 Publisher '$Publisher': trailing escape in RDN '$rdn'."
-            }
-            $decodedVal = $sb.ToString().Trim()
-            if ([string]::IsNullOrWhiteSpace($decodedVal)) {
-                throw "Invalid X.500 Publisher '$Publisher': empty RDN value in '$rdn'."
-            }
+            $decodedVal = ConvertFrom-Rfc2253RdnValue -RawText $val -Publisher $Publisher -Rdn $rdn
+        }
+
+        Assert-NoControlOrBidiChars -Value $decodedVal -Label "decoded Publisher RDN '$rdn'"
+        if ($decodedVal.IndexOf($UnsignedPackageOid, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            throw "Forbidden unsigned-package OID '$UnsignedPackageOid' detected in decoded Publisher RDN '$rdn'."
+        }
+        if ([string]::IsNullOrWhiteSpace($decodedVal)) {
+            throw "Invalid X.500 Publisher '$Publisher': empty RDN value in '$rdn'."
         }
 
         $keyUpper = $key.ToUpperInvariant()
@@ -484,7 +568,7 @@ $EffectiveIdentityName = if (-not [string]::IsNullOrWhiteSpace($StoreIdentityNam
     $preIdent.GetAttribute("Name")
 }
 $EffectivePublisher = if (-not [string]::IsNullOrWhiteSpace($StorePublisher)) {
-    $StorePublisher.Trim()
+    Remove-UnescapedX500Whitespace -Value $StorePublisher
 } else {
     $preIdent.GetAttribute("Publisher")
 }
@@ -674,22 +758,22 @@ if ($null -eq $identityNode -or $null -eq $pubDisplayNode) {
     throw "Staged AppxManifest.xml is missing /Package/Identity or /Package/Properties/PublisherDisplayName."
 }
 $manifestChanged = $false
-if ($identityNode.GetAttribute("Version") -ne $Version) {
+if ($identityNode.GetAttribute("Version") -cne $Version) {
     Write-Host "    Patching staged AppxManifest.xml Identity/@Version: $($identityNode.GetAttribute('Version')) -> $Version"
     $identityNode.SetAttribute("Version", $Version)
     $manifestChanged = $true
 }
-if ($identityNode.GetAttribute("Name") -ne $EffectiveIdentityName) {
+if ($identityNode.GetAttribute("Name") -cne $EffectiveIdentityName) {
     Write-Host "    Patching staged AppxManifest.xml Identity/@Name: $($identityNode.GetAttribute('Name')) -> $EffectiveIdentityName"
     $identityNode.SetAttribute("Name", $EffectiveIdentityName)
     $manifestChanged = $true
 }
-if ($identityNode.GetAttribute("Publisher") -ne $EffectivePublisher) {
+if ($identityNode.GetAttribute("Publisher") -cne $EffectivePublisher) {
     Write-Host "    Patching staged AppxManifest.xml Identity/@Publisher: $($identityNode.GetAttribute('Publisher')) -> $EffectivePublisher"
     $identityNode.SetAttribute("Publisher", $EffectivePublisher)
     $manifestChanged = $true
 }
-if ($pubDisplayNode.InnerText -ne $EffectivePublisherDisplayName) {
+if ($pubDisplayNode.InnerText -cne $EffectivePublisherDisplayName) {
     Write-Host "    Patching staged AppxManifest.xml Properties/PublisherDisplayName -> $EffectivePublisherDisplayName"
     $pubDisplayNode.InnerText = $EffectivePublisherDisplayName
     $manifestChanged = $true
