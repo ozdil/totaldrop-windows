@@ -144,13 +144,14 @@ fn error_json(
     cause: Option<&str>,
     message: impl Into<String>,
 ) -> *mut c_char {
+    let sanitized_message = sanitize_error_text(&message.into());
     let envelope = FfiErrorEnvelope {
         ok: false,
         error: FfiErrorBody {
             kind,
             l10n_key,
             cause,
-            message: message.into(),
+            message: sanitized_message,
         },
     };
     serialize_or_error(&envelope)
@@ -200,6 +201,7 @@ unsafe fn read_optional_c_str<'a>(ptr: *const c_char) -> Result<Option<&'a str>,
 }
 
 const MAX_ERROR_PREVIEW_CHARS: usize = 64;
+const MAX_ERROR_DETAIL_CHARS: usize = 256;
 
 fn bounded_debug_preview(s: &str, max_chars: usize) -> String {
     if s.chars().nth(max_chars).is_some() {
@@ -207,6 +209,58 @@ fn bounded_debug_preview(s: &str, max_chars: usize) -> String {
         format!("{preview:?}...")
     } else {
         format!("{s:?}")
+    }
+}
+
+fn sanitize_error_text(raw: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if is_disallowed_ui_metadata_char(ch) {
+            let _ = write!(out, "<U+{:04X}>", u32::from(ch));
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn bounded_sanitized_error_detail(raw: &str, max_chars: usize) -> String {
+    use std::fmt::Write as _;
+
+    let mut truncated = false;
+    let mut out = String::with_capacity(max_chars.min(raw.len()));
+    for (idx, ch) in raw.chars().enumerate() {
+        if idx == max_chars {
+            truncated = true;
+            break;
+        }
+        if is_disallowed_ui_metadata_char(ch) {
+            let _ = write!(out, "<U+{:04X}>", u32::from(ch));
+        } else {
+            out.push(ch);
+        }
+    }
+    if truncated {
+        out.push_str("...");
+    }
+    out
+}
+
+fn format_activation_error_message(err: &ActivationError) -> String {
+    match err {
+        ActivationError::InvalidUri(uri_err) => {
+            format!(
+                "invalid activation URI: {}",
+                format_uri_error_message(uri_err)
+            )
+        }
+        ActivationError::InvalidJson(msg) => format!(
+            "invalid activation envelope JSON: {}",
+            bounded_sanitized_error_detail(msg, MAX_ERROR_DETAIL_CHARS)
+        ),
+        other => sanitize_error_text(&other.to_string()),
     }
 }
 
@@ -740,7 +794,13 @@ pub unsafe extern "C" fn totaldrop_win_format_message_json(
                             "invalid_json",
                             Some("errorOther"),
                             None,
-                            format!("invalid args_json: {err}"),
+                            format!(
+                                "invalid args_json: {}",
+                                bounded_sanitized_error_detail(
+                                    &err.to_string(),
+                                    MAX_ERROR_DETAIL_CHARS,
+                                )
+                            ),
                         );
                     }
                 };
@@ -968,7 +1028,10 @@ pub unsafe extern "C" fn totaldrop_win_validate_paths_json(
                     "invalid_json",
                     Some("errorStorage"),
                     None,
-                    format!("invalid paths_json array: {err}"),
+                    format!(
+                        "invalid paths_json array: {}",
+                        bounded_sanitized_error_detail(&err.to_string(), MAX_ERROR_DETAIL_CHARS)
+                    ),
                 );
             }
         };
@@ -978,7 +1041,7 @@ pub unsafe extern "C" fn totaldrop_win_validate_paths_json(
                 activation_error_kind(&err),
                 Some("errorStorage"),
                 None,
-                err.to_string(),
+                format_activation_error_message(&err),
             ),
         }
     })
@@ -1238,7 +1301,7 @@ fn router_error_json(err: RouterCallError) -> *mut c_char {
             activation_error_kind(&act_err),
             Some(activation_error_l10n_key(&act_err)),
             None,
-            act_err.to_string(),
+            format_activation_error_message(&act_err),
         ),
     }
 }
@@ -1276,10 +1339,10 @@ pub unsafe extern "C" fn totaldrop_win_router_create(
         let Ok(version_opt) = (unsafe { read_optional_c_str(app_version) }) else {
             return 0;
         };
-        let version = version_opt
-            .map(str::trim)
-            .filter(|ver| !ver.is_empty())
-            .unwrap_or(APP_VERSION);
+        let sanitized_version = version_opt
+            .map(sanitize_ui_metadata)
+            .filter(|ver| !ver.is_empty());
+        let version = sanitized_version.as_deref().unwrap_or(APP_VERSION);
         let localizer = build_localizer(langs_opt, region_opt);
         router::create_router(session_id, localizer, version, animations_enabled)
     })
@@ -1428,7 +1491,10 @@ pub unsafe extern "C" fn totaldrop_win_router_set_activity_json(
                     "invalid_json",
                     Some("errorOther"),
                     None,
-                    format!("invalid router activity JSON: {err}"),
+                    format!(
+                        "invalid router activity JSON: {}",
+                        bounded_sanitized_error_detail(&err.to_string(), MAX_ERROR_DETAIL_CHARS)
+                    ),
                 );
             }
         };

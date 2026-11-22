@@ -190,14 +190,20 @@ fn locate_rc_exe() -> Option<PathBuf> {
     if let Some(root) = nuget_root {
         let bt_dir = root.join("microsoft.windows.sdk.buildtools");
         if let Ok(entries) = fs::read_dir(bt_dir) {
-            let mut pkg_dirs: Vec<PathBuf> = entries
+            let mut pkg_dirs: Vec<(Option<[u32; 4]>, PathBuf)> = entries
                 .flatten()
                 .map(|e| e.path())
                 .filter(|p| p.is_dir())
+                .map(|p| {
+                    let ver = p
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .and_then(parse_four_part_version);
+                    (ver, p)
+                })
                 .collect();
-            pkg_dirs.sort();
-            pkg_dirs.reverse();
-            for pkg in pkg_dirs {
+            pkg_dirs.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+            for (_, pkg) in pkg_dirs {
                 if let Some(found) = find_rc_under_versioned_bin(&pkg.join("bin"), &arches) {
                     return Some(found);
                 }

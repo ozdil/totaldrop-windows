@@ -10,6 +10,7 @@ use std::mem::size_of;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 use totaldrop_windows_bridge::activation::{
     ActivationError, ExplorerLaunchTransport, plan_explorer_invocation, session_named_pipe_path,
@@ -76,8 +77,17 @@ pub const fn guid_eq(a: &GUID, b: &GUID) -> bool {
         && u64::from_ne_bytes(a.data4) == u64::from_ne_bytes(b.data4)
 }
 
+fn saturating_add_ref(counter: &AtomicU32) -> u32 {
+    match counter.try_update(Ordering::AcqRel, Ordering::Acquire, |cur| {
+        cur.checked_add(1)
+    }) {
+        Ok(prev) => prev.saturating_add(1),
+        Err(cur) => cur,
+    }
+}
+
 fn increment_module_ref() {
-    MODULE_REF_COUNT.fetch_add(1, Ordering::Relaxed);
+    let _ = saturating_add_ref(&MODULE_REF_COUNT);
 }
 
 fn decrement_module_ref() {
@@ -289,7 +299,8 @@ impl Drop for HandleGuard {
 
 #[repr(C)]
 struct TotalDropClassFactory {
-    vtbl: *const IClassFactoryVtbl,
+    // First #[repr(C)] field: COM interface vtable pointer read through raw ABI pointers.
+    _vtbl: *const IClassFactoryVtbl,
     ref_count: AtomicU32,
 }
 
@@ -307,7 +318,7 @@ impl TotalDropClassFactory {
     fn new_raw() -> *mut Self {
         increment_module_ref();
         Box::into_raw(Box::new(Self {
-            vtbl: &CLASS_FACTORY_VTBL,
+            _vtbl: &CLASS_FACTORY_VTBL,
             ref_count: AtomicU32::new(1),
         }))
     }
@@ -353,10 +364,7 @@ unsafe extern "system" fn factory_add_ref(this: *mut c_void) -> u32 {
     }
     // SAFETY: `this` points to a live heap-allocated `TotalDropClassFactory`.
     let factory = unsafe { &*this.cast::<TotalDropClassFactory>() };
-    factory
-        .ref_count
-        .fetch_add(1, Ordering::Relaxed)
-        .saturating_add(1)
+    saturating_add_ref(&factory.ref_count)
 }
 
 unsafe extern "system" fn factory_release(this: *mut c_void) -> u32 {
@@ -426,7 +434,8 @@ unsafe extern "system" fn factory_lock_server(_this: *mut c_void, f_lock: BOOL) 
 
 #[repr(C)]
 struct TotalDropExplorerCommand {
-    vtbl: *const IExplorerCommandVtbl,
+    // First #[repr(C)] field: COM interface vtable pointer read through raw ABI pointers.
+    _vtbl: *const IExplorerCommandVtbl,
     ref_count: AtomicU32,
 }
 
@@ -450,7 +459,7 @@ impl TotalDropExplorerCommand {
     fn new_raw() -> *mut Self {
         increment_module_ref();
         Box::into_raw(Box::new(Self {
-            vtbl: &EXPLORER_COMMAND_VTBL,
+            _vtbl: &EXPLORER_COMMAND_VTBL,
             ref_count: AtomicU32::new(1),
         }))
     }
@@ -496,9 +505,7 @@ unsafe extern "system" fn cmd_add_ref(this: *mut c_void) -> u32 {
     }
     // SAFETY: `this` points to a live `TotalDropExplorerCommand`.
     let cmd = unsafe { &*this.cast::<TotalDropExplorerCommand>() };
-    cmd.ref_count
-        .fetch_add(1, Ordering::Relaxed)
-        .saturating_add(1)
+    saturating_add_ref(&cmd.ref_count)
 }
 
 unsafe extern "system" fn cmd_release(this: *mut c_void) -> u32 {
@@ -712,15 +719,21 @@ unsafe extern "system" fn cmd_invoke(
                         return launch_hr;
                     }
                 }
-                // Wait up to ~5 seconds (100 * 50 ms) for the cold-started window to open its pipe.
-                for _ in 0..100u32 {
+                // Enforce a true 5-second wall-clock deadline while waiting for
+                // the cold-started window to open its Named Pipe (so repeated
+                // ERROR_PIPE_BUSY waits cannot stretch handoff past 5 seconds).
+                const COLD_START_PIPE_TIMEOUT: Duration = Duration::from_secs(5);
+                let started = Instant::now();
+                loop {
                     if try_send_ipc_frame_once(&target_pipe, &planned_frame, true) {
                         return S_OK;
+                    }
+                    if started.elapsed() >= COLD_START_PIPE_TIMEOUT {
+                        return E_FAIL;
                     }
                     // SAFETY: `Sleep` suspends the caller thread briefly on cold-start handoff.
                     unsafe { Sleep(50) };
                 }
-                E_FAIL
             }
         }
     })
@@ -1152,7 +1165,8 @@ mod tests {
 
     #[repr(C)]
     struct MockShellItemArray {
-        vtbl: *const IShellItemArrayVtbl,
+        // First #[repr(C)] field: COM interface vtable pointer read through raw ABI pointers.
+        _vtbl: *const IShellItemArrayVtbl,
         count: u32,
     }
 
@@ -1415,7 +1429,7 @@ mod tests {
         assert_eq!(state, ECS_HIDDEN);
 
         let mut mock_one = MockShellItemArray {
-            vtbl: &MOCK_ARRAY_VTBL,
+            _vtbl: &MOCK_ARRAY_VTBL,
             count: 1,
         };
         // SAFETY: `mock_one` is a valid mock `IShellItemArray`.
@@ -1431,7 +1445,7 @@ mod tests {
         assert_eq!(hr_invoke_null, E_INVALIDARG);
 
         let mut mock_overflow = MockShellItemArray {
-            vtbl: &MOCK_ARRAY_VTBL,
+            _vtbl: &MOCK_ARRAY_VTBL,
             count: 10_001,
         };
         // SAFETY: `mock_overflow` tests immediate 10,001 cap rejection.

@@ -1933,3 +1933,459 @@ fn router_busy_states_share_target_unc_text_bidi_and_error_safety() -> TestResul
 
     Ok(())
 }
+
+#[test]
+fn router_create_sanitizes_app_version_across_initial_bundle_and_locale_updates() -> TestResult {
+    let en = c_str("en-US")?;
+    let tr = c_str("tr-TR")?;
+    let ar = c_str("ar-SA")?;
+    let hostile_version = c_str("0.1.0\u{2069}\u{202E}\x1b[31m\u{009B}\u{FDD0}\u{E0041}\u{2028}")?;
+
+    // SAFETY: All pointers are live NUL-terminated CStrings.
+    let router = unsafe {
+        totaldrop_win_router_create(7, en.as_ptr(), en.as_ptr(), hostile_version.as_ptr(), true)
+    };
+    assert_ne!(router, 0);
+
+    let ndjson = take_raw_and_free(totaldrop_win_router_drain_ndjson(router))?;
+    let first_line = ndjson
+        .lines()
+        .next()
+        .ok_or("missing initial ui_bundle_ready line")?;
+    let initial: Value = serde_json::from_str(first_line)?;
+    assert_eq!(
+        initial.get("kind").and_then(Value::as_str),
+        Some("ui_bundle_ready")
+    );
+    let initial_version = initial
+        .get("data")
+        .and_then(|d| d.get("version_label"))
+        .and_then(Value::as_str)
+        .ok_or("missing initial version_label")?;
+    assert!(initial_version.contains("0.1.0[31m"));
+    assert!(
+        !contains_disallowed_ui_char(initial_version),
+        "initial router ui_bundle_ready leaked disallowed char: {initial_version:?}"
+    );
+
+    // SAFETY: `tr` is a live NUL-terminated CString.
+    let updated_tr = decode_and_free(unsafe {
+        totaldrop_win_router_update_locale_json(router, tr.as_ptr(), tr.as_ptr())
+    })?;
+    let tr_version = updated_tr
+        .get("data")
+        .and_then(|d| d.get("version_label"))
+        .and_then(Value::as_str)
+        .ok_or("missing tr version_label")?;
+    assert!(tr_version.contains("0.1.0[31m"));
+    assert!(
+        !contains_disallowed_ui_char(tr_version),
+        "router_update_locale_json (tr) leaked disallowed char: {tr_version:?}"
+    );
+
+    // Arabic RTL version label must not allow injected PDI (\u2069) breakout or raw RLO/ESC/Tag.
+    // SAFETY: `ar` is a live NUL-terminated CString.
+    let updated_ar = decode_and_free(unsafe {
+        totaldrop_win_router_update_locale_json(router, ar.as_ptr(), ar.as_ptr())
+    })?;
+    let ar_version = updated_ar
+        .get("data")
+        .and_then(|d| d.get("version_label"))
+        .and_then(Value::as_str)
+        .ok_or("missing ar version_label")?;
+    assert!(ar_version.contains("0.1.0[31m"));
+    let ar_without_legit_isolates: String = ar_version
+        .chars()
+        .filter(|&c| c != '\u{2068}' && c != '\u{2069}')
+        .collect();
+    assert!(
+        !contains_disallowed_ui_char(&ar_without_legit_isolates),
+        "router_update_locale_json (ar) leaked disallowed char: {ar_version:?}"
+    );
+    assert!(
+        ar_version.matches('\u{2069}').count() <= 1,
+        "injected PDI broke out of Arabic FSI/PDI isolation: {ar_version:?}"
+    );
+    assert_eq!(totaldrop_win_router_destroy(router), FFI_OK);
+
+    // All-disallowed app_version must fall back cleanly to APP_VERSION.
+    let all_disallowed = c_str("\u{202E}\x1b\u{009B}\u{FDD0}\u{E0041}\u{2069}   ")?;
+    // SAFETY: All pointers are live NUL-terminated CStrings.
+    let fallback_router = unsafe {
+        totaldrop_win_router_create(8, en.as_ptr(), en.as_ptr(), all_disallowed.as_ptr(), false)
+    };
+    assert_ne!(fallback_router, 0);
+    let fb_ndjson = take_raw_and_free(totaldrop_win_router_drain_ndjson(fallback_router))?;
+    let fb_line = fb_ndjson
+        .lines()
+        .next()
+        .ok_or("missing fallback ui_bundle_ready")?;
+    let fb_msg: Value = serde_json::from_str(fb_line)?;
+    let fb_version = fb_msg
+        .get("data")
+        .and_then(|d| d.get("version_label"))
+        .and_then(Value::as_str)
+        .ok_or("missing fallback version_label")?;
+    assert!(fb_version.contains(totaldrop_windows_ffi::APP_VERSION));
+    assert!(!contains_disallowed_ui_char(fb_version));
+    assert_eq!(totaldrop_win_router_destroy(fallback_router), FFI_OK);
+
+    Ok(())
+}
+
+#[test]
+fn router_ingest_ipc_bytes_sanitizes_and_bounds_invalid_json_and_unknown_word_errors() -> TestResult
+{
+    let en = c_str("en-US")?;
+    // SAFETY: `en` is a live NUL-terminated CString.
+    let router =
+        unsafe { totaldrop_win_router_create(9, en.as_ptr(), en.as_ptr(), ptr::null(), true) };
+    assert_ne!(router, 0);
+
+    // 1. Oversized hostile ActivationError::InvalidJson (5,000-char unknown variant with RLO/ESC/CSI/Nonchar/Tag).
+    let huge_hostile = format!(
+        "evil_\u{202E}\x1b[31m\u{009B}\u{FDD0}\u{E0041}_{}",
+        "z".repeat(5_000)
+    );
+    let bad_variant_json = serde_json::json!({
+        "version": 1,
+        "payload": { "kind": huge_hostile }
+    })
+    .to_string();
+    let bad_variant_frame = frame_raw_json(&bad_variant_json)?;
+    // SAFETY: `bad_variant_frame` is a live readable byte slice.
+    let bad_json_err = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(
+            router,
+            bad_variant_frame.as_ptr(),
+            bad_variant_frame.len(),
+        )
+    })?;
+    assert_strict_four_field_error(&bad_json_err, "invalid_json", Some("errorOther"))?;
+    let bad_json_msg = bad_json_err
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(Value::as_str)
+        .ok_or("missing invalid_json error.message")?;
+    assert!(
+        bad_json_msg.len() < 1_024,
+        "unbounded router InvalidJson reflection: {} bytes",
+        bad_json_msg.len()
+    );
+    assert!(bad_json_msg.ends_with("..."));
+    assert!(
+        !contains_disallowed_ui_char(bad_json_msg),
+        "router InvalidJson leaked disallowed Unicode char: {bad_json_msg:?}"
+    );
+
+    // 2. Oversized hostile ActivationError::InvalidUri(UnknownWord) over ProtocolUri frame.
+    let huge_word = format!("notaword_\u{202E}\x1b\u{E0041}_{}", "q".repeat(5_000));
+    let bad_uri_json = serde_json::json!({
+        "version": 1,
+        "payload": {
+            "kind": "protocol_uri",
+            "code": {
+                "nameplate": 7,
+                "word_count": 2,
+                "display_english": format!("7-{huge_word}-apple"),
+                "canonical": "7-0-0",
+                "ltr_isolated": format!("\u{2068}7-{huge_word}-apple\u{2069}"),
+                "protocol_uri": format!("totaldrop://r/7-{huge_word}-apple"),
+                "web_uri": format!("https://totaldrop.app/r#7-{huge_word}-apple")
+            }
+        }
+    })
+    .to_string();
+    let bad_uri_frame = frame_raw_json(&bad_uri_json)?;
+    // SAFETY: `bad_uri_frame` is a live readable byte slice.
+    let bad_uri_err = decode_and_free(unsafe {
+        totaldrop_win_router_ingest_ipc_bytes_json(
+            router,
+            bad_uri_frame.as_ptr(),
+            bad_uri_frame.len(),
+        )
+    })?;
+    assert_strict_four_field_error(&bad_uri_err, "invalid_uri", Some("receiveCodeInvalid"))?;
+    let bad_uri_msg = bad_uri_err
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(Value::as_str)
+        .ok_or("missing invalid_uri error.message")?;
+    assert!(
+        bad_uri_msg.len() < 512,
+        "unbounded router InvalidUri reflection: {} bytes",
+        bad_uri_msg.len()
+    );
+    assert!(bad_uri_msg.contains("is not a valid TotalDrop code word"));
+    assert!(bad_uri_msg.contains("..."));
+    assert!(
+        !contains_disallowed_ui_char(bad_uri_msg),
+        "router InvalidUri leaked disallowed Unicode char: {bad_uri_msg:?}"
+    );
+
+    assert_eq!(totaldrop_win_router_destroy(router), FFI_OK);
+    Ok(())
+}
+
+#[test]
+fn serde_json_errors_in_router_activity_format_message_and_validate_paths_are_bounded_and_sanitized()
+-> TestResult {
+    let en = c_str("en-US")?;
+    // SAFETY: `en` is a live NUL-terminated CString.
+    let router =
+        unsafe { totaldrop_win_router_create(10, en.as_ptr(), en.as_ptr(), ptr::null(), true) };
+    assert_ne!(router, 0);
+
+    let huge_hostile = format!(
+        "bad_\u{202E}\x1b[31m\u{009B}\u{FDD0}\u{E0041}_{}",
+        "a".repeat(5_000)
+    );
+
+    // 1. totaldrop_win_router_set_activity_json unknown state variant (raw Display reflection)
+    let bad_activity = c_str(&serde_json::json!({ "state": huge_hostile }).to_string())?;
+    // SAFETY: `bad_activity` is a live NUL-terminated CString.
+    let act_err = decode_and_free(unsafe {
+        totaldrop_win_router_set_activity_json(router, bad_activity.as_ptr())
+    })?;
+    assert_strict_four_field_error(&act_err, "invalid_json", Some("errorOther"))?;
+    let act_msg = act_err
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(Value::as_str)
+        .ok_or("missing set_activity error.message")?;
+    assert!(
+        act_msg.starts_with("invalid router activity JSON: unknown variant `bad_"),
+        "expected reflected unknown variant in set_activity_json error: {act_msg:?}"
+    );
+    for marker in ["<U+202E>", "<U+001B>", "<U+009B>", "<U+FDD0>", "<U+E0041>"] {
+        assert!(
+            act_msg.contains(marker),
+            "expected revealed {marker} in set_activity_json error: {act_msg:?}"
+        );
+    }
+    assert!(
+        act_msg.ends_with("..."),
+        "expected 256-scalar truncation in set_activity_json error: {act_msg:?}"
+    );
+    assert!(
+        !act_msg.contains("expected one of"),
+        "set_activity_json truncation must cut off before the 5 KiB payload completes: {act_msg:?}"
+    );
+    assert!(
+        act_msg.chars().count() < 600,
+        "unbounded set_activity_json error: {} chars",
+        act_msg.chars().count()
+    );
+    assert!(
+        !contains_disallowed_ui_char(act_msg),
+        "set_activity_json leaked disallowed Unicode char: {act_msg:?}"
+    );
+
+    let escaped_hostile = serde_json::to_string(&huge_hostile)?;
+
+    // 2. totaldrop_win_format_message_json (C ABI order: key, args_json, lang_tags, region_tag)
+    let key = c_str("sendDoneBody")?;
+
+    // 2a. Malformed args_json containing raw control character inside string literal
+    let raw_ctrl_args = c_str(&format!("{{\"{huge_hostile}\""))?;
+    // SAFETY: All pointers are live NUL-terminated CStrings.
+    let fmt_ctrl_err = decode_and_free(unsafe {
+        totaldrop_win_format_message_json(
+            key.as_ptr(),
+            raw_ctrl_args.as_ptr(),
+            en.as_ptr(),
+            en.as_ptr(),
+        )
+    })?;
+    assert_strict_four_field_error(&fmt_ctrl_err, "invalid_json", Some("errorOther"))?;
+    let fmt_ctrl_msg = fmt_ctrl_err
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(Value::as_str)
+        .ok_or("missing format_message control-char error.message")?;
+    assert!(
+        fmt_ctrl_msg.starts_with("invalid args_json: control character"),
+        "expected args_json control-char parse error (not swapped arg error): {fmt_ctrl_msg:?}"
+    );
+    assert!(
+        fmt_ctrl_msg.chars().count() < 600,
+        "unbounded format_message_json control-char error: {} chars",
+        fmt_ctrl_msg.chars().count()
+    );
+    assert!(
+        !contains_disallowed_ui_char(fmt_ctrl_msg),
+        "format_message_json leaked disallowed Unicode char: {fmt_ctrl_msg:?}"
+    );
+
+    // 2b. Unterminated >5 KiB JSON-escaped args_json string (proves serde_json scanned full payload)
+    let truncated_args = c_str(&format!("{{{}", escaped_hostile.trim_end_matches('"')))?;
+    // SAFETY: All pointers are live NUL-terminated CStrings.
+    let fmt_eof_err = decode_and_free(unsafe {
+        totaldrop_win_format_message_json(
+            key.as_ptr(),
+            truncated_args.as_ptr(),
+            en.as_ptr(),
+            en.as_ptr(),
+        )
+    })?;
+    assert_strict_four_field_error(&fmt_eof_err, "invalid_json", Some("errorOther"))?;
+    let fmt_eof_msg = fmt_eof_err
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(Value::as_str)
+        .ok_or("missing format_message EOF error.message")?;
+    let eof_col: usize = fmt_eof_msg
+        .strip_prefix("invalid args_json: EOF while parsing a string at line 1 column ")
+        .ok_or_else(|| format!("unexpected format_message_json EOF error: {fmt_eof_msg:?}"))?
+        .parse()?;
+    assert!(
+        eof_col > 5_000,
+        "expected serde_json to scan >5,000-byte hostile args_json, got column {eof_col}"
+    );
+    assert!(
+        fmt_eof_msg.chars().count() < 600,
+        "unbounded format_message_json EOF error: {} chars",
+        fmt_eof_msg.chars().count()
+    );
+    assert!(
+        !contains_disallowed_ui_char(fmt_eof_msg),
+        "format_message_json EOF error leaked disallowed Unicode char: {fmt_eof_msg:?}"
+    );
+
+    // 2c. Valid JSON object with >5 KiB hostile arg name and unsupported value type (reflects bounded preview)
+    let hostile_arg_args = c_str(&serde_json::json!({ huge_hostile.as_str(): true }).to_string())?;
+    // SAFETY: All pointers are live NUL-terminated CStrings.
+    let fmt_arg_err = decode_and_free(unsafe {
+        totaldrop_win_format_message_json(
+            key.as_ptr(),
+            hostile_arg_args.as_ptr(),
+            en.as_ptr(),
+            en.as_ptr(),
+        )
+    })?;
+    assert_strict_four_field_error(&fmt_arg_err, "invalid_args", Some("errorOther"))?;
+    let fmt_arg_msg = fmt_arg_err
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(Value::as_str)
+        .ok_or("missing format_message invalid_args error.message")?;
+    assert!(
+        fmt_arg_msg.starts_with("argument \"bad_"),
+        "expected reflected hostile arg name in format_message_json error: {fmt_arg_msg:?}"
+    );
+    for escaped in ["\\u{202e}", "\\u{1b}", "\\u{9b}", "\\u{fdd0}", "\\u{e0041}"] {
+        assert!(
+            fmt_arg_msg.contains(escaped),
+            "expected escaped {escaped} in format_message_json error: {fmt_arg_msg:?}"
+        );
+    }
+    assert!(
+        fmt_arg_msg.ends_with("\"... must be a JSON string or unsigned integer"),
+        "expected 64-scalar truncation in format_message_json arg error: {fmt_arg_msg:?}"
+    );
+    assert!(
+        fmt_arg_msg.chars().count() < 256,
+        "unbounded format_message_json arg error: {} chars",
+        fmt_arg_msg.chars().count()
+    );
+    assert!(
+        !contains_disallowed_ui_char(fmt_arg_msg),
+        "format_message_json arg error leaked disallowed Unicode char: {fmt_arg_msg:?}"
+    );
+
+    // 2d. Non-object >5 KiB hostile JSON string returns static invalid_args without reflection
+    let hostile_json_str = c_str(&escaped_hostile)?;
+    // SAFETY: All pointers are live NUL-terminated CStrings.
+    let fmt_non_obj_err = decode_and_free(unsafe {
+        totaldrop_win_format_message_json(
+            key.as_ptr(),
+            hostile_json_str.as_ptr(),
+            en.as_ptr(),
+            en.as_ptr(),
+        )
+    })?;
+    assert_strict_four_field_error(&fmt_non_obj_err, "invalid_args", Some("errorOther"))?;
+    let fmt_non_obj_msg = fmt_non_obj_err
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(Value::as_str)
+        .ok_or("missing format_message non-object error.message")?;
+    assert_eq!(fmt_non_obj_msg, "args_json must be a JSON object");
+
+    // 2e. Oversized args_json (> MAX_FORMAT_ARGS_JSON_BYTES = 16_384) returns args_too_large without echo
+    let oversized_key = format!("{huge_hostile}{}", "b".repeat(15_000));
+    let oversized_args = c_str(&serde_json::json!({ oversized_key: "ok" }).to_string())?;
+    // SAFETY: All pointers are live NUL-terminated CStrings.
+    let fmt_oversize_err = decode_and_free(unsafe {
+        totaldrop_win_format_message_json(
+            key.as_ptr(),
+            oversized_args.as_ptr(),
+            en.as_ptr(),
+            en.as_ptr(),
+        )
+    })?;
+    assert_strict_four_field_error(&fmt_oversize_err, "args_too_large", Some("errorOther"))?;
+    let fmt_oversize_msg = fmt_oversize_err
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(Value::as_str)
+        .ok_or("missing format_message args_too_large error.message")?;
+    assert!(
+        fmt_oversize_msg.contains("exceeds limit of 16384 bytes"),
+        "unexpected args_too_large error: {fmt_oversize_msg:?}"
+    );
+    assert!(
+        !fmt_oversize_msg.contains("bad_"),
+        "args_too_large must not echo hostile payload: {fmt_oversize_msg:?}"
+    );
+    assert!(
+        fmt_oversize_msg.chars().count() < 256,
+        "unbounded args_too_large error: {} chars",
+        fmt_oversize_msg.chars().count()
+    );
+    assert!(
+        !contains_disallowed_ui_char(fmt_oversize_msg),
+        "args_too_large error leaked disallowed Unicode char: {fmt_oversize_msg:?}"
+    );
+
+    // 3. totaldrop_win_validate_paths_json reflecting >5 KiB JSON string where sequence is expected
+    // SAFETY: `hostile_json_str` is a live NUL-terminated CString.
+    let paths_err =
+        decode_and_free(unsafe { totaldrop_win_validate_paths_json(hostile_json_str.as_ptr()) })?;
+    assert_strict_four_field_error(&paths_err, "invalid_json", Some("errorStorage"))?;
+    let paths_msg = paths_err
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(Value::as_str)
+        .ok_or("missing validate_paths error.message")?;
+    assert!(
+        paths_msg.starts_with("invalid paths_json array: invalid type: string \"bad_"),
+        "expected reflected string in validate_paths_json error: {paths_msg:?}"
+    );
+    for escaped in ["\\u{202e}", "\\u{1b}", "\\u{9b}", "\\u{fdd0}", "\\u{e0041}"] {
+        assert!(
+            paths_msg.contains(escaped),
+            "expected escaped {escaped} in validate_paths_json error: {paths_msg:?}"
+        );
+    }
+    assert!(
+        paths_msg.ends_with("..."),
+        "expected 256-scalar truncation in validate_paths_json error: {paths_msg:?}"
+    );
+    assert!(
+        !paths_msg.contains("expected a sequence"),
+        "validate_paths_json truncation must cut off before the 5 KiB payload completes: {paths_msg:?}"
+    );
+    assert!(
+        paths_msg.chars().count() < 600,
+        "unbounded validate_paths_json error: {} chars",
+        paths_msg.chars().count()
+    );
+    assert!(
+        !contains_disallowed_ui_char(paths_msg),
+        "validate_paths_json leaked disallowed Unicode char: {paths_msg:?}"
+    );
+
+    assert_eq!(totaldrop_win_router_destroy(router), FFI_OK);
+    Ok(())
+}
