@@ -309,6 +309,103 @@ fn validate_session_server_urls(cfg: &BridgeNetworkConfig) -> Result<(), CoreErr
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ManifestCounts {
+    files: usize,
+    dirs: usize,
+}
+
+/// Counts manifest `(files, dirs)` for `paths` using the exact same metadata
+/// classification and limits as `totaldrop_core::transfer::scan` without
+/// opening or hashing any file contents.
+fn count_manifest_entries(
+    paths: &[PathBuf],
+    stop: &totaldrop_core::Stop,
+) -> Option<ManifestCounts> {
+    let mut counts = ManifestCounts { files: 0, dirs: 0 };
+    for root in paths {
+        if stop.is_stopped() {
+            return None;
+        }
+        let meta = std::fs::symlink_metadata(root).ok()?;
+        if meta.file_type().is_symlink() {
+            return None;
+        }
+        walk_manifest_counts(root, 0, &mut counts, stop)?;
+    }
+    if counts.files == 0 && counts.dirs == 0 {
+        return None;
+    }
+    Some(counts)
+}
+
+fn walk_manifest_counts(
+    path: &Path,
+    parent_depth: usize,
+    counts: &mut ManifestCounts,
+    stop: &totaldrop_core::Stop,
+) -> Option<()> {
+    if stop.is_stopped() {
+        return None;
+    }
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    let _name = path.file_name().and_then(|n| n.to_str())?;
+    let depth = parent_depth.saturating_add(1);
+    if depth > totaldrop_proto::limits::MAX_PATH_DEPTH {
+        return None;
+    }
+    if counts.files.saturating_add(counts.dirs) >= totaldrop_proto::limits::MAX_ENTRIES {
+        return None;
+    }
+    let ft = meta.file_type();
+    if ft.is_file() {
+        counts.files = counts.files.saturating_add(1);
+    } else if ft.is_dir() {
+        counts.dirs = counts.dirs.saturating_add(1);
+        let mut children: Vec<PathBuf> = std::fs::read_dir(path)
+            .ok()?
+            .map(|e| e.map(|entry| entry.path()))
+            .collect::<std::io::Result<_>>()
+            .ok()?;
+        children.sort();
+        for child in children {
+            walk_manifest_counts(&child, depth, counts, stop)?;
+        }
+    }
+    // Nested symbolic links, FIFOs, sockets, and special files are skipped
+    // (never counted, never followed), matching `transfer::walk`.
+    Some(())
+}
+
+/// Reconciles metadata-walk counts against the authoritative `(total_entries,
+/// total_bytes)` frozen inside `PreparedSend`, always preserving
+/// `files + dirs == total_entries` and `(total_bytes > 0) => (files >= 1)`.
+fn reconcile_manifest_counts(
+    walked: Option<ManifestCounts>,
+    total_entries: usize,
+    total_bytes: u64,
+) -> (usize, usize) {
+    match walked {
+        Some(c)
+            if c.files.saturating_add(c.dirs) == total_entries
+                && (total_bytes == 0 || c.files > 0) =>
+        {
+            (c.files, c.dirs)
+        }
+        Some(c) => {
+            let max_dirs = if total_bytes > 0 {
+                total_entries.saturating_sub(1)
+            } else {
+                total_entries
+            };
+            let dirs = c.dirs.min(max_dirs);
+            let files = total_entries.saturating_sub(dirs);
+            (files, dirs)
+        }
+        None => (total_entries, 0),
+    }
+}
+
 /// Starts an asynchronous file/folder send session and returns a non-zero
 /// monotonic handle (`0` on internal registration failure).
 pub(crate) fn start_send_files(
@@ -342,7 +439,7 @@ pub(crate) fn start_send_files(
             return;
         }
 
-        let prepared = match prepare_windows_send(&cfg, paths, &entry.cancel).await {
+        let prepared = match prepare_windows_send(&cfg, &paths, &entry.cancel).await {
             Ok(p) => p,
             Err(err) => {
                 let localized =
@@ -352,8 +449,26 @@ pub(crate) fn start_send_files(
             }
         };
 
+        let (total_entries, total_bytes) = prepared.totals();
+        let walk_stop = entry.cancel.as_core_stop().clone();
+        let walked =
+            tokio::task::spawn_blocking(move || count_manifest_entries(&paths, &walk_stop))
+                .await
+                .ok()
+                .flatten();
+
+        if entry.cancel.is_cancelled() || entry.is_destroyed() {
+            let localized = LocalizedTransferError::from_core_error(
+                &CoreError::Stopped,
+                &entry.localizer,
+                true,
+            );
+            entry.finish_with(SessionEvent::from_localized_error(localized));
+            return;
+        }
+
+        let (files, dirs) = reconcile_manifest_counts(walked, total_entries, total_bytes);
         let code = ValidatedCode::from_proto(prepared.code());
-        let (files, total_bytes) = prepared.totals();
         let skipped = prepared.skipped();
         let share_text = entry.localizer.format_share_text(&code.display_english);
         let formatted_total = entry.localizer.format_bytes(total_bytes);
@@ -362,7 +477,7 @@ pub(crate) fn start_send_files(
             code,
             share_text,
             files,
-            dirs: 0,
+            dirs,
             total_bytes,
             formatted_total,
             skipped,
@@ -1200,5 +1315,260 @@ mod tests {
             let _ = std::fs::remove_dir_all(&base);
             Ok(())
         })
+    }
+
+    static UNIT_TEMP_SEQ: AtomicU64 = AtomicU64::new(1);
+
+    struct UnitTempDir {
+        path: PathBuf,
+    }
+
+    impl UnitTempDir {
+        fn new(prefix: &str) -> Result<Self, std::io::Error> {
+            let id = UNIT_TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+            let path =
+                std::env::temp_dir().join(format!("td-u-{prefix}-{}-{id}", std::process::id()));
+            std::fs::create_dir_all(&path)?;
+            Ok(Self { path })
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for UnitTempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn core_scan_counts(paths: &[PathBuf]) -> Result<ManifestCounts, Box<dyn StdError>> {
+        let (entries, _skipped) = totaldrop_core::transfer::scan(paths)?;
+        let files = entries
+            .iter()
+            .filter(|e| e.entry.kind == totaldrop_proto::wire::EntryKind::File)
+            .count();
+        let dirs = entries.len().saturating_sub(files);
+        Ok(ManifestCounts { files, dirs })
+    }
+
+    #[test]
+    fn count_manifest_entries_matches_core_scan_and_limits() -> TestResult {
+        let tmp = UnitTempDir::new("cnt")?;
+        let stop = totaldrop_core::Stop::new();
+
+        // 1. Single non-empty file.
+        let single_file = tmp.path().join("single.bin");
+        std::fs::write(&single_file, b"payload-bytes")?;
+        let single_paths = vec![single_file.clone()];
+        let expected_single = ManifestCounts { files: 1, dirs: 0 };
+        assert_eq!(
+            count_manifest_entries(&single_paths, &stop),
+            Some(expected_single)
+        );
+        assert_eq!(core_scan_counts(&single_paths)?, expected_single);
+
+        // 2. Single 0-byte file.
+        let zero_file = tmp.path().join("zero.txt");
+        std::fs::write(&zero_file, b"")?;
+        let zero_paths = vec![zero_file];
+        assert_eq!(
+            count_manifest_entries(&zero_paths, &stop),
+            Some(expected_single)
+        );
+        assert_eq!(core_scan_counts(&zero_paths)?, expected_single);
+
+        // 3. Single empty directory -> (0, 1).
+        let empty_dir = tmp.path().join("empty_only");
+        std::fs::create_dir_all(&empty_dir)?;
+        let empty_dir_paths = vec![empty_dir.clone()];
+        let expected_empty_dir = ManifestCounts { files: 0, dirs: 1 };
+        assert_eq!(
+            count_manifest_entries(&empty_dir_paths, &stop),
+            Some(expected_empty_dir)
+        );
+        assert_eq!(core_scan_counts(&empty_dir_paths)?, expected_empty_dir);
+
+        // 4. Nested directory with 2 dirs + 3 files (root + 1 subdir).
+        let bundle = tmp.path().join("bundle");
+        let bundle_sub = bundle.join("sub");
+        std::fs::create_dir_all(&bundle_sub)?;
+        std::fs::write(bundle.join("empty.txt"), b"")?;
+        std::fs::write(bundle.join("report-2026.txt"), b"report body")?;
+        std::fs::write(bundle_sub.join("third.bin"), b"binary-content")?;
+        let bundle_paths = vec![bundle];
+        let expected_3_2 = ManifestCounts { files: 3, dirs: 2 };
+        assert_eq!(
+            count_manifest_entries(&bundle_paths, &stop),
+            Some(expected_3_2)
+        );
+        assert_eq!(core_scan_counts(&bundle_paths)?, expected_3_2);
+
+        // 5. Nested directory with 2 subdirs + 3 files -> (3, 3).
+        let pack = tmp.path().join("pack");
+        std::fs::create_dir_all(pack.join("sub1"))?;
+        std::fs::create_dir_all(pack.join("sub2"))?;
+        std::fs::write(pack.join("a.txt"), b"a")?;
+        std::fs::write(pack.join("sub1").join("b.txt"), b"bb")?;
+        std::fs::write(pack.join("sub2").join("c.bin"), b"ccc")?;
+        let pack_paths = vec![pack];
+        let expected_3_3 = ManifestCounts { files: 3, dirs: 3 };
+        assert_eq!(
+            count_manifest_entries(&pack_paths, &stop),
+            Some(expected_3_3)
+        );
+        assert_eq!(core_scan_counts(&pack_paths)?, expected_3_3);
+
+        // 6. Empty subdir + sibling files -> (2, 2).
+        let with_empty_sub = tmp.path().join("with_empty_sub");
+        std::fs::create_dir_all(with_empty_sub.join("empty_sub"))?;
+        std::fs::write(with_empty_sub.join("one.txt"), b"1")?;
+        std::fs::write(with_empty_sub.join("two.txt"), b"22")?;
+        let with_empty_paths = vec![with_empty_sub];
+        let expected_2_2 = ManifestCounts { files: 2, dirs: 2 };
+        assert_eq!(
+            count_manifest_entries(&with_empty_paths, &stop),
+            Some(expected_2_2)
+        );
+        assert_eq!(core_scan_counts(&with_empty_paths)?, expected_2_2);
+
+        // 7. Mixed roots: [empty_dir, file] -> (1, 1).
+        let mixed_paths = vec![empty_dir, single_file];
+        let expected_mixed = ManifestCounts { files: 1, dirs: 1 };
+        assert_eq!(
+            count_manifest_entries(&mixed_paths, &stop),
+            Some(expected_mixed)
+        );
+        assert_eq!(core_scan_counts(&mixed_paths)?, expected_mixed);
+
+        // 8. Pre-stopped Stop -> None.
+        let stopped = totaldrop_core::Stop::new();
+        stopped.stop();
+        assert_eq!(count_manifest_entries(&mixed_paths, &stopped), None);
+
+        // 9. Depth boundary: MAX_PATH_DEPTH succeeds, MAX_PATH_DEPTH + 1 -> None.
+        let depth_tmp = UnitTempDir::new("d")?;
+        let mut cursor = depth_tmp.path().join("a");
+        for _ in 1..totaldrop_proto::limits::MAX_PATH_DEPTH {
+            cursor = cursor.join("a");
+        }
+        std::fs::create_dir_all(&cursor)?;
+        let depth_root = vec![depth_tmp.path().join("a")];
+        assert_eq!(
+            count_manifest_entries(&depth_root, &stop),
+            Some(ManifestCounts {
+                files: 0,
+                dirs: totaldrop_proto::limits::MAX_PATH_DEPTH,
+            })
+        );
+        assert_eq!(
+            core_scan_counts(&depth_root)?,
+            ManifestCounts {
+                files: 0,
+                dirs: totaldrop_proto::limits::MAX_PATH_DEPTH,
+            }
+        );
+
+        let too_deep = cursor.join("a");
+        std::fs::create_dir_all(&too_deep)?;
+        assert_eq!(count_manifest_entries(&depth_root, &stop), None);
+        assert!(totaldrop_core::transfer::scan(&depth_root).is_err());
+
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn count_manifest_entries_matches_core_scan_with_symlinks_on_unix() -> TestResult {
+        use std::os::unix::fs::symlink;
+
+        let tmp = UnitTempDir::new("sym")?;
+        let stop = totaldrop_core::Stop::new();
+
+        let ext_file = tmp.path().join("ext.txt");
+        std::fs::write(&ext_file, b"external target")?;
+        let ext_dir = tmp.path().join("ext_dir");
+        std::fs::create_dir_all(ext_dir.join("deep"))?;
+        std::fs::write(ext_dir.join("deep").join("hidden.txt"), b"must not follow")?;
+
+        // Nested symlinks (to file, to populated dir, dangling) are skipped and not descended.
+        let bundle = tmp.path().join("bundle");
+        let sub = bundle.join("sub");
+        std::fs::create_dir_all(&sub)?;
+        std::fs::write(bundle.join("keep.txt"), b"keep")?;
+        std::fs::write(sub.join("inner.bin"), b"inner")?;
+        symlink(&ext_file, bundle.join("link_file"))?;
+        symlink(&ext_dir, bundle.join("link_dir"))?;
+        symlink(tmp.path().join("nonexistent-target"), sub.join("dangling"))?;
+
+        let bundle_paths = vec![bundle];
+        let expected = ManifestCounts { files: 2, dirs: 2 };
+        assert_eq!(count_manifest_entries(&bundle_paths, &stop), Some(expected));
+        assert_eq!(core_scan_counts(&bundle_paths)?, expected);
+
+        // Directory containing ONLY symlinks -> (0, 1).
+        let only_links = tmp.path().join("only_links");
+        std::fs::create_dir_all(&only_links)?;
+        symlink(&ext_file, only_links.join("a"))?;
+        symlink(tmp.path().join("missing"), only_links.join("b"))?;
+        let only_links_paths = vec![only_links];
+        let expected_only_links = ManifestCounts { files: 0, dirs: 1 };
+        assert_eq!(
+            count_manifest_entries(&only_links_paths, &stop),
+            Some(expected_only_links)
+        );
+        assert_eq!(core_scan_counts(&only_links_paths)?, expected_only_links);
+
+        // Top-level symlink -> None (parity with transfer::scan returning Err).
+        let top_link = tmp.path().join("top_link");
+        symlink(&ext_file, &top_link)?;
+        let top_link_paths = vec![top_link];
+        assert_eq!(count_manifest_entries(&top_link_paths, &stop), None);
+        assert!(totaldrop_core::transfer::scan(&top_link_paths).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn reconcile_manifest_counts_enforces_invariants_and_recovers_from_toctou() {
+        // Exact match for nested directory.
+        assert_eq!(
+            reconcile_manifest_counts(Some(ManifestCounts { files: 3, dirs: 2 }), 5, 4133),
+            (3, 2)
+        );
+        // Exact match for single empty directory (total_bytes == 0, files == 0).
+        assert_eq!(
+            reconcile_manifest_counts(Some(ManifestCounts { files: 0, dirs: 1 }), 1, 0),
+            (0, 1)
+        );
+        // TOCTOU file added during rendezvous RTT -> recovers exact original (3, 2).
+        assert_eq!(
+            reconcile_manifest_counts(Some(ManifestCounts { files: 4, dirs: 2 }), 5, 4133),
+            (3, 2)
+        );
+        // TOCTOU file removed during rendezvous RTT -> recovers exact original (3, 2).
+        assert_eq!(
+            reconcile_manifest_counts(Some(ManifestCounts { files: 2, dirs: 2 }), 5, 4133),
+            (3, 2)
+        );
+        // TOCTOU 1-for-1 file replaced with empty dir while total_bytes > 0 -> preserves files >= 1.
+        assert_eq!(
+            reconcile_manifest_counts(Some(ManifestCounts { files: 0, dirs: 1 }), 1, 42),
+            (1, 0)
+        );
+        // TOCTOU dirs burst exceeding total_entries -> clamps dirs while keeping files >= 1 when total_bytes > 0.
+        assert_eq!(
+            reconcile_manifest_counts(Some(ManifestCounts { files: 1, dirs: 9 }), 3, 100),
+            (1, 2)
+        );
+        // TOCTOU dirs burst with total_bytes == 0 -> clamps dirs to total_entries.
+        assert_eq!(
+            reconcile_manifest_counts(Some(ManifestCounts { files: 0, dirs: 9 }), 3, 0),
+            (0, 3)
+        );
+        // Walk unavailable (None) -> safe fallback preserving files + dirs == total_entries.
+        assert_eq!(reconcile_manifest_counts(None, 5, 4133), (5, 0));
+        assert_eq!(reconcile_manifest_counts(None, 1, 0), (1, 0));
     }
 }
