@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import io
+import os
 import platform
 import re
 import struct
@@ -20,6 +21,7 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+import warnings
 import xml.etree.ElementTree as ET
 import zipfile
 import zlib
@@ -889,6 +891,7 @@ def _read_zip_member(zf: zipfile.ZipFile, member: str | zipfile.ZipInfo, label: 
 def _check_zip_extra_fields(extra: bytes, label: str, entry_name: str, location: str) -> None:
     off = 0
     extra_len = len(extra)
+    seen_zip64 = False
     while off < extra_len:
         if off + 4 > extra_len:
             raise ValueError(
@@ -905,7 +908,313 @@ def _check_zip_extra_fields(extra: bytes, label: str, entry_name: str, location:
                 f"{label}: ZIP entry {entry_name!r} uses forbidden Info-ZIP 0x7075 Unicode Path "
                 f"extra field ({location})"
             )
+        if header_id == 0x0001:
+            if seen_zip64:
+                raise ValueError(
+                    f"{label}: ZIP entry {entry_name!r} has duplicate {location} 0x0001 Zip64 extra field"
+                )
+            seen_zip64 = True
         off += data_size
+
+
+def _extract_zip64_lfh_sizes(extra: bytes, label: str, entry_name: str) -> tuple[int, int] | None:
+    """Return (uncomp_size, comp_size) from LFH 0x0001 Zip64 extra field, rejecting malformed/duplicate 0x0001."""
+    found: tuple[int, int] | None = None
+    off = 0
+    extra_len = len(extra)
+    while off < extra_len:
+        header_id, data_size = struct.unpack_from("<HH", extra, off)
+        off += 4
+        if header_id == 0x0001:
+            if found is not None:
+                raise ValueError(
+                    f"{label}: ZIP entry {entry_name!r} has duplicate local-header 0x0001 Zip64 extra field"
+                )
+            if data_size < 16:
+                raise ValueError(
+                    f"{label}: ZIP entry {entry_name!r} has truncated local-header 0x0001 Zip64 extra field"
+                )
+            found = struct.unpack_from("<QQ", extra, off)
+        off += data_size
+    return found
+
+
+def _verify_data_descriptor(dd: bytes, info: zipfile.ZipInfo, label: str) -> None:
+    """Validate a PKWARE APPNOTE 4.3.9 streaming Data Descriptor against CD metadata."""
+    gap = len(dd)
+    if gap == 12:
+        dd_crc, dd_csz, dd_usz = struct.unpack("<III", dd)
+    elif gap == 16:
+        dd_sig, dd_crc, dd_csz, dd_usz = struct.unpack("<4sIII", dd)
+        if dd_sig != b"PK\x07\x08":
+            raise ValueError(
+                f"{label}: ZIP entry {info.orig_filename!r} has invalid 16-byte data descriptor signature {dd_sig!r}"
+            )
+    elif gap == 20:
+        dd_crc, dd_csz, dd_usz = struct.unpack("<IQQ", dd)
+    elif gap == 24:
+        dd_sig, dd_crc, dd_csz, dd_usz = struct.unpack("<4sIQQ", dd)
+        if dd_sig != b"PK\x07\x08":
+            raise ValueError(
+                f"{label}: ZIP entry {info.orig_filename!r} has invalid 24-byte data descriptor signature {dd_sig!r}"
+            )
+    else:
+        raise ValueError(
+            f"{label}: ZIP entry {info.orig_filename!r} has unexpected streaming data descriptor size "
+            f"{gap} bytes (expected 12, 16, 20, or 24)"
+        )
+    if (dd_crc, dd_csz, dd_usz) != (info.CRC, info.compress_size, info.file_size):
+        raise ValueError(
+            f"{label}: ZIP entry {info.orig_filename!r} data descriptor mismatch "
+            f"(dd={(dd_crc, dd_csz, dd_usz)!r} != cd={(info.CRC, info.compress_size, info.file_size)!r})"
+        )
+
+
+def _check_zip_container_structure(
+    zf: zipfile.ZipFile,
+    infos: list[zipfile.ZipInfo],
+    label: str,
+) -> None:
+    """Strictly verify ZIP EOCD/Zip64-EOCD parity, concat == 0, EOF anchoring, CD contiguity, and LFH layout."""
+    fp = zf.fp
+    if fp is None:
+        return
+    saved_pos = fp.tell()
+    try:
+        fp.seek(0, os.SEEK_END)
+        file_size = fp.tell()
+        if file_size < 22:
+            raise ValueError(f"{label}: ZIP archive truncated ({file_size} bytes < 22-byte EOCD)")
+
+        comment = zf.comment or b""
+        if b"PK\x05\x06" in comment:
+            raise ValueError(f"{label}: ZIP archive comment contains forbidden nested EOCD signature PK\\x05\\x06")
+
+        eocd_pos = file_size - 22 - len(comment)
+        if eocd_pos < 0:
+            raise ValueError(f"{label}: ZIP EOCD offset {eocd_pos} precedes start of archive")
+
+        fp.seek(eocd_pos)
+        eocd_raw = fp.read(22)
+        if len(eocd_raw) != 22:
+            raise ValueError(f"{label}: truncated 32-bit ZIP EOCD record at offset {eocd_pos}")
+        (
+            eocd_sig,
+            disk_num,
+            cd_disk,
+            entries_disk,
+            entries_total,
+            cd_size32,
+            cd_offset32,
+            comment_len,
+        ) = struct.unpack("<4sHHHHIIH", eocd_raw)
+        if eocd_sig != b"PK\x05\x06":
+            raise ValueError(
+                f"{label}: 32-bit ZIP EOCD not anchored to EOF (trailing bytes after EOCD or malformed comment)"
+            )
+        if comment_len != len(comment):
+            raise ValueError(
+                f"{label}: ZIP EOCD comment_len ({comment_len}) does not match remaining EOF bytes ({len(comment)})"
+            )
+        actual_comment = fp.read(comment_len) if comment_len else b""
+        if actual_comment != comment:
+            raise ValueError(f"{label}: ZIP EOCD comment bytes mismatch at EOF")
+
+        z64_loc_pos = eocd_pos - 20
+        has_z64_locator = False
+        if z64_loc_pos >= 0:
+            fp.seek(z64_loc_pos)
+            has_z64_locator = fp.read(4) == b"PK\x06\x07"
+
+        if has_z64_locator:
+            fp.seek(z64_loc_pos)
+            loc_raw = fp.read(20)
+            if len(loc_raw) != 20:
+                raise ValueError(f"{label}: truncated Zip64 EOCD Locator at offset {z64_loc_pos}")
+            loc_sig, z64_disk, z64_eocd_off, total_disks = struct.unpack("<4sIQI", loc_raw)
+            if loc_sig != b"PK\x06\x07":
+                raise ValueError(f"{label}: invalid Zip64 EOCD Locator signature {loc_sig!r}")
+            if z64_disk != 0 or total_disks != 1:
+                raise ValueError(
+                    f"{label}: multi-disk Zip64 archive is forbidden (disk={z64_disk}, total_disks={total_disks})"
+                )
+            if z64_eocd_off < 0 or z64_eocd_off + 56 > z64_loc_pos:
+                raise ValueError(
+                    f"{label}: Zip64 EOCD offset {z64_eocd_off} out of bounds before Locator {z64_loc_pos}"
+                )
+
+            fp.seek(z64_eocd_off)
+            z64_raw = fp.read(56)
+            if len(z64_raw) != 56:
+                raise ValueError(f"{label}: truncated Zip64 EOCD record at offset {z64_eocd_off}")
+            (
+                z64_sig,
+                z64_rec_size,
+                _vm,
+                _vn,
+                z64_disk_num,
+                z64_cd_disk,
+                z64_entries_disk,
+                z64_entries_total,
+                z64_cd_size,
+                z64_cd_off,
+            ) = struct.unpack("<4sQHHIIQQQQ", z64_raw)
+            if z64_sig != b"PK\x06\x06":
+                raise ValueError(f"{label}: invalid Zip64 EOCD signature {z64_sig!r} at offset {z64_eocd_off}")
+            if z64_rec_size < 44 or z64_eocd_off + 12 + z64_rec_size != z64_loc_pos:
+                raise ValueError(
+                    f"{label}: Zip64 EOCD size/alignment mismatch "
+                    f"(off={z64_eocd_off}, rec_size={z64_rec_size}, loc={z64_loc_pos})"
+                )
+            if z64_disk_num != 0 or z64_cd_disk != 0:
+                raise ValueError(
+                    f"{label}: multi-disk Zip64 EOCD is forbidden (disk={z64_disk_num}, cd_disk={z64_cd_disk})"
+                )
+            if z64_entries_disk != len(infos) or z64_entries_total != len(infos):
+                raise ValueError(
+                    f"{label}: Zip64 EOCD entry count mismatch "
+                    f"(disk={z64_entries_disk}, total={z64_entries_total}, parsed={len(infos)})"
+                )
+            if z64_cd_off + z64_cd_size != z64_eocd_off:
+                raise ValueError(
+                    f"{label}: Zip64 non-zero concat/offset mismatch "
+                    f"(cd_off={z64_cd_off}, cd_size={z64_cd_size}, z64_eocd={z64_eocd_off})"
+                )
+            if zf.start_dir != z64_cd_off:
+                raise ValueError(
+                    f"{label}: parsed central directory offset ({zf.start_dir}) != Zip64 EOCD ({z64_cd_off})"
+                )
+
+            # Strict 32-bit vs Zip64 EOCD parity kills both full and partial-sentinel Zip64 split attacks.
+            if disk_num not in (0, 0xFFFF) or cd_disk not in (0, 0xFFFF):
+                raise ValueError(
+                    f"{label}: 32-bit EOCD disk fields ({disk_num}, {cd_disk}) conflict with Zip64 EOCD (0, 0)"
+                )
+            if entries_disk not in (z64_entries_disk, 0xFFFF) or entries_total not in (z64_entries_total, 0xFFFF):
+                raise ValueError(
+                    f"{label}: 32-bit EOCD entry counts ({entries_disk}, {entries_total}) conflict with "
+                    f"Zip64 EOCD ({z64_entries_disk}, {z64_entries_total})"
+                )
+            if cd_size32 not in (z64_cd_size, 0xFFFFFFFF) or cd_offset32 not in (z64_cd_off, 0xFFFFFFFF):
+                raise ValueError(
+                    f"{label}: 32-bit EOCD central directory ({cd_offset32}, {cd_size32}) conflicts with "
+                    f"Zip64 EOCD ({z64_cd_off}, {z64_cd_size}) (Zip64 EOCD shadowing/split is forbidden)"
+                )
+
+            cd_off = z64_cd_off
+            cd_size = z64_cd_size
+        else:
+            if disk_num != 0 or cd_disk != 0:
+                raise ValueError(
+                    f"{label}: multi-disk 32-bit ZIP archive is forbidden (disk={disk_num}, cd_disk={cd_disk})"
+                )
+            if (
+                entries_disk == 0xFFFF
+                or entries_total == 0xFFFF
+                or cd_size32 == 0xFFFFFFFF
+                or cd_offset32 == 0xFFFFFFFF
+            ):
+                raise ValueError(
+                    f"{label}: 32-bit ZIP EOCD contains Zip64 sentinel without a Zip64 EOCD Locator"
+                )
+            if entries_disk != len(infos) or entries_total != len(infos):
+                raise ValueError(
+                    f"{label}: 32-bit ZIP EOCD entry count mismatch "
+                    f"(disk={entries_disk}, total={entries_total}, parsed={len(infos)})"
+                )
+            if cd_offset32 + cd_size32 != eocd_pos:
+                raise ValueError(
+                    f"{label}: ZIP archive has non-zero concat/prepended offset "
+                    f"(cd_off={cd_offset32}, cd_size={cd_size32}, eocd={eocd_pos})"
+                )
+            if zf.start_dir != cd_offset32:
+                raise ValueError(
+                    f"{label}: parsed central directory offset ({zf.start_dir}) != 32-bit EOCD ({cd_offset32})"
+                )
+            cd_off = cd_offset32
+            cd_size = cd_size32
+
+        # Walk Central Directory records to prove exact contiguity over [cd_off, cd_off + cd_size).
+        cd_end = cd_off + cd_size
+        pos = cd_off
+        cd_records = 0
+        while pos < cd_end:
+            if pos + 46 > cd_end:
+                raise ValueError(f"{label}: truncated central directory record header at offset {pos}")
+            fp.seek(pos)
+            hdr = fp.read(46)
+            if len(hdr) != 46 or hdr[:4] != b"PK\x01\x02":
+                raise ValueError(f"{label}: invalid central directory signature at offset {pos}")
+            fname_len, extra_len, cmt_len, cd_disk_start = struct.unpack_from("<HHHH", hdr, 28)
+            if cd_disk_start != 0:
+                raise ValueError(
+                    f"{label}: multi-disk central directory record (disk_start={cd_disk_start}) at offset {pos}"
+                )
+            pos += 46 + fname_len + extra_len + cmt_len
+            if pos > cd_end:
+                raise ValueError(f"{label}: central directory record overflows central directory end {cd_end}")
+            cd_records += 1
+        if cd_records != len(infos) or pos != cd_end:
+            raise ValueError(
+                f"{label}: central directory contiguity mismatch "
+                f"(records={cd_records}, parsed={len(infos)}, end={pos}, cd_end={cd_end})"
+            )
+
+        # Verify Local File Header layout starts at byte 0 with strictly increasing, non-overlapping spans.
+        if not infos:
+            if cd_off != 0:
+                raise ValueError(f"{label}: empty ZIP archive contains {cd_off} unreferenced leading bytes")
+            return
+
+        sorted_infos = sorted(infos, key=lambda item: item.header_offset)
+        if sorted_infos[0].header_offset != 0:
+            raise ValueError(
+                f"{label}: first ZIP local file header starts at offset {sorted_infos[0].header_offset} != 0 "
+                "(unreferenced prepended data is forbidden)"
+            )
+        for idx, info in enumerate(sorted_infos):
+            hdr_off = info.header_offset
+            next_off = sorted_infos[idx + 1].header_offset if idx + 1 < len(sorted_infos) else cd_off
+            if idx + 1 < len(sorted_infos) and next_off <= hdr_off:
+                raise ValueError(
+                    f"{label}: overlapping/duplicate ZIP local file header offset {hdr_off} for {info.orig_filename!r}"
+                )
+            if hdr_off < 0 or next_off > cd_off or hdr_off + 30 > next_off:
+                raise ValueError(
+                    f"{label}: ZIP entry {info.orig_filename!r} has invalid local file header bounds "
+                    f"(offset={hdr_off}, next={next_off}, cd_off={cd_off})"
+                )
+            fp.seek(hdr_off)
+            lfh = fp.read(30)
+            if len(lfh) != 30 or lfh[:4] != b"PK\x03\x04":
+                raise ValueError(f"{label}: ZIP entry {info.orig_filename!r} has invalid local file header")
+            lfh_flags = struct.unpack_from("<H", lfh, 6)[0]
+            lfh_name_len, lfh_extra_len = struct.unpack_from("<HH", lfh, 26)
+            comp_end = hdr_off + 30 + lfh_name_len + lfh_extra_len + info.compress_size
+            if comp_end > next_off or comp_end > cd_off:
+                raise ValueError(
+                    f"{label}: ZIP entry {info.orig_filename!r} compressed data span ({hdr_off}..{comp_end}) "
+                    f"exceeds next boundary ({min(next_off, cd_off)})"
+                )
+            has_dd_cd = (info.flag_bits & 0x0008) != 0
+            has_dd_lfh = (lfh_flags & 0x0008) != 0
+            if has_dd_cd != has_dd_lfh:
+                raise ValueError(
+                    f"{label}: ZIP entry {info.orig_filename!r} data-descriptor flag mismatch "
+                    f"(lfh={lfh_flags:#x}, cd={info.flag_bits:#x})"
+                )
+            gap = next_off - comp_end
+            if has_dd_cd:
+                fp.seek(comp_end)
+                dd = fp.read(gap)
+                _verify_data_descriptor(dd, info, label)
+            elif gap != 0:
+                raise ValueError(
+                    f"{label}: ZIP entry {info.orig_filename!r} has {gap} unreferenced trailing gap bytes "
+                    f"before offset {next_off}"
+                )
+    finally:
+        fp.seek(saved_pos)
 
 
 def _check_opc_zip_entries(
@@ -915,14 +1224,17 @@ def _check_opc_zip_entries(
     flat_root_only: bool = False,
     case_sensitive_unique_paths: tuple[str, ...] = (),
 ) -> list[str]:
+    infos = zf.infolist()
+    if zf.fp is not None:
+        _check_zip_container_structure(zf, infos, label)
+
     try:
         bad_member = zf.testzip()
-    except (zlib.error, zipfile.BadZipFile, RuntimeError, EOFError) as exc:
+    except (zlib.error, zipfile.BadZipFile, RuntimeError, EOFError, struct.error, OverflowError) as exc:
         raise ValueError(f"{label}: corrupted ZIP archive: {exc}") from exc
     if bad_member is not None:
         raise ValueError(f"{label}: corrupted ZIP member {bad_member!r}")
 
-    infos = zf.infolist()
     raw_names = [info.filename for info in infos]
     seen_exact: set[str] = set()
     seen_lower: dict[str, str] = {}
@@ -945,15 +1257,86 @@ def _check_opc_zip_entries(
                     raise ValueError(
                         f"{label}: ZIP entry {info.orig_filename!r} has invalid local file header"
                     )
+                lfh_flags, lfh_method = struct.unpack_from("<HH", lfh, 6)
+                lfh_crc, lfh_comp_size, lfh_uncomp_size = struct.unpack_from("<III", lfh, 14)
                 lfh_name_len, lfh_extra_len = struct.unpack_from("<HH", lfh, 26)
-                if lfh_extra_len:
-                    zf.fp.seek(info.header_offset + 30 + lfh_name_len)
-                    lfh_extra = zf.fp.read(lfh_extra_len)
-                    if len(lfh_extra) != lfh_extra_len:
-                        raise ValueError(
-                            f"{label}: ZIP entry {info.orig_filename!r} has truncated local-header extra field"
-                        )
+                if lfh_method != info.compress_type:
+                    raise ValueError(
+                        f"{label}: ZIP entry {info.orig_filename!r} local-header compression method "
+                        f"({lfh_method}) differs from central-directory method ({info.compress_type})"
+                    )
+                if (lfh_flags & 0x0001) != 0 or (info.flag_bits & 0x0001) != 0:
+                    raise ValueError(
+                        f"{label}: ZIP entry {info.orig_filename!r} is encrypted (flag bit 0 is forbidden)"
+                    )
+                if (lfh_flags & 0x0008) != (info.flag_bits & 0x0008):
+                    raise ValueError(
+                        f"{label}: ZIP entry {info.orig_filename!r} local-header data-descriptor flag "
+                        f"({lfh_flags:#x}) differs from central-directory flag ({info.flag_bits:#x})"
+                    )
+                lfh_name_bytes = zf.fp.read(lfh_name_len)
+                if len(lfh_name_bytes) != lfh_name_len:
+                    raise ValueError(
+                        f"{label}: ZIP entry {info.orig_filename!r} has truncated local-header filename"
+                    )
+                cd_encoding = "utf-8" if (info.flag_bits & 0x0800) else "cp437"
+                try:
+                    expected_name_bytes = info.orig_filename.encode(cd_encoding)
+                except UnicodeEncodeError as exc:
+                    raise ValueError(
+                        f"{label}: ZIP entry {info.orig_filename!r} cannot be encoded as {cd_encoding}: {exc}"
+                    ) from exc
+                if lfh_name_bytes != expected_name_bytes:
+                    raise ValueError(
+                        f"{label}: ZIP entry {info.orig_filename!r} local-header filename "
+                        f"{lfh_name_bytes!r} differs from central-directory filename {expected_name_bytes!r}"
+                    )
+                lfh_extra = zf.fp.read(lfh_extra_len) if lfh_extra_len else b""
+                if len(lfh_extra) != lfh_extra_len:
+                    raise ValueError(
+                        f"{label}: ZIP entry {info.orig_filename!r} has truncated local-header extra field"
+                    )
+                if lfh_extra:
                     _check_zip_extra_fields(lfh_extra, label, info.orig_filename, "local-header")
+                if (lfh_flags & 0x0008) == 0:
+                    if lfh_crc != info.CRC:
+                        raise ValueError(
+                            f"{label}: ZIP entry {info.orig_filename!r} local-header CRC-32 "
+                            f"({lfh_crc:#010x}) differs from central-directory CRC-32 ({info.CRC:#010x})"
+                        )
+                    if lfh_comp_size not in (info.compress_size, 0xFFFFFFFF):
+                        raise ValueError(
+                            f"{label}: ZIP entry {info.orig_filename!r} local-header compressed size "
+                            f"({lfh_comp_size}) differs from central-directory ({info.compress_size})"
+                        )
+                    if lfh_uncomp_size not in (info.file_size, 0xFFFFFFFF):
+                        raise ValueError(
+                            f"{label}: ZIP entry {info.orig_filename!r} local-header uncompressed size "
+                            f"({lfh_uncomp_size}) differs from central-directory ({info.file_size})"
+                        )
+                    if lfh_comp_size == 0xFFFFFFFF or lfh_uncomp_size == 0xFFFFFFFF:
+                        z64_sizes = _extract_zip64_lfh_sizes(lfh_extra, label, info.orig_filename)
+                        if z64_sizes != (info.file_size, info.compress_size):
+                            raise ValueError(
+                                f"{label}: ZIP entry {info.orig_filename!r} local-header 0x0001 Zip64 sizes "
+                                f"{z64_sizes!r} differ from central-directory ({info.file_size}, {info.compress_size})"
+                            )
+                else:
+                    if lfh_crc not in (0, info.CRC):
+                        raise ValueError(
+                            f"{label}: ZIP entry {info.orig_filename!r} streaming local-header CRC-32 "
+                            f"({lfh_crc:#010x}) must be 0 or match central-directory ({info.CRC:#010x})"
+                        )
+                    if lfh_comp_size not in (0, info.compress_size, 0xFFFFFFFF):
+                        raise ValueError(
+                            f"{label}: ZIP entry {info.orig_filename!r} streaming local-header compressed size "
+                            f"({lfh_comp_size}) must be 0, sentinel, or match central-directory ({info.compress_size})"
+                        )
+                    if lfh_uncomp_size not in (0, info.file_size, 0xFFFFFFFF):
+                        raise ValueError(
+                            f"{label}: ZIP entry {info.orig_filename!r} streaming local-header uncompressed size "
+                            f"({lfh_uncomp_size}) must be 0, sentinel, or match central-directory ({info.file_size})"
+                        )
             finally:
                 zf.fp.seek(saved_pos)
 
@@ -2586,7 +2969,7 @@ def _make_synthetic_upload(entries: list[tuple[str, bytes]]) -> bytes:
 
 
 def run_self_test_bundle() -> int:
-    """Run 27 positive and negative pure-Python synthetic self-tests against the real verifier."""
+    """Run 28 positive and negative pure-Python synthetic self-tests against the real verifier."""
     repo_root = Path(__file__).resolve().parent.parent
     x64_tpl = (repo_root / "target-x86_64" / "Package.x64.appxmanifest").read_text(encoding="utf-8")
     arm64_tpl = (repo_root / "target-arm64" / "Package.arm64.appxmanifest").read_text(encoding="utf-8")
@@ -3612,7 +3995,566 @@ def run_self_test_bundle() -> int:
             run_live_smoke=False,
         )
 
-    print("self-test-bundle OK: 27/27 positive & negative bundle/msixupload/store-mode checks passed.")
+        # Case 28: ZIP container binary structure hardening (concat == 0, Zip64 vs 32-bit EOCD parity,
+        # EOF anchoring, CD entry count/contiguity, LFH-vs-CD header parity, nested EOCD comment, inter-entry slack)
+        # plus positive controls (consistent Zip64 EOCD sentinel/non-sentinel & streaming bit-3 Data Descriptor).
+        def _split_zip_parts(zip_bytes: bytes) -> tuple[bytes, bytes, int]:
+            eocd_off = zip_bytes.rfind(b"PK\x05\x06")
+            assert eocd_off >= 0 and eocd_off + 22 == len(zip_bytes)
+            _, _, _, n_disk, n_tot, cd_sz, cd_off, cmt_len = struct.unpack_from("<4sHHHHIIH", zip_bytes, eocd_off)
+            assert n_disk == n_tot and cmt_len == 0 and cd_off + cd_sz == eocd_off
+            return zip_bytes[:cd_off], zip_bytes[cd_off:eocd_off], n_tot
+
+        def _shift_cd_offsets(cd_bytes: bytes, delta: int) -> bytes:
+            out = bytearray(cd_bytes)
+            p = 0
+            while p < len(out):
+                assert out[p : p + 4] == b"PK\x01\x02"
+                nlen, elen, clen = struct.unpack_from("<HHH", out, p + 28)
+                old_off = struct.unpack_from("<I", out, p + 42)[0]
+                struct.pack_into("<I", out, p + 42, old_off + delta)
+                p += 46 + nlen + elen + clen
+            assert p == len(out)
+            return bytes(out)
+
+        def _make_evil_zip_matching_lfh_len(target_lfh_len: int, entries: list[tuple[str, bytes]]) -> bytes:
+            base_buf = io.BytesIO()
+            with zipfile.ZipFile(base_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf_e:
+                for ename, edata in entries:
+                    zf_e.writestr(ename, edata)
+            base_lfh, _, _ = _split_zip_parts(base_buf.getvalue())
+            pad_name = "pad.bin"
+            hdr_overhead = 30 + len(pad_name)
+            assert target_lfh_len >= len(base_lfh) + hdr_overhead
+            pad_len = target_lfh_len - len(base_lfh) - hdr_overhead
+            padded_buf = io.BytesIO()
+            with zipfile.ZipFile(padded_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf_e:
+                for ename, edata in entries:
+                    zf_e.writestr(ename, edata)
+                zf_e.writestr(pad_name, b"\x00" * pad_len, compress_type=zipfile.ZIP_STORED)
+            return padded_buf.getvalue()
+
+        def _make_aligned_concat_polyglot(good_zip: bytes, evil_entries: list[tuple[str, bytes]]) -> bytes:
+            good_lfh, good_cd, good_n = _split_zip_parts(good_zip)
+            evil_zip = _make_evil_zip_matching_lfh_len(len(good_lfh), evil_entries)
+            evil_lfh, evil_cd, _ = _split_zip_parts(evil_zip)
+            assert len(evil_lfh) == len(good_lfh)
+            eocd = struct.pack(
+                "<4sHHHHIIH",
+                b"PK\x05\x06",
+                0,
+                0,
+                good_n,
+                good_n,
+                len(good_cd),
+                len(evil_lfh),
+                0,
+            )
+            return evil_lfh + evil_cd + good_lfh + good_cd + eocd
+
+        def _make_zip64_split_archive(
+            good_zip: bytes,
+            evil_entries: list[tuple[str, bytes]],
+            *,
+            partial_size_sentinel: bool = False,
+        ) -> bytes:
+            evil_buf = io.BytesIO()
+            with zipfile.ZipFile(evil_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf_e:
+                for ename, edata in evil_entries:
+                    zf_e.writestr(ename, edata)
+            evil_lfh, evil_cd, evil_n = _split_zip_parts(evil_buf.getvalue())
+            good_lfh, good_cd, good_n = _split_zip_parts(good_zip)
+            good_cd_shifted = _shift_cd_offsets(good_cd, len(evil_lfh))
+            evil_cd_off = len(evil_lfh) + len(good_lfh)
+            stop_sep = b"STOP"
+            good_cd_off = evil_cd_off + len(evil_cd) + len(stop_sep)
+            z64_eocd_off = good_cd_off + len(good_cd_shifted)
+            z64_eocd = struct.pack(
+                "<4sQHHIIQQQQ",
+                b"PK\x06\x06",
+                44,
+                45,
+                45,
+                0,
+                0,
+                good_n,
+                good_n,
+                len(good_cd_shifted),
+                good_cd_off,
+            )
+            z64_loc = struct.pack("<4sIQI", b"PK\x06\x07", 0, z64_eocd_off, 1)
+            eocd32 = struct.pack(
+                "<4sHHHHIIH",
+                b"PK\x05\x06",
+                0,
+                0,
+                evil_n,
+                evil_n,
+                0xFFFFFFFF if partial_size_sentinel else len(evil_cd),
+                evil_cd_off,
+                0,
+            )
+            return evil_lfh + good_lfh + evil_cd + stop_sep + good_cd_shifted + z64_eocd + z64_loc + eocd32
+
+        def _wrap_consistent_zip64(good_zip: bytes, *, use_sentinels: bool) -> bytes:
+            good_lfh, good_cd, good_n = _split_zip_parts(good_zip)
+            cd_off = len(good_lfh)
+            cd_sz = len(good_cd)
+            z64_eocd_off = cd_off + cd_sz
+            z64_eocd = struct.pack(
+                "<4sQHHIIQQQQ",
+                b"PK\x06\x06",
+                44,
+                45,
+                45,
+                0,
+                0,
+                good_n,
+                good_n,
+                cd_sz,
+                cd_off,
+            )
+            z64_loc = struct.pack("<4sIQI", b"PK\x06\x07", 0, z64_eocd_off, 1)
+            eocd32 = struct.pack(
+                "<4sHHHHIIH",
+                b"PK\x05\x06",
+                0xFFFF if use_sentinels else 0,
+                0xFFFF if use_sentinels else 0,
+                0xFFFF if use_sentinels else good_n,
+                0xFFFF if use_sentinels else good_n,
+                0xFFFFFFFF if use_sentinels else cd_sz,
+                0xFFFFFFFF if use_sentinels else cd_off,
+                0,
+            )
+            return good_lfh + good_cd + z64_eocd + z64_loc + eocd32
+
+        class _NonSeekableStream(io.RawIOBase):
+            def __init__(self, target: io.BytesIO) -> None:
+                self._target = target
+
+            def writable(self) -> bool:
+                return True
+
+            def seekable(self) -> bool:
+                return False
+
+            def write(self, b: bytes | bytearray | memoryview) -> int:
+                return self._target.write(b)
+
+        def _repack_streaming_bit3(good_zip: bytes, *, force_zip64: bool = False) -> bytes:
+            out_buf = io.BytesIO()
+            with (
+                zipfile.ZipFile(io.BytesIO(good_zip), "r") as zin,
+                zipfile.ZipFile(_NonSeekableStream(out_buf), "w", compression=zipfile.ZIP_DEFLATED) as zout,
+            ):
+                for item in zin.infolist():
+                    data = zin.read(item)
+                    with zout.open(item.filename, "w", force_zip64=force_zip64) as member_out:
+                        member_out.write(data)
+            return out_buf.getvalue()
+
+        evil_msix_payloads = [
+            ("AppxManifest.xml", evil_manifest),
+            ("signing.pfx", b"PRIVATE_KEY_MATERIAL"),
+        ]
+        evil_upload_payloads = [
+            ("bare_rogue_x86.msix", b"PK\x03\x04EVIL"),
+            ("signing.pfx", b"OUTER_UPLOAD_SECRET_PFX"),
+        ]
+        evil_bundle_payloads = [
+            ("TotalDrop_0.0.0.1_x86.msix", b"PK\x03\x04EVIL"),
+            ("signing.pfx", b"OUTER_BUNDLE_SECRET_PFX"),
+        ]
+        evil_sym_payloads = [("signing.pfx", b"SYM_SECRET_PFX")]
+
+        # 28a: Aligned concat > 0 polyglot inside arm64.msix in .msixbundle AND on outer .msixupload.
+        arm64_concat_poly = _make_aligned_concat_polyglot(arm64_ok, evil_msix_payloads)
+        bundle_concat_poly = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_concat_poly),
+            ],
+        )
+        expect_fail(
+            "case-28a-concat-polyglot-msix-in-bundle",
+            lambda: verify_msixbundle_archive(
+                bundle_concat_poly,
+                "28a-concat.msixbundle",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "concat",
+        )
+        upload_ok_raw = upload_ok_path.read_bytes()
+        upload_concat_poly_path = tmp_dir / "28a-outer-concat.msixupload"
+        upload_concat_poly_path.write_bytes(_make_aligned_concat_polyglot(upload_ok_raw, evil_upload_payloads))
+        expect_fail(
+            "case-28a-concat-polyglot-outer-msixupload",
+            lambda: verify_msixupload_archive(
+                upload_concat_poly_path,
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "concat",
+        )
+
+        # 28b: Naive prepended evil.zip + arm64.msix (concat > 0).
+        naive_evil_buf = io.BytesIO()
+        with zipfile.ZipFile(naive_evil_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf_ne:
+            zf_ne.writestr("signing.pfx", b"NAIVE_PREPENDED_KEY")
+        arm64_naive_prepended = naive_evil_buf.getvalue() + arm64_ok
+        expect_fail(
+            "case-28b-naive-prepended-zip",
+            lambda: verify_msix_archive(
+                arm64_naive_prepended,
+                "28b-prepended.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "concat",
+        )
+
+        # 28c: Zip64 EOCD vs 32-bit EOCD split across .msix, .msixbundle, .appxsym in .msixupload, and outer .msixupload.
+        arm64_z64_split = _make_zip64_split_archive(arm64_ok, evil_msix_payloads, partial_size_sentinel=False)
+        expect_fail(
+            "case-28c-z64-split-msix",
+            lambda: verify_msix_archive(
+                arm64_z64_split,
+                "28c-z64-split.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "Zip64 EOCD",
+        )
+        bundle_z64_split = _make_zip64_split_archive(bundle_ok_bytes, evil_bundle_payloads, partial_size_sentinel=False)
+        expect_fail(
+            "case-28c-z64-split-bundle",
+            lambda: verify_msixbundle_archive(
+                bundle_z64_split,
+                "28c-z64-split.msixbundle",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "Zip64 EOCD",
+        )
+        sym_z64_split = _make_zip64_split_archive(sym_ok, evil_sym_payloads, partial_size_sentinel=False)
+        upload_sym_z64_path = tmp_dir / "28c-z64-split-appxsym.msixupload"
+        upload_sym_z64_path.write_bytes(
+            _make_synthetic_upload(
+                [
+                    (bundle_ok_path.name, bundle_ok_bytes),
+                    (f"TotalDrop_{store_ver}_x64.appxsym", sym_z64_split),
+                    (f"TotalDrop_{store_ver}_arm64.appxsym", sym_ok),
+                ]
+            )
+        )
+        expect_fail(
+            "case-28c-z64-split-appxsym-in-upload",
+            lambda: verify_msixupload_archive(
+                upload_sym_z64_path,
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "Zip64 EOCD",
+        )
+        upload_outer_z64_path = tmp_dir / "28c-z64-split-outer.msixupload"
+        upload_outer_z64_path.write_bytes(
+            _make_zip64_split_archive(upload_ok_raw, evil_upload_payloads, partial_size_sentinel=False)
+        )
+        expect_fail(
+            "case-28c-z64-split-outer-upload",
+            lambda: verify_msixupload_archive(
+                upload_outer_z64_path,
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "Zip64 EOCD",
+        )
+
+        # 28d: Partial-sentinel Zip64 EOCD split (size_cd == 0xFFFFFFFF only, offset_cd == off_evil).
+        arm64_z64_partial = _make_zip64_split_archive(arm64_ok, evil_msix_payloads, partial_size_sentinel=True)
+        expect_fail(
+            "case-28d-z64-partial-sentinel-split",
+            lambda: verify_msix_archive(
+                arm64_z64_partial,
+                "28d-z64-partial.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "Zip64 EOCD",
+        )
+
+        # 28e: Trailing garbage bytes appended after EOCD AND bogus comment_len exceeding EOF.
+        arm64_trailing = arm64_ok + b"TRAILING_SMUGGLED_KEY_BYTES_0123456789"
+        expect_fail(
+            "case-28e-trailing-garbage-after-eocd",
+            lambda: verify_msix_archive(
+                arm64_trailing,
+                "28e-trailing.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "anchored to EOF",
+        )
+        arm64_bogus_cmt = bytearray(arm64_ok)
+        struct.pack_into("<H", arm64_bogus_cmt, len(arm64_bogus_cmt) - 2, 12345)
+        expect_fail(
+            "case-28e-bogus-comment-len",
+            lambda: verify_msix_archive(
+                bytes(arm64_bogus_cmt),
+                "28e-bogus-cmt.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "comment_len",
+        )
+
+        # 28f: EOCD entries_total / entries_disk mismatch (0 != len(infos)).
+        arm64_zero_entries = bytearray(arm64_ok)
+        eocd_idx = len(arm64_zero_entries) - 22
+        struct.pack_into("<HH", arm64_zero_entries, eocd_idx + 8, 0, 0)
+        expect_fail(
+            "case-28f-eocd-entries-mismatch",
+            lambda: verify_msix_archive(
+                bytes(arm64_zero_entries),
+                "28f-entries.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "entry count mismatch",
+        )
+
+        # 28g: LFH vs CD compression method, CRC-32, and compressed/uncompressed size mismatches.
+        with zipfile.ZipFile(io.BytesIO(arm64_ok), "r") as zf_m:
+            manifest_off = zf_m.getinfo("AppxManifest.xml").header_offset
+        for sub_id, patch_off, patch_fmt, patch_val, expected_err in (
+            ("28g-lfh-method", manifest_off + 8, "<H", zipfile.ZIP_STORED, "compression method"),
+            ("28g-lfh-crc", manifest_off + 14, "<I", 0xDEADBEEF, "CRC-32"),
+            ("28g-lfh-comp-size", manifest_off + 18, "<I", 12345, "compressed size"),
+            ("28g-lfh-uncomp-size", manifest_off + 22, "<I", 67890, "uncompressed size"),
+        ):
+            mut = bytearray(arm64_ok)
+            struct.pack_into(patch_fmt, mut, patch_off, patch_val)
+            expect_fail(
+                f"case-{sub_id}",
+                lambda m=bytes(mut), s=sub_id: verify_msix_archive(
+                    m,
+                    f"{s}.msix",
+                    arch="arm64",
+                    expected_version=store_ver,
+                    expect_signed=False,
+                    store_mode=True,
+                    allow_test_identity=False,
+                    run_live_smoke=False,
+                ),
+                expected_err,
+            )
+
+        # 28h: Nested PK\x05\x06 in archive comment, unreferenced inter-entry slack, overlapping LFH, & LFH flag/name parity.
+        arm64_nested_cmt = bytearray(arm64_ok)
+        nested_cmt = b" benign PK\x05\x06 end"
+        struct.pack_into("<H", arm64_nested_cmt, len(arm64_nested_cmt) - 2, len(nested_cmt))
+        arm64_nested_cmt.extend(nested_cmt)
+        try:
+            verify_msix_archive(
+                bytes(arm64_nested_cmt),
+                "28h-nested-cmt.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            )
+            raise AssertionError("self-test case-28h-nested-eocd-comment: expected rejection, but verification passed")
+        except (ValueError, zipfile.BadZipFile):
+            pass
+
+        lfh_part, cd_part, n_part = _split_zip_parts(arm64_ok)
+        slack = b"SMUGGLED_INTER_ENTRY_SLACK"
+        cd_off_slack = len(lfh_part) + len(slack)
+        eocd_slack = struct.pack("<4sHHHHIIH", b"PK\x05\x06", 0, 0, n_part, n_part, len(cd_part), cd_off_slack, 0)
+        arm64_slack = lfh_part + slack + cd_part + eocd_slack
+        expect_fail(
+            "case-28h-unreferenced-slack-gap",
+            lambda: verify_msix_archive(
+                arm64_slack,
+                "28h-slack.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "trailing gap",
+        )
+
+        # LFH bit-3 flag mismatch (LFH has 0x0008, CD does not) & LFH filename mismatch & overlapping LFH offsets.
+        mut_flag = bytearray(arm64_ok)
+        cur_lfh_flag = struct.unpack_from("<H", mut_flag, manifest_off + 6)[0]
+        struct.pack_into("<H", mut_flag, manifest_off + 6, cur_lfh_flag | 0x0008)
+        expect_fail(
+            "case-28h-lfh-bit3-flag-mismatch",
+            lambda: verify_msix_archive(
+                bytes(mut_flag),
+                "28h-lfh-flag.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "data-descriptor flag",
+        )
+
+        mut_name = bytearray(arm64_ok)
+        mut_name[manifest_off + 30 + len("AppxManifest.xm")] = ord("x")
+        expect_fail(
+            "case-28h-lfh-name-mismatch",
+            lambda: verify_msix_archive(
+                bytes(mut_name),
+                "28h-lfh-name.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "corrupted ZIP",
+        )
+        # Shadowed duplicate where Entry 1 has mismatched LFH name (skipped by zf.testzip()) and Entry 2 is valid.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            arm64_shadow_lfh = _patch_zip_raw_entries(
+                arm64_ok,
+                [("AppxManifest.xml", good_arm64_manifest, b"")],
+            )
+        mut_shadow = bytearray(arm64_shadow_lfh)
+        mut_shadow[manifest_off + 30 + len("AppxManifest.xm")] = ord("x")
+        expect_fail(
+            "case-28h-shadowed-lfh-name-mismatch",
+            lambda: verify_msix_archive(
+                bytes(mut_shadow),
+                "28h-shadow-lfh-name.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "local-header filename",
+        )
+
+        cd_overlap = bytearray(cd_part)
+        nlen0, elen0, clen0 = struct.unpack_from("<HHH", cd_overlap, 28)
+        rec1_pos = 46 + nlen0 + elen0 + clen0
+        struct.pack_into("<I", cd_overlap, rec1_pos + 42, 0)
+        eocd_base = struct.pack("<4sHHHHIIH", b"PK\x05\x06", 0, 0, n_part, n_part, len(cd_overlap), len(lfh_part), 0)
+        expect_fail(
+            "case-28h-overlapping-lfh-offset",
+            lambda: verify_msix_archive(
+                lfh_part + bytes(cd_overlap) + eocd_base,
+                "28h-overlap.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "overlapping/duplicate",
+        )
+
+        # Positive controls for Case 28:
+        # (1) Legitimate consistent Zip64 EOCD + Locator (both sentinel 0xFFFF/0xFFFFFFFF and matching non-sentinel).
+        for pos_id, use_sentinels in (("28-pos-z64-sentinels", True), ("28-pos-z64-matching", False)):
+            arm64_z64_ok = _wrap_consistent_zip64(arm64_ok, use_sentinels=use_sentinels)
+            verify_msix_archive(
+                arm64_z64_ok,
+                f"{pos_id}.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            )
+        # (2) Streaming bit-3 Data Descriptor (flag_bits & 0x0008, LFH CRC/sizes == 0, both 16-byte & Zip64 24-byte).
+        for pos_id, fz64 in (("28-pos-stream-bit3", False), ("28-pos-stream-bit3-z64", True)):
+            arm64_stream_ok = _repack_streaming_bit3(arm64_ok, force_zip64=fz64)
+            verify_msix_archive(
+                arm64_stream_ok,
+                f"{pos_id}.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            )
+        # (3) Benign archive comment anchored cleanly to EOF passes.
+        arm64_benign_cmt = bytearray(arm64_ok)
+        benign_cmt = b"TotalDrop Store build metadata"
+        struct.pack_into("<H", arm64_benign_cmt, len(arm64_benign_cmt) - 2, len(benign_cmt))
+        arm64_benign_cmt.extend(benign_cmt)
+        verify_msix_archive(
+            bytes(arm64_benign_cmt),
+            "28-pos-benign-comment.msix",
+            arch="arm64",
+            expected_version=store_ver,
+            expect_signed=False,
+            store_mode=True,
+            allow_test_identity=False,
+            run_live_smoke=False,
+        )
+
+    print("self-test-bundle OK: 28/28 positive & negative bundle/msixupload/store-mode checks passed.")
     return 0
 
 
@@ -3721,6 +4663,8 @@ def main(argv: list[str] | None = None) -> int:
         zlib.error,
         RuntimeError,
         EOFError,
+        struct.error,
+        OverflowError,
         subprocess.CalledProcessError,
         OSError,
     ) as exc:
