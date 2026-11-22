@@ -67,7 +67,7 @@ public sealed partial class MainWindow : Window, INotifyPropertyChanged
         SetTitleBar(AppTitleBar);
 
         nint hwnd = WindowNative.GetWindowHandle(this);
-        WindowId windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
+        Microsoft.UI.WindowId windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
         AppWindow appWindow = AppWindow.GetFromWindowId(windowId);
         appWindow.Resize(new SizeInt32(720, 640));
 
