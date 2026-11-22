@@ -132,6 +132,14 @@ RT_ICON = 3
 RT_GROUP_ICON = 14
 EXPLORER_ICON_RESOURCE_ID = 101
 
+ALLOWED_OPC_COMPRESS_TYPES: tuple[int, ...] = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+# Forbidden PKWARE APPNOTE 4.4.4 general-purpose bit flags:
+# 0x0001 = encrypted, 0x0020 = compressed patched data,
+# 0x0040 = strong encryption, 0x2000 = masked local header values.
+FORBIDDEN_ZIP_FLAGS: int = 0x0001 | 0x0020 | 0x0040 | 0x2000
+_STREAM_READ_CHUNK_BYTES = 65536
+_STREAM_DECOMPRESS_STEP_BYTES = 1 << 20
+
 
 def _build_expected_assets() -> frozenset[str]:
     """Return the exact 46 canonical Kose asset filenames matching tools/render-windows-assets.py."""
@@ -884,7 +892,7 @@ def _read_zip_member(zf: zipfile.ZipFile, member: str | zipfile.ZipInfo, label: 
     member_name = member.filename if isinstance(member, zipfile.ZipInfo) else member
     try:
         return zf.read(member)
-    except (zlib.error, zipfile.BadZipFile, RuntimeError, EOFError) as exc:
+    except (zlib.error, zipfile.BadZipFile, RuntimeError, EOFError, struct.error, OverflowError) as exc:
         raise ValueError(f"{label}: corrupted ZIP member {member_name!r}: {exc}") from exc
 
 
@@ -923,8 +931,16 @@ def _extract_zip64_lfh_sizes(extra: bytes, label: str, entry_name: str) -> tuple
     off = 0
     extra_len = len(extra)
     while off < extra_len:
+        if off + 4 > extra_len:
+            raise ValueError(
+                f"{label}: ZIP entry {entry_name!r} has truncated local-header extra field header"
+            )
         header_id, data_size = struct.unpack_from("<HH", extra, off)
         off += 4
+        if off + data_size > extra_len:
+            raise ValueError(
+                f"{label}: ZIP entry {entry_name!r} has truncated local-header extra field 0x{header_id:04x}"
+            )
         if header_id == 0x0001:
             if found is not None:
                 raise ValueError(
@@ -968,6 +984,140 @@ def _verify_data_descriptor(dd: bytes, info: zipfile.ZipInfo, label: str) -> Non
             f"{label}: ZIP entry {info.orig_filename!r} data descriptor mismatch "
             f"(dd={(dd_crc, dd_csz, dd_usz)!r} != cd={(info.CRC, info.compress_size, info.file_size)!r})"
         )
+
+
+def _verify_entry_stream_exact(
+    fp: object,
+    comp_start: int,
+    info: zipfile.ZipInfo,
+    label: str,
+) -> None:
+    """Verify exact raw payload byte count, DEFLATE EOF/zero-slack, uncompressed length, and CRC-32 in O(1) RAM."""
+    if info.compress_size < 0 or info.file_size < 0:
+        raise ValueError(
+            f"{label}: ZIP entry {info.orig_filename!r} has negative size "
+            f"(compress_size={info.compress_size}, file_size={info.file_size})"
+        )
+
+    if info.compress_type == zipfile.ZIP_STORED:
+        if info.compress_size != info.file_size:
+            raise ValueError(
+                f"{label}: ZIP_STORED entry {info.orig_filename!r} has mismatched sizes "
+                f"(compress_size={info.compress_size} != file_size={info.file_size})"
+            )
+        fp.seek(comp_start)  # type: ignore[attr-defined]
+        remaining = info.compress_size
+        total_read = 0
+        running_crc = 0
+        while remaining > 0:
+            chunk = fp.read(min(_STREAM_READ_CHUNK_BYTES, remaining))  # type: ignore[attr-defined]
+            if not chunk:
+                raise ValueError(
+                    f"{label}: ZIP_STORED entry {info.orig_filename!r} truncated "
+                    f"(read {total_read} of {info.compress_size} bytes)"
+                )
+            total_read += len(chunk)
+            remaining -= len(chunk)
+            running_crc = zlib.crc32(chunk, running_crc)
+        if total_read != info.compress_size:
+            raise ValueError(
+                f"{label}: ZIP_STORED entry {info.orig_filename!r} byte count mismatch "
+                f"({total_read} != {info.compress_size})"
+            )
+        if (running_crc & 0xFFFFFFFF) != info.CRC:
+            raise ValueError(
+                f"{label}: ZIP_STORED entry {info.orig_filename!r} raw stream CRC-32 mismatch "
+                f"({running_crc & 0xFFFFFFFF:#010x} != {info.CRC:#010x})"
+            )
+        return
+
+    if info.compress_type == zipfile.ZIP_DEFLATED:
+        fp.seek(comp_start)  # type: ignore[attr-defined]
+        dec = zlib.decompressobj(-15)
+        remaining = info.compress_size
+        total_out = 0
+        running_crc = 0
+        try:
+            while remaining > 0:
+                if dec.eof:
+                    raise ValueError(
+                        f"{label}: ZIP_DEFLATED entry {info.orig_filename!r} has trailing unconsumed bytes "
+                        f"after DEFLATE end-of-stream ({remaining} unread compressed bytes)"
+                    )
+                chunk = fp.read(min(_STREAM_READ_CHUNK_BYTES, remaining))  # type: ignore[attr-defined]
+                if not chunk:
+                    raise ValueError(
+                        f"{label}: ZIP_DEFLATED entry {info.orig_filename!r} compressed stream truncated "
+                        f"({remaining} bytes remaining)"
+                    )
+                remaining -= len(chunk)
+                pending = chunk
+                while True:
+                    max_step = min(_STREAM_DECOMPRESS_STEP_BYTES, (info.file_size - total_out) + 1)
+                    out = dec.decompress(pending, max_step)
+                    total_out += len(out)
+                    if out:
+                        running_crc = zlib.crc32(out, running_crc)
+                    if total_out > info.file_size:
+                        raise ValueError(
+                            f"{label}: ZIP_DEFLATED entry {info.orig_filename!r} uncompressed stream exceeds "
+                            f"declared file_size ({total_out} > {info.file_size})"
+                        )
+                    pending = dec.unconsumed_tail
+                    if dec.eof:
+                        if pending or dec.unused_data or remaining > 0:
+                            raise ValueError(
+                                f"{label}: ZIP_DEFLATED entry {info.orig_filename!r} has trailing unconsumed bytes "
+                                f"after DEFLATE end-of-stream "
+                                f"(unused={len(dec.unused_data)}, pending={len(pending)}, remaining={remaining})"
+                            )
+                        break
+                    if not pending and len(out) < max_step:
+                        break
+
+            if not dec.eof:
+                raise ValueError(
+                    f"{label}: ZIP_DEFLATED entry {info.orig_filename!r} ended without DEFLATE end-of-stream marker"
+                )
+            if dec.unconsumed_tail or dec.unused_data:
+                raise ValueError(
+                    f"{label}: ZIP_DEFLATED entry {info.orig_filename!r} has trailing unconsumed bytes "
+                    f"after DEFLATE end-of-stream (unused={len(dec.unused_data)}, tail={len(dec.unconsumed_tail)})"
+                )
+            tail = dec.flush(min(_STREAM_DECOMPRESS_STEP_BYTES, (info.file_size - total_out) + 1))
+            if tail:
+                total_out += len(tail)
+                running_crc = zlib.crc32(tail, running_crc)
+                if total_out > info.file_size:
+                    raise ValueError(
+                        f"{label}: ZIP_DEFLATED entry {info.orig_filename!r} uncompressed stream exceeds "
+                        f"declared file_size ({total_out} > {info.file_size})"
+                    )
+        except zlib.error as exc:
+            raise ValueError(
+                f"{label}: ZIP_DEFLATED entry {info.orig_filename!r} has corrupted DEFLATE stream: {exc}"
+            ) from exc
+
+        if not dec.eof or dec.unconsumed_tail or dec.unused_data:
+            raise ValueError(
+                f"{label}: ZIP_DEFLATED entry {info.orig_filename!r} failed final DEFLATE EOF/zero-slack check"
+            )
+        if total_out != info.file_size:
+            raise ValueError(
+                f"{label}: ZIP_DEFLATED entry {info.orig_filename!r} uncompressed stream length mismatch "
+                f"({total_out} != {info.file_size})"
+            )
+        if (running_crc & 0xFFFFFFFF) != info.CRC:
+            raise ValueError(
+                f"{label}: ZIP_DEFLATED entry {info.orig_filename!r} raw stream CRC-32 mismatch "
+                f"({running_crc & 0xFFFFFFFF:#010x} != {info.CRC:#010x})"
+            )
+        return
+
+    raise ValueError(
+        f"{label}: ZIP entry {info.orig_filename!r} uses unsupported OPC/MSIX compression method "
+        f"{info.compress_type} (only ZIP_STORED=0 and ZIP_DEFLATED=8 are permitted)"
+    )
 
 
 def _check_zip_container_structure(
@@ -1205,6 +1355,11 @@ def _check_zip_container_structure(
                 )
             gap = next_off - comp_end
             if has_dd_cd:
+                if gap not in (12, 16, 20, 24):
+                    raise ValueError(
+                        f"{label}: ZIP entry {info.orig_filename!r} has unexpected streaming data descriptor size "
+                        f"{gap} bytes (expected 12, 16, 20, or 24)"
+                    )
                 fp.seek(comp_end)
                 dd = fp.read(gap)
                 _verify_data_descriptor(dd, info, label)
@@ -1227,6 +1382,20 @@ def _check_opc_zip_entries(
     infos = zf.infolist()
     if zf.fp is not None:
         _check_zip_container_structure(zf, infos, label)
+
+    # Enforce strict OPC/MSIX compression allowlist and forbidden flag bits BEFORE zf.testzip()
+    # so unsupported codecs (e.g., ZIP_LZMA=14, ZIP_BZIP2=12) can never invoke lzma/bz2 decompressors.
+    for info in infos:
+        if info.compress_type not in ALLOWED_OPC_COMPRESS_TYPES:
+            raise ValueError(
+                f"{label}: ZIP entry {info.orig_filename!r} uses unsupported OPC/MSIX compression method "
+                f"{info.compress_type} (only ZIP_STORED=0 and ZIP_DEFLATED=8 are permitted)"
+            )
+        if (info.flag_bits & FORBIDDEN_ZIP_FLAGS) != 0:
+            raise ValueError(
+                f"{label}: ZIP entry {info.orig_filename!r} has forbidden general-purpose flag bits "
+                f"{info.flag_bits:#06x} (forbidden mask {FORBIDDEN_ZIP_FLAGS:#06x})"
+            )
 
     try:
         bad_member = zf.testzip()
@@ -1265,9 +1434,10 @@ def _check_opc_zip_entries(
                         f"{label}: ZIP entry {info.orig_filename!r} local-header compression method "
                         f"({lfh_method}) differs from central-directory method ({info.compress_type})"
                     )
-                if (lfh_flags & 0x0001) != 0 or (info.flag_bits & 0x0001) != 0:
+                if (lfh_flags & FORBIDDEN_ZIP_FLAGS) != 0 or (info.flag_bits & FORBIDDEN_ZIP_FLAGS) != 0:
                     raise ValueError(
-                        f"{label}: ZIP entry {info.orig_filename!r} is encrypted (flag bit 0 is forbidden)"
+                        f"{label}: ZIP entry {info.orig_filename!r} has forbidden general-purpose flag bits "
+                        f"(lfh={lfh_flags:#06x}, cd={info.flag_bits:#06x}, forbidden mask {FORBIDDEN_ZIP_FLAGS:#06x})"
                     )
                 if (lfh_flags & 0x0008) != (info.flag_bits & 0x0008):
                     raise ValueError(
@@ -1298,6 +1468,7 @@ def _check_opc_zip_entries(
                     )
                 if lfh_extra:
                     _check_zip_extra_fields(lfh_extra, label, info.orig_filename, "local-header")
+                z64_sizes = _extract_zip64_lfh_sizes(lfh_extra, label, info.orig_filename) if lfh_extra else None
                 if (lfh_flags & 0x0008) == 0:
                     if lfh_crc != info.CRC:
                         raise ValueError(
@@ -1314,8 +1485,7 @@ def _check_opc_zip_entries(
                             f"{label}: ZIP entry {info.orig_filename!r} local-header uncompressed size "
                             f"({lfh_uncomp_size}) differs from central-directory ({info.file_size})"
                         )
-                    if lfh_comp_size == 0xFFFFFFFF or lfh_uncomp_size == 0xFFFFFFFF:
-                        z64_sizes = _extract_zip64_lfh_sizes(lfh_extra, label, info.orig_filename)
+                    if lfh_comp_size == 0xFFFFFFFF or lfh_uncomp_size == 0xFFFFFFFF or z64_sizes is not None:
                         if z64_sizes != (info.file_size, info.compress_size):
                             raise ValueError(
                                 f"{label}: ZIP entry {info.orig_filename!r} local-header 0x0001 Zip64 sizes "
@@ -1337,8 +1507,35 @@ def _check_opc_zip_entries(
                             f"{label}: ZIP entry {info.orig_filename!r} streaming local-header uncompressed size "
                             f"({lfh_uncomp_size}) must be 0, sentinel, or match central-directory ({info.file_size})"
                         )
+                    if lfh_comp_size == 0xFFFFFFFF or lfh_uncomp_size == 0xFFFFFFFF:
+                        if z64_sizes is None:
+                            raise ValueError(
+                                f"{label}: ZIP entry {info.orig_filename!r} streaming local-header uses 0xFFFFFFFF "
+                                "sentinel without a 0x0001 Zip64 extra field"
+                            )
+                        if z64_sizes not in ((0, 0), (info.file_size, info.compress_size)):
+                            raise ValueError(
+                                f"{label}: ZIP entry {info.orig_filename!r} streaming local-header 0x0001 Zip64 "
+                                f"sizes {z64_sizes!r} must be (0, 0) or match central-directory "
+                                f"({info.file_size}, {info.compress_size})"
+                            )
+                    elif z64_sizes is not None:
+                        if z64_sizes not in ((0, 0), (info.file_size, info.compress_size)):
+                            raise ValueError(
+                                f"{label}: ZIP entry {info.orig_filename!r} streaming local-header 0x0001 Zip64 "
+                                f"sizes {z64_sizes!r} must be (0, 0) or match central-directory "
+                                f"({info.file_size}, {info.compress_size})"
+                            )
+
+                comp_start = info.header_offset + 30 + lfh_name_len + lfh_extra_len
+                _verify_entry_stream_exact(zf.fp, comp_start, info, label)
             finally:
                 zf.fp.seek(saved_pos)
+        elif info.compress_type == zipfile.ZIP_STORED and info.compress_size != info.file_size:
+            raise ValueError(
+                f"{label}: ZIP_STORED entry {info.orig_filename!r} has mismatched sizes "
+                f"(compress_size={info.compress_size} != file_size={info.file_size})"
+            )
 
         name = info.filename
         if name in seen_exact:
@@ -2969,7 +3166,7 @@ def _make_synthetic_upload(entries: list[tuple[str, bytes]]) -> bytes:
 
 
 def run_self_test_bundle() -> int:
-    """Run 28 positive and negative pure-Python synthetic self-tests against the real verifier."""
+    """Run 29 positive and negative pure-Python synthetic self-tests against the real verifier."""
     repo_root = Path(__file__).resolve().parent.parent
     x64_tpl = (repo_root / "target-x86_64" / "Package.x64.appxmanifest").read_text(encoding="utf-8")
     arm64_tpl = (repo_root / "target-arm64" / "Package.arm64.appxmanifest").read_text(encoding="utf-8")
@@ -4554,7 +4751,628 @@ def run_self_test_bundle() -> int:
             run_live_smoke=False,
         )
 
-    print("self-test-bundle OK: 28/28 positive & negative bundle/msixupload/store-mode checks passed.")
+        # Case 29: Exact raw stream verification (ZIP_STORED size parity + ZIP_DEFLATED overflow/underflow/slack),
+        # strict OPC compression method allowlist (STORED/DEFLATED only), forbidden flag bits, & LFH 0x0001 Zip64 parity.
+        def _crc32_forge_suffix(prefix: bytes, target_crc: int) -> bytes:
+            cur_state = (zlib.crc32(prefix) ^ 0xFFFFFFFF) & 0xFFFFFFFF
+            state = (target_crc ^ 0xFFFFFFFF) & 0xFFFFFFFF
+            for _ in range(32):
+                if state & 0x80000000:
+                    state = (((state ^ 0xEDB88320) << 1) | 1) & 0xFFFFFFFF
+                else:
+                    state = (state << 1) & 0xFFFFFFFF
+            return struct.pack("<I", state ^ cur_state)
+
+        def _make_crc_colliding_evil_zip(good_prefix: bytes, entries: list[tuple[str, bytes]]) -> bytes:
+            ebuf = io.BytesIO()
+            with zipfile.ZipFile(ebuf, "w", compression=zipfile.ZIP_DEFLATED) as zfe:
+                for ename, edata in entries:
+                    zfe.writestr(ename, edata)
+            e_lfh, e_cd, e_n = _split_zip_parts(ebuf.getvalue())
+            e_cd_shifted = _shift_cd_offsets(e_cd, len(good_prefix))
+            e_cd_off = len(good_prefix) + len(e_lfh)
+            e_eocd = struct.pack(
+                "<4sHHHHIIH",
+                b"PK\x05\x06",
+                0,
+                0,
+                e_n,
+                e_n,
+                len(e_cd_shifted),
+                e_cd_off,
+                4,
+            )
+            target_crc = zlib.crc32(good_prefix) & 0xFFFFFFFF
+            body = e_lfh + e_cd_shifted + e_eocd
+            crc_fix = _crc32_forge_suffix(good_prefix + body, target_crc)
+            out = body + crc_fix
+            assert (zlib.crc32(good_prefix + out) & 0xFFFFFFFF) == target_crc
+            return out
+
+        def _rebuild_zip_with_raw_entry(
+            base_zip: bytes,
+            target_name: str,
+            *,
+            method: int,
+            raw_payload: bytes,
+            declared_uncomp_size: int,
+            declared_crc: int,
+            append_if_missing: bool = False,
+            lfh_extra_override: bytes | None = None,
+            lfh_flags_or: int = 0,
+            cd_flags_or: int = 0,
+        ) -> bytes:
+            lfh_parts: list[bytes] = []
+            cd_parts: list[bytes] = []
+            cur_off = 0
+            replaced = False
+
+            def _emit_entry(
+                name_bytes: bytes,
+                emethod: int,
+                e_lfh_flags: int,
+                e_cd_flags: int,
+                ecrc: int,
+                ecsz: int,
+                eusz: int,
+                e_lfh_extra: bytes,
+                e_cd_extra: bytes,
+                epayload: bytes,
+            ) -> None:
+                nonlocal cur_off
+                lfh_hdr = struct.pack(
+                    "<4sHHHHHIIIHH",
+                    b"PK\x03\x04",
+                    20,
+                    e_lfh_flags,
+                    emethod,
+                    0,
+                    0,
+                    ecrc,
+                    ecsz,
+                    eusz,
+                    len(name_bytes),
+                    len(e_lfh_extra),
+                )
+                cd_hdr = struct.pack(
+                    "<4sHHHHHHIIIHHHHHII",
+                    b"PK\x01\x02",
+                    20,
+                    20,
+                    e_cd_flags,
+                    emethod,
+                    0,
+                    0,
+                    ecrc,
+                    ecsz,
+                    eusz,
+                    len(name_bytes),
+                    len(e_cd_extra),
+                    0,
+                    0,
+                    0,
+                    0,
+                    cur_off,
+                )
+                lfh_parts.append(lfh_hdr + name_bytes + e_lfh_extra + epayload)
+                cd_parts.append(cd_hdr + name_bytes + e_cd_extra)
+                cur_off += len(lfh_hdr) + len(name_bytes) + len(e_lfh_extra) + len(epayload)
+
+            with zipfile.ZipFile(io.BytesIO(base_zip), "r") as zin:
+                for info in zin.infolist():
+                    nb = info.orig_filename.encode("utf-8" if (info.flag_bits & 0x0800) else "cp437")
+                    if info.orig_filename == target_name:
+                        replaced = True
+                        lextra = lfh_extra_override if lfh_extra_override is not None else b""
+                        _emit_entry(
+                            nb,
+                            method,
+                            (info.flag_bits & ~0x0008) | lfh_flags_or,
+                            (info.flag_bits & ~0x0008) | cd_flags_or,
+                            declared_crc,
+                            len(raw_payload),
+                            declared_uncomp_size,
+                            lextra,
+                            b"",
+                            raw_payload,
+                        )
+                    else:
+                        data = zin.read(info)
+                        cobj = zlib.compressobj(6, zlib.DEFLATED, -15)
+                        cdata = cobj.compress(data) + cobj.flush()
+                        _emit_entry(
+                            nb,
+                            zipfile.ZIP_DEFLATED,
+                            info.flag_bits & ~0x0008,
+                            info.flag_bits & ~0x0008,
+                            zlib.crc32(data) & 0xFFFFFFFF,
+                            len(cdata),
+                            len(data),
+                            b"",
+                            b"",
+                            cdata,
+                        )
+            if not replaced:
+                assert append_if_missing, f"entry {target_name!r} not found"
+                nb = target_name.encode("ascii")
+                lextra = lfh_extra_override if lfh_extra_override is not None else b""
+                _emit_entry(
+                    nb,
+                    method,
+                    lfh_flags_or,
+                    cd_flags_or,
+                    declared_crc,
+                    len(raw_payload),
+                    declared_uncomp_size,
+                    lextra,
+                    b"",
+                    raw_payload,
+                )
+            lfh_blob = b"".join(lfh_parts)
+            cd_blob = b"".join(cd_parts)
+            eocd = struct.pack(
+                "<4sHHHHIIH",
+                b"PK\x05\x06",
+                0,
+                0,
+                len(cd_parts),
+                len(cd_parts),
+                len(cd_blob),
+                len(lfh_blob),
+                0,
+            )
+            return lfh_blob + cd_blob + eocd
+
+        # 29a: ZIP_STORED compress_size != file_size + GF(2) CRC-32 collision across all 4 archive layers,
+        # PE overlay smuggling, directory payload smuggling, and compress_size < file_size.
+        evil_bundle_tail = _make_crc_colliding_evil_zip(bundle_ok_bytes, evil_bundle_payloads)
+        upload_stored_smuggle_path = tmp_dir / "29a-stored-bundle-smuggle.msixupload"
+        upload_stored_smuggle_path.write_bytes(
+            _rebuild_zip_with_raw_entry(
+                upload_ok_raw,
+                bundle_ok_path.name,
+                method=zipfile.ZIP_STORED,
+                raw_payload=bundle_ok_bytes + evil_bundle_tail,
+                declared_uncomp_size=len(bundle_ok_bytes),
+                declared_crc=zlib.crc32(bundle_ok_bytes) & 0xFFFFFFFF,
+            )
+        )
+        expect_fail(
+            "case-29a-stored-bundle-in-upload-with-sha256",
+            lambda: verify_msixupload_archive(
+                upload_stored_smuggle_path,
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                expected_bundle_path=bundle_ok_path,
+                run_live_smoke=False,
+            ),
+            "ZIP_STORED",
+        )
+
+        evil_msix_tail = _make_crc_colliding_evil_zip(arm64_ok, evil_msix_payloads)
+        bundle_stored_msix = _rebuild_zip_with_raw_entry(
+            bundle_ok_bytes,
+            f"TotalDrop_{store_ver}_arm64.msix",
+            method=zipfile.ZIP_STORED,
+            raw_payload=arm64_ok + evil_msix_tail,
+            declared_uncomp_size=len(arm64_ok),
+            declared_crc=zlib.crc32(arm64_ok) & 0xFFFFFFFF,
+        )
+        expect_fail(
+            "case-29a-stored-msix-in-bundle",
+            lambda: verify_msixbundle_archive(
+                bundle_stored_msix,
+                "29a-stored-msix.msixbundle",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "ZIP_STORED",
+        )
+
+        evil_sym_tail = _make_crc_colliding_evil_zip(sym_ok, evil_sym_payloads)
+        upload_stored_sym_path = tmp_dir / "29a-stored-appxsym.msixupload"
+        upload_stored_sym_path.write_bytes(
+            _rebuild_zip_with_raw_entry(
+                upload_ok_raw,
+                f"TotalDrop_{store_ver}_x64.appxsym",
+                method=zipfile.ZIP_STORED,
+                raw_payload=sym_ok + evil_sym_tail,
+                declared_uncomp_size=len(sym_ok),
+                declared_crc=zlib.crc32(sym_ok) & 0xFFFFFFFF,
+            )
+        )
+        expect_fail(
+            "case-29a-stored-appxsym-in-upload",
+            lambda: verify_msixupload_archive(
+                upload_stored_sym_path,
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "ZIP_STORED",
+        )
+
+        with zipfile.ZipFile(io.BytesIO(arm64_ok), "r") as zf_pe:
+            exe_good_bytes = zf_pe.read("totaldrop-winui.exe")
+        exe_crc = zlib.crc32(exe_good_bytes) & 0xFFFFFFFF
+        pe_overlay = b"SMUGGLED_UNVERIFIED_PE_OVERLAY_PAYLOAD_DATA"
+        pe_overlay_fix = _crc32_forge_suffix(exe_good_bytes + pe_overlay, exe_crc)
+        arm64_pe_overlay = _rebuild_zip_with_raw_entry(
+            arm64_ok,
+            "totaldrop-winui.exe",
+            method=zipfile.ZIP_STORED,
+            raw_payload=exe_good_bytes + pe_overlay + pe_overlay_fix,
+            declared_uncomp_size=len(exe_good_bytes),
+            declared_crc=exe_crc,
+        )
+        expect_fail(
+            "case-29a-stored-pe-overlay-msix",
+            lambda: verify_msix_archive(
+                arm64_pe_overlay,
+                "29a-pe-overlay.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "ZIP_STORED",
+        )
+
+        arm64_dir_stored = _rebuild_zip_with_raw_entry(
+            arm64_ok,
+            "Assets/",
+            method=zipfile.ZIP_STORED,
+            raw_payload=b"SMUGGLED_DIR_PAYLOAD_32_BYTES_00",
+            declared_uncomp_size=0,
+            declared_crc=0,
+            append_if_missing=True,
+        )
+        expect_fail(
+            "case-29a-stored-dir-csz-gt-0",
+            lambda: verify_msix_archive(
+                arm64_dir_stored,
+                "29a-dir-stored.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "ZIP_STORED",
+        )
+
+        arm64_stored_short = _rebuild_zip_with_raw_entry(
+            arm64_ok,
+            "AppxBlockMap.xml",
+            method=zipfile.ZIP_STORED,
+            raw_payload=b"<BlockMap />",
+            declared_uncomp_size=64,
+            declared_crc=zlib.crc32(b"<BlockMap />") & 0xFFFFFFFF,
+        )
+        expect_fail(
+            "case-29a-stored-compress-lt-file-size",
+            lambda: verify_msix_archive(
+                arm64_stored_short,
+                "29a-stored-short.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "ZIP_STORED",
+        )
+
+        # 29b: ZIP_DEFLATED uncompressed-stream overflow + GF(2) CRC-32 collision, underflow, and trailing slack.
+        c_ovf = zlib.compressobj(6, zlib.DEFLATED, -15)
+        deflated_bundle_ovf = c_ovf.compress(bundle_ok_bytes + evil_bundle_tail) + c_ovf.flush()
+        upload_deflate_ovf_path = tmp_dir / "29b-deflate-overflow.msixupload"
+        upload_deflate_ovf_path.write_bytes(
+            _rebuild_zip_with_raw_entry(
+                upload_ok_raw,
+                bundle_ok_path.name,
+                method=zipfile.ZIP_DEFLATED,
+                raw_payload=deflated_bundle_ovf,
+                declared_uncomp_size=len(bundle_ok_bytes),
+                declared_crc=zlib.crc32(bundle_ok_bytes) & 0xFFFFFFFF,
+            )
+        )
+        expect_fail(
+            "case-29b-deflate-overflow-crc-collision",
+            lambda: verify_msixupload_archive(
+                upload_deflate_ovf_path,
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                expected_bundle_path=bundle_ok_path,
+                run_live_smoke=False,
+            ),
+            "exceeds declared file_size",
+        )
+
+        c_short = zlib.compressobj(6, zlib.DEFLATED, -15)
+        deflated_short = c_short.compress(b"<BlockMap />") + c_short.flush()
+        arm64_deflate_underflow = _rebuild_zip_with_raw_entry(
+            arm64_ok,
+            "AppxBlockMap.xml",
+            method=zipfile.ZIP_DEFLATED,
+            raw_payload=deflated_short,
+            declared_uncomp_size=512,
+            declared_crc=zlib.crc32(b"<BlockMap />") & 0xFFFFFFFF,
+        )
+        expect_fail(
+            "case-29b-deflate-underflow",
+            lambda: verify_msix_archive(
+                arm64_deflate_underflow,
+                "29b-deflate-underflow.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "length mismatch",
+        )
+
+        c_slack = zlib.compressobj(6, zlib.DEFLATED, -15)
+        deflated_with_slack = (
+            c_slack.compress(good_arm64_manifest)
+            + c_slack.flush()
+            + b"TRAILING_UNVERIFIED_SLACK_AFTER_BFINAL"
+        )
+        arm64_deflate_slack = _rebuild_zip_with_raw_entry(
+            arm64_ok,
+            "AppxManifest.xml",
+            method=zipfile.ZIP_DEFLATED,
+            raw_payload=deflated_with_slack,
+            declared_uncomp_size=len(good_arm64_manifest),
+            declared_crc=zlib.crc32(good_arm64_manifest) & 0xFFFFFFFF,
+        )
+        expect_fail(
+            "case-29b-deflate-trailing-slack-after-bfinal",
+            lambda: verify_msix_archive(
+                arm64_deflate_slack,
+                "29b-deflate-slack.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "trailing unconsumed bytes",
+        )
+
+        # 29c: Unsupported OPC/MSIX compression methods (ZIP_BZIP2=12, valid ZIP_LZMA=14, corrupt ZIP_LZMA=14).
+        for sub_id, cmethod in (
+            ("29c-bzip2", zipfile.ZIP_BZIP2),
+            ("29c-lzma-valid", zipfile.ZIP_LZMA),
+        ):
+            repack_buf = io.BytesIO()
+            with (
+                zipfile.ZipFile(io.BytesIO(arm64_ok), "r") as zin,
+                zipfile.ZipFile(repack_buf, "w", compression=zipfile.ZIP_DEFLATED) as zout,
+            ):
+                for item in zin.infolist():
+                    data = zin.read(item)
+                    if item.filename == "AppxBlockMap.xml":
+                        zout.writestr(item.filename, data, compress_type=cmethod)
+                    else:
+                        zout.writestr(item.filename, data, compress_type=zipfile.ZIP_DEFLATED)
+            repacked_bytes = repack_buf.getvalue()
+            expect_fail(
+                f"case-{sub_id}",
+                lambda b=repacked_bytes, s=sub_id: verify_msix_archive(
+                    b,
+                    f"{s}.msix",
+                    arch="arm64",
+                    expected_version=store_ver,
+                    expect_signed=False,
+                    store_mode=True,
+                    allow_test_identity=False,
+                    run_live_smoke=False,
+                ),
+                "unsupported OPC/MSIX compression method",
+            )
+            if cmethod == zipfile.ZIP_LZMA:
+                # Corrupt LZMA payload must raise clean ValueError (never uncaught _lzma.LZMAError).
+                arm64_lzma_corrupt = _rebuild_zip_with_raw_entry(
+                    arm64_ok,
+                    "AppxBlockMap.xml",
+                    method=zipfile.ZIP_LZMA,
+                    raw_payload=b"\x09\x14\x05\x00\x5d\x00\x00\x80\x00\xff\xff\xfe\xfa\x01\x02",
+                    declared_uncomp_size=12,
+                    declared_crc=zlib.crc32(b"<BlockMap />") & 0xFFFFFFFF,
+                )
+                try:
+                    verify_msix_archive(
+                        arm64_lzma_corrupt,
+                        "29c-lzma-corrupt.msix",
+                        arch="arm64",
+                        expected_version=store_ver,
+                        expect_signed=False,
+                        store_mode=True,
+                        allow_test_identity=False,
+                        run_live_smoke=False,
+                    )
+                    raise AssertionError("self-test case-29c-lzma-corrupt: expected rejection, but verification passed")
+                except ValueError as exc:
+                    assert "unsupported OPC/MSIX compression method" in str(exc), str(exc)
+
+        # 29d: Forbidden flag bits (LFH-only 0x0020/0x0040/0x2000 & CD+LFH 0x2000) and LFH 0x0001 Zip64 consistency.
+        for sub_id, lfh_f, cd_f in (
+            ("29d-lfh-flag-0x0020", 0x0020, 0),
+            ("29d-lfh-flag-0x0040", 0x0040, 0),
+            ("29d-lfh-flag-0x2000", 0x2000, 0),
+            ("29d-cd-lfh-flag-0x2000", 0x2000, 0x2000),
+        ):
+            c_m = zlib.compressobj(6, zlib.DEFLATED, -15)
+            d_m = c_m.compress(b"<BlockMap />") + c_m.flush()
+            arm64_bad_flag = _rebuild_zip_with_raw_entry(
+                arm64_ok,
+                "AppxBlockMap.xml",
+                method=zipfile.ZIP_DEFLATED,
+                raw_payload=d_m,
+                declared_uncomp_size=len(b"<BlockMap />"),
+                declared_crc=zlib.crc32(b"<BlockMap />") & 0xFFFFFFFF,
+                lfh_flags_or=lfh_f,
+                cd_flags_or=cd_f,
+            )
+            expect_fail(
+                f"case-{sub_id}",
+                lambda b=arm64_bad_flag, s=sub_id: verify_msix_archive(
+                    b,
+                    f"{s}.msix",
+                    arch="arm64",
+                    expected_version=store_ver,
+                    expect_signed=False,
+                    store_mode=True,
+                    allow_test_identity=False,
+                    run_live_smoke=False,
+                ),
+                "forbidden general-purpose flag bits",
+            )
+
+        # Non-streaming bogus 0x0001 Zip64 extra field with non-sentinel 32-bit LFH sizes.
+        c_bm = zlib.compressobj(6, zlib.DEFLATED, -15)
+        d_bm = c_bm.compress(b"<BlockMap />") + c_bm.flush()
+        bogus_z64_extra = struct.pack("<HHQQ", 0x0001, 16, 123456789, 987654321)
+        arm64_bogus_z64 = _rebuild_zip_with_raw_entry(
+            arm64_ok,
+            "AppxBlockMap.xml",
+            method=zipfile.ZIP_DEFLATED,
+            raw_payload=d_bm,
+            declared_uncomp_size=len(b"<BlockMap />"),
+            declared_crc=zlib.crc32(b"<BlockMap />") & 0xFFFFFFFF,
+            lfh_extra_override=bogus_z64_extra,
+        )
+        expect_fail(
+            "case-29d-nonstream-bogus-0001",
+            lambda: verify_msix_archive(
+                arm64_bogus_z64,
+                "29d-nonstream-bogus-0001.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "0x0001 Zip64",
+        )
+
+        # Streaming bit-3 with 0xFFFFFFFF sentinel and NO 0x0001 extra field.
+        arm64_stream_base = bytearray(_repack_streaming_bit3(arm64_ok, force_zip64=False))
+        with zipfile.ZipFile(io.BytesIO(bytes(arm64_stream_base)), "r") as zf_sb:
+            s_off = zf_sb.getinfo("AppxManifest.xml").header_offset
+        struct.pack_into("<II", arm64_stream_base, s_off + 18, 0xFFFFFFFF, 0xFFFFFFFF)
+        expect_fail(
+            "case-29d-stream-sentinel-no-0001",
+            lambda: verify_msix_archive(
+                bytes(arm64_stream_base),
+                "29d-stream-sentinel-no-0001.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "0x0001 Zip64",
+        )
+
+        # Streaming bit-3 with forged 0x0001 Zip64 extra field sizes (both sentinel and zero 32-bit LFH sizes).
+        arm64_stream_z64_base = bytearray(_repack_streaming_bit3(arm64_ok, force_zip64=True))
+        with zipfile.ZipFile(io.BytesIO(bytes(arm64_stream_z64_base)), "r") as zf_sz:
+            sz_info = zf_sz.getinfo("AppxManifest.xml")
+            sz_off = sz_info.header_offset
+        sz_nlen, sz_elen = struct.unpack_from("<HH", arm64_stream_z64_base, sz_off + 26)
+        assert sz_elen >= 20
+        struct.pack_into("<QQ", arm64_stream_z64_base, sz_off + 30 + sz_nlen + 4, 999999, 888888)
+        expect_fail(
+            "case-29d-stream-forged-0001-sentinel",
+            lambda: verify_msix_archive(
+                bytes(arm64_stream_z64_base),
+                "29d-stream-forged-0001.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "0x0001 Zip64",
+        )
+        struct.pack_into("<II", arm64_stream_z64_base, sz_off + 18, 0, 0)
+        expect_fail(
+            "case-29d-stream-forged-0001-zero-lfh",
+            lambda: verify_msix_archive(
+                bytes(arm64_stream_z64_base),
+                "29d-stream-forged-0001-zero.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "0x0001 Zip64",
+        )
+
+        # Positive controls for Case 29:
+        # (1) Pure ZIP_STORED archive (including empty ZIP_STORED Assets/ directory) passes cleanly.
+        stored_ok_buf = io.BytesIO()
+        with (
+            zipfile.ZipFile(io.BytesIO(arm64_ok), "r") as zin,
+            zipfile.ZipFile(stored_ok_buf, "w", compression=zipfile.ZIP_STORED) as zout,
+        ):
+            zout.writestr("Assets/", b"", compress_type=zipfile.ZIP_STORED)
+            for item in zin.infolist():
+                zout.writestr(item.filename, zin.read(item), compress_type=zipfile.ZIP_STORED)
+        verify_msix_archive(
+            stored_ok_buf.getvalue(),
+            "29-pos-stored-valid.msix",
+            arch="arm64",
+            expected_version=store_ver,
+            expect_signed=False,
+            store_mode=True,
+            allow_test_identity=False,
+            run_live_smoke=False,
+        )
+        # (2) Multi-step >1 MiB exact boundary ZIP_DEFLATED entry passes cleanly.
+        arm64_large_deflate = _make_synthetic_msix(
+            arm64_tpl,
+            arch="arm64",
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            extra_entries=[("large_boundary.bin", b"A" * _STREAM_DECOMPRESS_STEP_BYTES)],
+        )
+        verify_msix_archive(
+            arm64_large_deflate,
+            "29-pos-large-deflate-boundary.msix",
+            arch="arm64",
+            expected_version=store_ver,
+            expect_signed=False,
+            store_mode=True,
+            allow_test_identity=False,
+            run_live_smoke=False,
+        )
+
+    print("self-test-bundle OK: 29/29 positive & negative bundle/msixupload/store-mode checks passed.")
     return 0
 
 
