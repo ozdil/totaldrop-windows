@@ -20,13 +20,16 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
 import tempfile
 import tomllib
+import warnings
 import xml.etree.ElementTree as ET
 import zipfile
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -97,7 +100,7 @@ def _extract_candidate_qualifiers(
     cand: ET.Element,
     qualifier_sets: dict[str, list[tuple[str, str]]],
 ) -> list[tuple[str, str]]:
-    """Parse qualifier (name, value) pairs from MakePri inline attributes or QualifierSet."""
+    """Parse qualifier (name, value) pairs from inline qualifiers=, child <Qualifier>, and qualifierSet=."""
     pairs: list[tuple[str, str]] = []
     quals_raw = cand.attrib.get("qualifiers", "").strip()
     if quals_raw:
@@ -117,10 +120,9 @@ def _extract_candidate_qualifiers(
             qval = child.attrib.get("value", "").strip()
             if qname and qval:
                 pairs.append((qname, qval))
-    if not pairs:
-        qset_ref = cand.attrib.get("qualifierSet", "").strip()
-        if qset_ref and qset_ref in qualifier_sets:
-            pairs.extend(qualifier_sets[qset_ref])
+    qset_ref = cand.attrib.get("qualifierSet", "").strip()
+    if qset_ref and qset_ref in qualifier_sets:
+        pairs.extend(qualifier_sets[qset_ref])
     return pairs
 
 
@@ -148,48 +150,64 @@ def verify_pri_dump(pri_xml_path: Path) -> None:
                     qpairs.append((qname, qval))
         qualifier_sets[qidx] = qpairs
 
-    # Collect language qualifiers per NamedResource and globally under Resources subtrees.
-    lang_by_resource: dict[str, set[str]] = {}
+    # Collect language qualifiers per (subtree_full_path, raw_normalized_name) and globally.
+    lang_by_resource_path: dict[tuple[str, str], set[str]] = {}
     all_langs: set[str] = set()
     square44_quals: set[str] = set()
     square44_sizes_by_altform: dict[str, set[str]] = {"UNPLATED": set(), "LIGHTUNPLATED": set()}
     asset_scales: set[str] = set()
     asset_targetsizes: set[str] = set()
 
-    for nr in root.iter():
-        if _local_tag(nr) != "NamedResource":
-            continue
-        name = nr.attrib.get("name", "")
-        is_square44 = "square44x44logo" in name.lower()
-        langs: set[str] = set()
-        for cand in nr:
-            if _local_tag(cand) != "Candidate":
-                continue
-            cand_ts: set[str] = set()
-            cand_alts: set[str] = set()
-            for k, v_clean in _extract_candidate_qualifiers(cand, qualifier_sets):
-                k_up = k.upper()
-                if k_up == "LANGUAGE":
-                    langs.add(v_clean.lower())
-                    all_langs.add(v_clean.lower())
-                elif k_up == "SCALE":
-                    asset_scales.add(v_clean)
-                elif k_up == "TARGETSIZE":
-                    asset_targetsizes.add(v_clean)
-                    cand_ts.add(v_clean)
-                elif k_up in ("ALTERNATEFORM", "ALTFORM"):
-                    if is_square44:
-                        v_up = v_clean.upper()
-                        if v_up in ("UNPLATED", "LIGHTUNPLATED"):
-                            square44_quals.add(v_up)
-                            cand_alts.add(v_up)
-            if is_square44 and cand_ts and cand_alts:
-                for alt in cand_alts:
-                    square44_sizes_by_altform[alt].update(cand_ts)
-        if name:
-            lang_by_resource.setdefault(name, set()).update(langs)
+    def _walk_pri(elem: ET.Element, subtree_prefix: str) -> None:
+        tag = _local_tag(elem)
+        if tag == "ResourceMapSubtree":
+            sub_name = elem.attrib.get("name", "").strip().replace("\\", "/").strip("/")
+            next_prefix = f"{subtree_prefix}/{sub_name}" if (subtree_prefix and sub_name) else (sub_name or subtree_prefix)
+            for child in elem:
+                _walk_pri(child, next_prefix)
+            return
+        if tag == "NamedResource":
+            name = elem.attrib.get("name", "").strip()
+            if not name:
+                return
+            norm_name = name.replace("\\", "/")
+            full_path = f"{subtree_prefix}/{norm_name}" if subtree_prefix else norm_name
+            leaf = norm_name.rsplit("/", 1)[-1]
+            is_square44 = leaf.lower() == "square44x44logo.png"
+            langs: set[str] = set()
+            for cand in elem:
+                if _local_tag(cand) != "Candidate":
+                    continue
+                cand_ts: set[str] = set()
+                cand_alts: set[str] = set()
+                for k, v_clean in _extract_candidate_qualifiers(cand, qualifier_sets):
+                    k_up = k.upper()
+                    if k_up == "LANGUAGE":
+                        langs.add(v_clean.lower())
+                        all_langs.add(v_clean.lower())
+                    elif k_up == "SCALE":
+                        asset_scales.add(v_clean)
+                    elif k_up == "TARGETSIZE":
+                        asset_targetsizes.add(v_clean)
+                        cand_ts.add(v_clean)
+                    elif k_up in ("ALTERNATEFORM", "ALTFORM"):
+                        if is_square44:
+                            v_up = v_clean.upper()
+                            if v_up in ("UNPLATED", "LIGHTUNPLATED"):
+                                square44_quals.add(v_up)
+                                cand_alts.add(v_up)
+                if is_square44 and cand_ts and cand_alts:
+                    for alt in cand_alts:
+                        square44_sizes_by_altform[alt].update(cand_ts)
+            lang_by_resource_path.setdefault((full_path, norm_name), set()).update(langs)
+            return
+        for child in elem:
+            _walk_pri(child, subtree_prefix)
+
+    _walk_pri(root, "")
 
     expected_lower = {tag.lower(): tag for tag in CANONICAL_35_LOCALES}
+    expected_set = set(expected_lower)
     missing_global = [orig for low, orig in sorted(expected_lower.items()) if low not in all_langs]
     if missing_global:
         present_count = len(expected_lower) - len(missing_global)
@@ -198,16 +216,25 @@ def verify_pri_dump(pri_xml_path: Path) -> None:
         )
 
     for key in REQUIRED_PRI_RESOURCE_KEYS:
-        key_langs = lang_by_resource.get(key)
-        if not key_langs:
-            # MakePri may nest keys as Resources/<key> or Resources\<key>
-            for res_name, r_langs in lang_by_resource.items():
-                norm_name = res_name.replace("\\", "/")
-                if norm_name.endswith(f"/{key}") or norm_name == key:
-                    key_langs = r_langs
-                    break
-        if not key_langs:
+        key_candidates: list[tuple[int, int, set[str]]] = []
+        for (full_path, raw_norm), r_langs in lang_by_resource_path.items():
+            if raw_norm != key and not raw_norm.endswith(f"/{key}"):
+                continue
+            low_raw = raw_norm.lower()
+            low_full = full_path.lower()
+            is_resources_scope = (
+                low_raw == f"resources/{key.lower()}"
+                or low_full == f"resources/{key.lower()}"
+                or low_full.endswith(f"/resources/{key.lower()}")
+                or low_raw == key.lower()
+            )
+            priority = 2 if is_resources_scope else 1
+            coverage = len(r_langs & expected_set)
+            key_candidates.append((priority, coverage, r_langs))
+        if not key_candidates:
             raise ValueError(f"pri.xml missing expected NamedResource key: {key}")
+        key_candidates.sort(key=lambda item: (item[1] == len(expected_set), item[0], item[1]), reverse=True)
+        key_langs = key_candidates[0][2]
         missing_key = [orig for low, orig in sorted(expected_lower.items()) if low not in key_langs]
         if missing_key:
             raise ValueError(
@@ -425,6 +452,133 @@ def self_test_pri_dump() -> str:
         else:
             raise AssertionError("E13 partial UNPLATED (256 only while LIGHTUNPLATED has all 5) unexpectedly passed!")
 
+        # (f) Tier-5 (R2-C2-F5): FakeSquare44x44LogoJunk.txt substring spoof must NOT satisfy Square44x44Logo.png -> FAIL
+        p_spoof = tmp_dir / "pri_r2_sq44_spoof.xml"
+        base_no_unplated = _build_realistic_makepri_xml(
+            CANONICAL_35_LOCALES,
+            include_unplated=False,
+            include_lightunplated=False,
+        )
+        fake_cands = "".join(
+            f'<Candidate qualifiers="TargetSize-{ts}, AlternateForm-{alt}" type="Path"><Value>junk.txt</Value></Candidate>'
+            for alt in ("UNPLATED", "LIGHTUNPLATED")
+            for ts in ("16", "24", "32", "48", "256")
+        )
+        spoof_xml = base_no_unplated.replace(
+            "</ResourceMapSubtree>",
+            f'      <NamedResource name="FakeSquare44x44LogoJunk.txt">{fake_cands}</NamedResource>\n    </ResourceMapSubtree>',
+            1,
+        )
+        p_spoof.write_text(spoof_xml, encoding="utf-8")
+        try:
+            verify_pri_dump(p_spoof)
+        except ValueError as exc:
+            if "AlternateForm=UNPLATED" not in str(exc):
+                raise AssertionError(f"FakeSquare44x44LogoJunk spoof error lacked AlternateForm=UNPLATED: {exc}") from exc
+        else:
+            raise AssertionError("FakeSquare44x44LogoJunk.txt substring spoof unexpectedly passed!")
+
+        # (g) Tier-5 (R2-C2-F5): Child <Qualifier> elements AND combined inline qualifiers= + qualifierSet= -> PASS
+        p_child = tmp_dir / "pri_r2_child_qual.xml"
+        child_lines: list[str] = []
+        for key in REQUIRED_PRI_RESOURCE_KEYS:
+            cands = "".join(
+                f'<Candidate type="String"><Qualifier name="Language" value="{loc.upper()}" /><Value>{key}-{loc}</Value></Candidate>'
+                for loc in CANONICAL_35_LOCALES
+            )
+            child_lines.append(f'      <NamedResource name="{key}">{cands}</NamedResource>')
+        child_sq = [
+            f'<Candidate type="Path"><Qualifier name="Scale" value="{sc}" /><Value>Assets\\sq.png</Value></Candidate>'
+            for sc in ("100", "125", "150", "200", "400")
+        ]
+        for alt in ("UNPLATED", "LIGHTUNPLATED"):
+            for ts in ("16", "24", "32", "48", "256"):
+                child_sq.append(
+                    f'<Candidate type="Path"><Qualifier name="TargetSize" value="{ts}" />'
+                    f'<Qualifier name="AlternateForm" value="{alt}" /><Value>Assets\\sq.png</Value></Candidate>'
+                )
+        child_lines.append(f'      <NamedResource name="Assets\\Square44x44Logo.png">{"".join(child_sq)}</NamedResource>')
+        p_child.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<PriInfo><ResourceMap name="TotalDrop.TotalDrop"><ResourceMapSubtree name="Resources">\n'
+            + "\n".join(child_lines)
+            + "\n</ResourceMapSubtree></ResourceMap></PriInfo>\n",
+            encoding="utf-8",
+        )
+        verify_pri_dump(p_child)
+
+        p_split_q = tmp_dir / "pri_r2_split_inline_qset.xml"
+        split_lines: list[str] = []
+        for key in REQUIRED_PRI_RESOURCE_KEYS:
+            cands = "".join(
+                f'<Candidate qualifiers="Language-{loc.upper()}" type="String"><Value>{key}-{loc}</Value></Candidate>'
+                for loc in CANONICAL_35_LOCALES
+            )
+            split_lines.append(f'      <NamedResource name="{key}">{cands}</NamedResource>')
+        split_sq = [
+            f'<Candidate qualifiers="Scale-{sc}" type="Path"><Value>Assets\\sq.png</Value></Candidate>'
+            for sc in ("100", "125", "150", "200", "400")
+        ]
+        for qidx in ("90", "91"):
+            for ts in ("16", "24", "32", "48", "256"):
+                split_sq.append(
+                    f'<Candidate qualifiers="TargetSize-{ts}" qualifierSet="{qidx}" type="Path"><Value>Assets\\sq.png</Value></Candidate>'
+                )
+        split_lines.append(f'      <NamedResource name="Assets\\Square44x44Logo.png">{"".join(split_sq)}</NamedResource>')
+        p_split_q.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<PriInfo><ResourceMap name="TotalDrop.TotalDrop"><DecisionInfo>'
+            '<QualifierSet index="90"><Qualifier name="AlternateForm" value="UNPLATED" /></QualifierSet>'
+            '<QualifierSet index="91"><Qualifier name="AlternateForm" value="LIGHTUNPLATED" /></QualifierSet>'
+            '</DecisionInfo><ResourceMapSubtree name="Resources">\n'
+            + "\n".join(split_lines)
+            + "\n</ResourceMapSubtree></ResourceMap></PriInfo>\n",
+            encoding="utf-8",
+        )
+        verify_pri_dump(p_split_q)
+
+        # (h) Tier-5 (R2-C2-F5): Other/appTagline (1 lang) before Resources/appTagline (35 langs) -> PASS;
+        # splitting 17+18 languages across unrelated subtrees (neither complete) -> FAIL.
+        p_multi = tmp_dir / "pri_r2_multi_subtree.xml"
+        p_multi.write_text(
+            _build_realistic_makepri_xml(CANONICAL_35_LOCALES).replace(
+                '<NamedResource name="appTagline">',
+                '<NamedResource name="Other/appTagline"><Candidate qualifiers="Language-EN" type="String"><Value>x</Value></Candidate></NamedResource>\n'
+                '      <NamedResource name="Resources/appTagline">',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        verify_pri_dump(p_multi)
+
+        p_multi_split = tmp_dir / "pri_r2_multi_split_incomplete.xml"
+        h1 = "".join(
+            f'<Candidate qualifiers="Language-{loc.upper()}" type="String"><Value>a-{loc}</Value></Candidate>'
+            for loc in CANONICAL_35_LOCALES[:17]
+        )
+        h2 = "".join(
+            f'<Candidate qualifiers="Language-{loc.upper()}" type="String"><Value>b-{loc}</Value></Candidate>'
+            for loc in CANONICAL_35_LOCALES[17:]
+        )
+        base_multi = _build_realistic_makepri_xml(CANONICAL_35_LOCALES)
+        mut_multi = re.sub(
+            r'<NamedResource name="appTagline">.*?</NamedResource>',
+            f'<NamedResource name="Other/appTagline">{h1}</NamedResource>\n'
+            f'      <NamedResource name="Resources/appTagline">{h2}</NamedResource>',
+            base_multi,
+            count=1,
+            flags=re.DOTALL,
+        )
+        assert mut_multi != base_multi
+        p_multi_split.write_text(mut_multi, encoding="utf-8")
+        try:
+            verify_pri_dump(p_multi_split)
+        except ValueError as exc:
+            if "18 != 35" not in str(exc):
+                raise AssertionError(f"split multi-subtree error lacked '18 != 35': {exc}") from exc
+        else:
+            raise AssertionError("split 17+18 languages across Other/ and Resources/ unexpectedly passed!")
+
     # Tier-5 (C2-F5): Leading-zero and non-ASCII digit MSIX version quads must be rejected.
     for bad_quad in ("01.0.1.0", "1.00.1.0", "00.1.1.0", "١.٠.١.٠", "٠.١.١.٠"):
         try:
@@ -436,8 +590,246 @@ def self_test_pri_dump() -> str:
 
     return (
         "realistic MakePri dump (35-locale, missing zh-Hant 34!=35, LIGHTUNPLATED-only, "
-        "QualifierSet, E13 per-altform 5-size matrix, Tier-5 ASCII quad guard) verified"
+        "QualifierSet, E13 per-altform 5-size matrix, R2-C2-F5 exact Square44 leaf/child/split-qset/multi-subtree, "
+        "Tier-5 ASCII quad guard) verified"
     )
+
+
+FORBIDDEN_PACKAGE_KEY_EXTS: tuple[str, ...] = (
+    ".pfx", ".p12", ".snk", ".cer", ".jks", ".keystore", ".pepk", ".key", ".pem", ".pvk",
+)
+REQUIRED_UPLOAD_PDBS: frozenset[str] = frozenset(
+    {
+        "totaldrop-winui.pdb",
+        "totaldrop_windows_ffi.pdb",
+        "totaldrop_explorer_ext.pdb",
+    }
+)
+PDB_MSF7_MAGIC: bytes = b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\x00\x00\x00"
+ALLOWED_OPC_COMPRESS_TYPES: tuple[int, ...] = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+FORBIDDEN_ZIP_FLAGS: int = 0x0001 | 0x0020 | 0x0040 | 0x2000
+
+
+def _check_opc_zip_entries(
+    zf: zipfile.ZipFile,
+    label: str,
+    *,
+    flat_root_only: bool = False,
+    case_sensitive_unique_paths: tuple[str, ...] = (),
+) -> list[str]:
+    """Enforce hardened OPC/ZIP structural & security invariants matching tools/verify-msix-artifact.py."""
+    infos = zf.infolist()
+
+    for info in infos:
+        if info.compress_type not in ALLOWED_OPC_COMPRESS_TYPES:
+            raise ValueError(
+                f"{label}: ZIP entry {info.orig_filename!r} uses unsupported OPC/MSIX compression method "
+                f"{info.compress_type} (only ZIP_STORED=0 and ZIP_DEFLATED=8 are permitted)"
+            )
+        if (info.flag_bits & FORBIDDEN_ZIP_FLAGS) != 0:
+            raise ValueError(
+                f"{label}: ZIP entry {info.orig_filename!r} has forbidden general-purpose flag bits "
+                f"{info.flag_bits:#06x} (forbidden mask {FORBIDDEN_ZIP_FLAGS:#06x})"
+            )
+
+    try:
+        bad = zf.testzip()
+    except (zlib.error, zipfile.BadZipFile, RuntimeError, EOFError, struct.error, OverflowError) as exc:
+        raise ValueError(f"{label}: corrupt ZIP archive: {exc}") from exc
+    if bad is not None:
+        raise ValueError(f"{label}: corrupt ZIP member {bad!r}")
+
+    raw_names = [info.filename for info in infos]
+    seen_exact: set[str] = set()
+    seen_lower: dict[str, str] = {}
+    seen_files: dict[str, str] = {}
+    seen_dirs: dict[str, str] = {}
+    seen_dir_case: dict[str, str] = {}
+
+    for info in infos:
+        if info.orig_filename != info.filename:
+            raise ValueError(
+                f"{label}: raw ZIP entry name {info.orig_filename!r} differs from normalized name "
+                f"{info.filename!r} (NUL truncation, backslash separator, or 0x7075 extra-field spoofing is forbidden)"
+            )
+        unix_type = (info.external_attr >> 16) & 0o170000
+        if info.create_system in (3, 19) or unix_type != 0:
+            if unix_type == 0o120000:
+                raise ValueError(
+                    f"{label}: symbolic link ZIP entry is forbidden: {info.orig_filename!r}"
+                )
+            if unix_type not in (0, 0o100000, 0o040000):
+                raise ValueError(
+                    f"{label}: non-regular Unix ZIP entry mode {unix_type:#o} is forbidden: {info.orig_filename!r}"
+                )
+            if unix_type == 0o040000 and not info.filename.endswith("/"):
+                raise ValueError(
+                    f"{label}: directory-mode ZIP entry missing trailing slash: {info.orig_filename!r}"
+                )
+            if unix_type == 0o100000 and info.filename.endswith("/"):
+                raise ValueError(
+                    f"{label}: regular-file-mode ZIP entry has trailing slash: {info.orig_filename!r}"
+                )
+
+        if zf.fp is not None:
+            saved_pos = zf.fp.tell()
+            try:
+                zf.fp.seek(info.header_offset)
+                lfh = zf.fp.read(30)
+                if len(lfh) != 30 or lfh[:4] != b"PK\x03\x04":
+                    raise ValueError(
+                        f"{label}: ZIP entry {info.orig_filename!r} has invalid local file header"
+                    )
+                lfh_flags, lfh_method = struct.unpack_from("<HH", lfh, 6)
+                lfh_name_len = struct.unpack_from("<H", lfh, 26)[0]
+                if lfh_method != info.compress_type:
+                    raise ValueError(
+                        f"{label}: ZIP entry {info.orig_filename!r} local-header compression method "
+                        f"({lfh_method}) differs from central-directory method ({info.compress_type})"
+                    )
+                if (lfh_flags & FORBIDDEN_ZIP_FLAGS) != 0:
+                    raise ValueError(
+                        f"{label}: ZIP entry {info.orig_filename!r} local-header has forbidden flags {lfh_flags:#06x}"
+                    )
+                if (lfh_flags & 0x0008) != (info.flag_bits & 0x0008):
+                    raise ValueError(
+                        f"{label}: ZIP entry {info.orig_filename!r} local-header data-descriptor flag mismatch"
+                    )
+                lfh_name_bytes = zf.fp.read(lfh_name_len)
+                cd_encoding = "utf-8" if (info.flag_bits & 0x0800) else "cp437"
+                try:
+                    expected_name_bytes = info.orig_filename.encode(cd_encoding)
+                except UnicodeEncodeError as exc:
+                    raise ValueError(
+                        f"{label}: ZIP entry {info.orig_filename!r} cannot be encoded as {cd_encoding}: {exc}"
+                    ) from exc
+                if lfh_name_bytes != expected_name_bytes:
+                    raise ValueError(
+                        f"{label}: ZIP entry {info.orig_filename!r} local-header filename differs from central directory"
+                    )
+            finally:
+                zf.fp.seek(saved_pos)
+
+        name = info.filename
+        if name in seen_exact:
+            raise ValueError(f"{label}: duplicate ZIP entry {name!r}")
+        seen_exact.add(name)
+
+        if not name or name.startswith("/") or "\\" in name or ":" in name:
+            raise ValueError(f"{label}: unsafe OPC/ZIP entry path {name!r}")
+        # Store ANSI-only path invariant (0x20..=0x7E) — T2-F06-04
+        if any(ord(ch) < 0x20 or ord(ch) > 0x7E for ch in name):
+            raise ValueError(
+                f"{label}: non-ASCII ZIP entry violates Store ANSI-only path rule: {name!r}"
+            )
+
+        is_dir = name.endswith("/")
+        parts = name.split("/")
+        check_parts = parts[:-1] if is_dir else parts
+        if not check_parts:
+            raise ValueError(f"{label}: empty OPC/ZIP entry path {name!r}")
+        if ".." in check_parts or "." in check_parts:
+            raise ValueError(f"{label}: unsafe relative/traversal path component in ZIP entry {name!r}")
+        if "" in check_parts:
+            raise ValueError(f"{label}: empty path segment in ZIP entry {name!r}")
+        if any(part.endswith((".", " ")) for part in check_parts):
+            raise ValueError(
+                f"{label}: OPC/ZIP path segment with trailing dot or space is forbidden: {name!r}"
+            )
+
+        if is_dir:
+            if info.file_size != 0 or len(zf.read(info)) != 0:
+                raise ValueError(f"{label}: directory ZIP entry {name!r} carries non-zero payload")
+            if name.rstrip("/").lower().endswith(FORBIDDEN_PACKAGE_KEY_EXTS) or any(
+                part.lower().endswith(FORBIDDEN_PACKAGE_KEY_EXTS) for part in check_parts
+            ):
+                raise ValueError(f"{label}: forbidden signing/key directory entry {name!r}")
+
+        if flat_root_only and ("/" in name):
+            raise ValueError(f"{label}: nested directory entry {name!r} not permitted (flat root files only)")
+
+        lower_name = name.lower()
+        if lower_name in seen_lower:
+            raise ValueError(
+                f"{label}: case-insensitive duplicate OPC/ZIP entry {name!r} "
+                f"(conflicts with {seen_lower[lower_name]!r})"
+            )
+        seen_lower[lower_name] = name
+
+        lower_parts = [p.lower() for p in check_parts]
+        for depth in range(1, len(lower_parts)):
+            parent_dir = "/".join(lower_parts[:depth])
+            parent_exact = "/".join(check_parts[:depth])
+            if parent_dir in seen_files:
+                raise ValueError(
+                    f"{label}: colliding OPC/ZIP file/directory entry {name!r} "
+                    f"(conflicts with file {seen_files[parent_dir]!r})"
+                )
+            prev_exact = seen_dir_case.get(parent_dir)
+            if prev_exact is not None and prev_exact != parent_exact:
+                raise ValueError(
+                    f"{label}: case-colliding directory prefix {parent_exact!r} vs {prev_exact!r}"
+                )
+            seen_dir_case[parent_dir] = parent_exact
+            seen_dirs.setdefault(parent_dir, name)
+
+        norm_key = "/".join(lower_parts)
+        exact_key = "/".join(check_parts)
+        if is_dir:
+            if norm_key in seen_files:
+                raise ValueError(
+                    f"{label}: colliding OPC/ZIP file/directory entry {name!r} "
+                    f"(conflicts with file {seen_files[norm_key]!r})"
+                )
+            prev_exact = seen_dir_case.get(norm_key)
+            if prev_exact is not None and prev_exact != exact_key:
+                raise ValueError(
+                    f"{label}: case-colliding directory prefix {exact_key!r} vs {prev_exact!r}"
+                )
+            seen_dir_case[norm_key] = exact_key
+            seen_dirs.setdefault(norm_key, name)
+        else:
+            if norm_key in seen_dirs:
+                raise ValueError(
+                    f"{label}: colliding OPC/ZIP file/directory entry {name!r} "
+                    f"(conflicts with directory prefix from {seen_dirs[norm_key]!r})"
+                )
+            seen_files[norm_key] = name
+
+    for critical_path in case_sensitive_unique_paths:
+        matches = [n for n in raw_names if n.lower() == critical_path.lower()]
+        if len(matches) > 1:
+            raise ValueError(
+                f"{label}: case-insensitive duplicate critical manifest entry {critical_path!r}"
+            )
+    return raw_names
+
+
+def _verify_appxsym_bytes(data: bytes, label: str) -> set[str]:
+    """Validate nested .appxsym archive: flat-root non-empty MSF-7.00 PDBs only, zero forbidden artifacts."""
+    if len(data) < 4 or data[:4] != b"PK\x03\x04":
+        raise ValueError(f"{label}: not a valid ZIP .appxsym archive (magic={data[:4]!r})")
+    pdb_basenames: set[str] = set()
+    forbidden_sym_exts = FORBIDDEN_PACKAGE_KEY_EXTS + (".exe", ".dll", ".msix", ".appx", ".msixbundle")
+    with zipfile.ZipFile(io.BytesIO(data), "r") as sym_zf:
+        names = _check_opc_zip_entries(sym_zf, label, flat_root_only=True)
+        for name in names:
+            lower = name.lower()
+            if lower.endswith(forbidden_sym_exts):
+                raise ValueError(f"{label}: forbidden file inside .appxsym archive: {name!r}")
+            if not lower.endswith(".pdb"):
+                raise ValueError(f"{label}: unexpected non-PDB file inside .appxsym archive: {name!r}")
+            if sym_zf.getinfo(name).file_size <= 0:
+                raise ValueError(f"{label}: empty PDB entry inside .appxsym archive: {name!r}")
+            pdb_bytes = sym_zf.read(name)
+            if len(pdb_bytes) < len(PDB_MSF7_MAGIC) or not pdb_bytes.startswith(PDB_MSF7_MAGIC):
+                raise ValueError(
+                    f"{label}: PDB entry {name!r} does not start with Microsoft MSF 7.00 magic header"
+                )
+            pdb_basenames.add(lower)
+    if not pdb_basenames:
+        raise ValueError(f"{label}: .appxsym archive contains zero .pdb entries")
+    return pdb_basenames
 
 
 def verify_msix_archive(
@@ -457,18 +849,12 @@ def verify_msix_archive(
 
     expected_arch = "x64" if arch in ("x64", "x86_64") else "arm64"
     with zipfile.ZipFile(msix_path, "r") as zf:
-        bad = zf.testzip()
-        if bad is not None:
-            raise ValueError(f"{msix_path.name}: corrupt ZIP member {bad!r}")
-
-        names = zf.namelist()
-        # Store ANSI-only path invariant (0x20..=0x7E) — T2-F06-04
-        for member in names:
-            if any(ord(ch) < 0x20 or ord(ch) > 0x7E for ch in member):
-                raise ValueError(
-                    f"{msix_path.name}: non-ASCII ZIP entry violates Store ANSI-only path rule: {member!r}"
-                )
-
+        names = _check_opc_zip_entries(
+            zf,
+            msix_path.name,
+            flat_root_only=False,
+            case_sensitive_unique_paths=("AppxManifest.xml",),
+        )
         name_set = set(names)
         required = {
             "AppxManifest.xml",
@@ -489,12 +875,33 @@ def verify_msix_archive(
         if expect_signed and zf.getinfo("AppxSignature.p7x").file_size <= 0:
             raise ValueError(f"{msix_path.name}: AppxSignature.p7x is empty")
 
+        forbidden_entries = [
+            n
+            for n in names
+            if n.lower().endswith(".pdb")
+            or n.lower().endswith(".resw")
+            or n.lower().endswith(FORBIDDEN_PACKAGE_KEY_EXTS)
+            or (
+                Path(n.replace("\\", "/")).name.lower().startswith("resources.")
+                and n.lower().endswith(".pri")
+                and n.lower() != "resources.pri"
+            )
+        ]
+        if forbidden_entries:
+            raise ValueError(f"{msix_path.name}: forbidden staging/key/split-PRI artifacts packed in MSIX: {forbidden_entries}")
+
         asset_pngs = [n for n in names if n.startswith("Assets/") and n.lower().endswith(".png")]
         if not asset_pngs:
             raise ValueError(f"{msix_path.name}: missing Assets/*.png entries")
 
-        # Validate AppxBlockMap.xml uses SHA-256
-        blockmap_xml = zf.read("AppxBlockMap.xml").decode("utf-8", errors="replace")
+        # Validate AppxBlockMap.xml and [Content_Types].xml parse as XML, and BlockMap uses SHA-256
+        for opc_xml_name in ("AppxBlockMap.xml", "[Content_Types].xml"):
+            try:
+                opc_xml_raw = zf.read(opc_xml_name).decode("utf-8", errors="strict")
+                ET.fromstring(opc_xml_raw)
+            except (UnicodeDecodeError, ET.ParseError) as exc:
+                raise ValueError(f"{msix_path.name}: invalid XML in {opc_xml_name}: {exc}") from exc
+        blockmap_xml = zf.read("AppxBlockMap.xml").decode("utf-8", errors="strict")
         if "sha256" not in blockmap_xml.lower():
             raise ValueError(f"{msix_path.name}: AppxBlockMap.xml does not declare SHA-256 hash method")
 
@@ -523,18 +930,6 @@ def verify_msix_archive(
 
     if pri_dump is not None:
         verify_pri_dump(pri_dump)
-
-
-FORBIDDEN_PACKAGE_KEY_EXTS: tuple[str, ...] = (
-    ".pfx", ".p12", ".snk", ".cer", ".jks", ".keystore", ".pepk", ".key", ".pem", ".pvk",
-)
-REQUIRED_UPLOAD_PDBS: frozenset[str] = frozenset(
-    {
-        "totaldrop-winui.pdb",
-        "totaldrop_windows_ffi.pdb",
-        "totaldrop_explorer_ext.pdb",
-    }
-)
 
 
 _ASCII_MSIX_QUAD_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$", re.ASCII)
@@ -574,16 +969,16 @@ def verify_msixbundle_archive(
         )
 
     with zipfile.ZipFile(bundle_path, "r") as zf:
-        bad = zf.testzip()
-        if bad is not None:
-            raise ValueError(f"{bundle_path.name}: corrupt ZIP member {bad!r}")
-        names = zf.namelist()
+        names = _check_opc_zip_entries(
+            zf,
+            bundle_path.name,
+            flat_root_only=False,
+            case_sensitive_unique_paths=("AppxMetadata/AppxBundleManifest.xml",),
+        )
+        forbidden_bundle_exts = FORBIDDEN_PACKAGE_KEY_EXTS + (".pdb", ".resw")
         for member in names:
-            if any(ord(ch) < 0x20 or ord(ch) > 0x7E for ch in member):
-                raise ValueError(f"{bundle_path.name}: non-ASCII ZIP entry: {member!r}")
-            low = member.lower()
-            if low.endswith(FORBIDDEN_PACKAGE_KEY_EXTS) or low.endswith(".pdb"):
-                raise ValueError(f"{bundle_path.name}: forbidden key/symbol file inside bundle: {member!r}")
+            if member.lower().endswith(forbidden_bundle_exts):
+                raise ValueError(f"{bundle_path.name}: forbidden key/symbol/staging file inside bundle: {member!r}")
 
         name_set = set(names)
         required = {"AppxMetadata/AppxBundleManifest.xml", "AppxBlockMap.xml", "[Content_Types].xml"}
@@ -592,6 +987,15 @@ def verify_msixbundle_archive(
         missing = sorted(required - name_set)
         if missing:
             raise ValueError(f"{bundle_path.name}: missing required OPC bundle entries: {missing}")
+        if expect_signed and zf.getinfo("AppxSignature.p7x").file_size <= 0:
+            raise ValueError(f"{bundle_path.name}: AppxSignature.p7x is empty")
+
+        for opc_xml_name in ("AppxBlockMap.xml", "[Content_Types].xml"):
+            try:
+                opc_xml_raw = zf.read(opc_xml_name).decode("utf-8", errors="strict")
+                ET.fromstring(opc_xml_raw)
+            except (UnicodeDecodeError, ET.ParseError) as exc:
+                raise ValueError(f"{bundle_path.name}: invalid XML in {opc_xml_name}: {exc}") from exc
 
         bundle_root = ET.fromstring(zf.read("AppxMetadata/AppxBundleManifest.xml"))
         if _local_tag(bundle_root) != "Bundle":
@@ -619,6 +1023,7 @@ def verify_msixbundle_archive(
         ]
         arches_seen: dict[str, str] = {}
         inner_identities: dict[str, dict[str, str]] = {}
+        referenced_files: set[str] = set()
 
         with tempfile.TemporaryDirectory(prefix="td-bundle-check-") as tmp:
             tmp_dir = Path(tmp)
@@ -640,8 +1045,17 @@ def verify_msixbundle_archive(
                     raise ValueError(
                         f"{bundle_path.name}: package {p_file!r} Version={p_ver!r} != bundle Version={b_ver!r}"
                     )
-                if p_file not in name_set:
-                    raise ValueError(f"{bundle_path.name}: referenced slice {p_file!r} missing from bundle ZIP")
+                if (
+                    not p_file
+                    or "/" in p_file
+                    or "\\" in p_file
+                    or not p_file.lower().endswith(".msix")
+                    or p_file not in name_set
+                ):
+                    raise ValueError(
+                        f"{bundle_path.name}: referenced slice {p_file!r} must be a flat root .msix present in bundle ZIP"
+                    )
+                referenced_files.add(p_file)
 
                 slice_path = tmp_dir / Path(p_file).name
                 slice_path.write_bytes(zf.read(p_file))
@@ -674,6 +1088,24 @@ def verify_msixbundle_archive(
         if missing_arches:
             raise ValueError(
                 f"{bundle_path.name}: dual-arch .msixbundle missing required architecture slice(s): {missing_arches}"
+            )
+
+        allowed_bundle_files = referenced_files | {
+            "AppxMetadata/AppxBundleManifest.xml",
+            "AppxBlockMap.xml",
+            "[Content_Types].xml",
+            "AppxSignature.p7x",
+            "AppxMetadata/CodeIntegrity.cat",
+        }
+        unexpected_bundle_entries = sorted(
+            n
+            for n in names
+            if (n.endswith("/") and n != "AppxMetadata/")
+            or (not n.endswith("/") and n not in allowed_bundle_files)
+        )
+        if unexpected_bundle_entries:
+            raise ValueError(
+                f"{bundle_path.name}: unexpected/unreferenced entries inside .msixbundle: {unexpected_bundle_entries}"
             )
 
         if inner_identities["x64"]["publisher"] != inner_identities["arm64"]["publisher"]:
@@ -709,16 +1141,11 @@ def verify_msixupload_archive(
         )
 
     with zipfile.ZipFile(upload_path, "r") as zf:
-        bad = zf.testzip()
-        if bad is not None:
-            raise ValueError(f"{upload_path.name}: corrupt ZIP member {bad!r}")
-        names = zf.namelist()
+        names = _check_opc_zip_entries(zf, upload_path.name, flat_root_only=True)
         bundles: list[str] = []
         appxsyms: list[str] = []
 
         for member in names:
-            if any(ord(ch) < 0x20 or ord(ch) > 0x7E for ch in member):
-                raise ValueError(f"{upload_path.name}: non-ASCII ZIP entry: {member!r}")
             low = member.lower()
             if low.endswith((".msix", ".appx")):
                 raise ValueError(
@@ -762,19 +1189,26 @@ def verify_msixupload_archive(
                 store_mode=store_mode,
             )
 
+        expected_appxsyms = {f"{Path(pf).stem}.appxsym" for pf in bundle_info["slices"].values()}
+        actual_appxsyms = set(appxsyms)
+        if actual_appxsyms != expected_appxsyms:
+            missing_syms = sorted(expected_appxsyms - actual_appxsyms)
+            extra_syms = sorted(actual_appxsyms - expected_appxsyms)
+            raise ValueError(
+                f"{upload_path.name}: .msixupload .appxsym archive set must match bundle slices exactly "
+                f"(expected={sorted(expected_appxsyms)}, missing={missing_syms}, unexpected={extra_syms})"
+            )
+
         all_pdbs: set[str] = set()
         for sym_name in sorted(appxsyms):
             sym_bytes = zf.read(sym_name)
-            with zipfile.ZipFile(io.BytesIO(sym_bytes), "r") as szf:
-                if szf.testzip() is not None:
-                    raise ValueError(f"{upload_path.name}/{sym_name}: corrupt .appxsym archive")
-                sym_pdbs = {Path(n).name.lower() for n in szf.namelist() if n.lower().endswith(".pdb")}
-                missing_pdbs = sorted(REQUIRED_UPLOAD_PDBS - sym_pdbs)
-                if missing_pdbs:
-                    raise ValueError(
-                        f"{upload_path.name}/{sym_name}: .appxsym missing required PDB(s): {missing_pdbs}"
-                    )
-                all_pdbs.update(sym_pdbs)
+            sym_pdbs = _verify_appxsym_bytes(sym_bytes, f"{upload_path.name}/{sym_name}")
+            missing_pdbs = sorted(REQUIRED_UPLOAD_PDBS - sym_pdbs)
+            if missing_pdbs:
+                raise ValueError(
+                    f"{upload_path.name}/{sym_name}: .appxsym missing required PDB(s): {missing_pdbs}"
+                )
+            all_pdbs.update(sym_pdbs)
 
     return {
         "bundle": bundles[0],
@@ -1214,7 +1648,8 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
 
     def t2_f06_04() -> str:
         with tempfile.TemporaryDirectory(prefix="td-f06-04-") as tmp:
-            msix_path = Path(tmp) / artifact_name
+            tmp_dir = Path(tmp)
+            msix_path = tmp_dir / artifact_name
             _create_valid_fixture_msix(msix_path, msix_version, arch="x64")
             with zipfile.ZipFile(msix_path, "a") as zf:
                 zf.writestr("Assets/k\u00f6\u015fe.png", b"\x89PNG\r\n\x1a\n")
@@ -1225,7 +1660,63 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                     raise AssertionError(f"unexpected rejection reason: {exc}") from exc
             else:
                 raise AssertionError("non-ASCII ZIP entry Assets/kose-utf8.png was NOT rejected!")
-        return "non-ASCII internal MSIX ZIP entry rejected (Store ANSI-only rule)"
+
+            # Tier-5 (R2-C2-F4): Hardened OPC/ZIP smuggling negative tests on verify_msix_archive
+            def _expect_msix_fail(case_name: str, path: Path, expected_tok: str) -> None:
+                try:
+                    verify_msix_archive(path, arch="x64", milestone="M1")
+                except ValueError as exc:
+                    if expected_tok.lower() not in str(exc).lower():
+                        raise AssertionError(
+                            f"R2-C2-F4({case_name}): expected {expected_tok!r} in error, got: {exc}"
+                        ) from exc
+                else:
+                    raise AssertionError(f"R2-C2-F4({case_name}): tampered MSIX unexpectedly passed!")
+
+            # (a) Duplicate AppxManifest.xml
+            p_dup = tmp_dir / "dup_manifest.msix"
+            _create_valid_fixture_msix(p_dup, msix_version, arch="x64")
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                with zipfile.ZipFile(p_dup, "a") as zf:
+                    zf.writestr("AppxManifest.xml", b"<Package/>")
+            _expect_msix_fail("dup-manifest", p_dup, "duplicate")
+
+            # (b) Unix symlinks across create_system 0, 3, 10, 14, 19
+            for cs in (0, 3, 10, 14, 19):
+                p_sym = tmp_dir / f"symlink_cs{cs}.msix"
+                _create_valid_fixture_msix(p_sym, msix_version, arch="x64")
+                with zipfile.ZipFile(p_sym, "a") as zf:
+                    zi = zipfile.ZipInfo("evil_link.txt")
+                    zi.create_system = cs
+                    zi.external_attr = 0o120777 << 16
+                    zf.writestr(zi, b"target.txt")
+                _expect_msix_fail(f"symlink-cs{cs}", p_sym, "symbolic link")
+
+            # (c) Non-regular Unix mode FIFO (0o010644) with create_system=0
+            p_fifo = tmp_dir / "fifo.msix"
+            _create_valid_fixture_msix(p_fifo, msix_version, arch="x64")
+            with zipfile.ZipFile(p_fifo, "a") as zf:
+                zi = zipfile.ZipInfo("evil_fifo")
+                zi.create_system = 0
+                zi.external_attr = 0o010644 << 16
+                zf.writestr(zi, b"")
+            _expect_msix_fail("fifo-cs0", p_fifo, "non-regular unix")
+
+            # (d) Path traversal, backslash, drive colon, embedded key (.pfx), and split PRI
+            for tag, entry_name, payload, expect_tok in (
+                ("traversal", "../evil.txt", b"x", "traversal"),
+                ("backslash", "sub\\evil.txt", b"x", "unsafe"),
+                ("drive-colon", "C:evil.txt", b"x", "unsafe"),
+                ("embedded-pfx", "cert.pfx", b"KEY", "cert.pfx"),
+                ("split-pri", "sub/resources.scale-200.pri", b"mrm_pri2", "resources.scale-200.pri"),
+            ):
+                p_bad = tmp_dir / f"bad_{tag}.msix"
+                _create_valid_fixture_msix(p_bad, msix_version, arch="x64")
+                with zipfile.ZipFile(p_bad, "a") as zf:
+                    zf.writestr(entry_name, payload)
+                _expect_msix_fail(tag, p_bad, expect_tok)
+        return "non-ASCII entry + R2-C2-F4 OPC/ZIP smuggling (dup manifest, symlinks, FIFO, traversal, backslash, drive colon, .pfx, split PRI) all rejected"
 
     record("T1-F06-05", t1_f06_05)
     record("T2-F06-01", t2_f06_01)
@@ -1239,7 +1730,7 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
         store_ver = "1.0.1.0"
 
         def t1_f22_03() -> str:
-            # Self-test repo's bundle verifier CLI first (43/43 total, 29/29 baseline)
+            # Self-test repo's bundle verifier CLI first (46/46 total, 29/29 baseline)
             p_st = subprocess.run(
                 [sys.executable, "-B", "-W", "error", str(repo_root / "tools" / "verify-msix-artifact.py"), "--self-test-bundle"],
                 cwd=str(repo_root),
@@ -1247,7 +1738,7 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                 text=True,
                 check=False,
             )
-            if p_st.returncode != 0 or "43/43" not in p_st.stdout or "29/29" not in p_st.stdout:
+            if p_st.returncode != 0 or "46/46" not in p_st.stdout or "29/29" not in p_st.stdout:
                 raise AssertionError(
                     f"tools/verify-msix-artifact.py --self-test-bundle failed: {p_st.stdout}\n{p_st.stderr}"
                 )
@@ -1297,7 +1788,7 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                 )
                 if not ok:
                     raise AssertionError(f"tools/verify-msix-artifact.py rejected valid .msixupload: {msg}")
-            return "dual-arch .msixbundle + .msixupload (2 .appxsym, 3 PDBs, SHA-256 parity) & 43/43 (29/29 baseline) self-test PASS"
+            return "dual-arch .msixbundle + .msixupload (2 .appxsym, 3 PDBs, SHA-256 parity) & 46/46 (29/29 baseline) self-test PASS"
 
         def t1_f22_05() -> str:
             arm64_artifact_name, arm64_ver = resolve_recipe_artifact_name(repo_root, "arm64")
@@ -1443,6 +1934,9 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                 x64_bytes = _build_full_store_synthetic_msix(
                     repo_root, arch="x64", name=store_name, publisher=store_pub, version=store_ver
                 )
+                arm64_bytes = _build_full_store_synthetic_msix(
+                    repo_root, arch="arm64", name=store_name, publisher=store_pub, version=store_ver
+                )
                 sym_bytes = _build_synthetic_appxsym_bytes()
                 bad_upload = tmp_dir / f"TotalDrop-{store_ver}-bare.msixupload"
                 with zipfile.ZipFile(bad_upload, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -1465,7 +1959,77 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                     raise AssertionError(
                         f"tools/verify-msix-artifact.py did not reject bare .msix in .msixupload: ok={ok}, msg={msg}"
                     )
-            return "both verifiers rejected bare standalone .msix inside .msixupload citing Store format lock-in"
+
+                # Tier-5 (R2-C2-F4): Hardened .msixbundle & .msixupload/.appxsym smuggling negative checks
+                good_bundle_bytes = _build_synthetic_bundle_bytes(
+                    name=store_name,
+                    publisher=store_pub,
+                    version=store_ver,
+                    packages=[
+                        ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_bytes),
+                        ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_bytes),
+                    ],
+                )
+                # (a) Duplicate AppxBundleManifest.xml + symlink in .msixbundle
+                bad_bundle_dup = tmp_dir / "dup_bundle.msixbundle"
+                bad_bundle_dup.write_bytes(good_bundle_bytes)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", UserWarning)
+                    with zipfile.ZipFile(bad_bundle_dup, "a") as zf:
+                        zf.writestr("AppxMetadata/AppxBundleManifest.xml", b"<Bundle/>")
+                try:
+                    verify_msixbundle_archive(bad_bundle_dup, milestone="M4", expected_version=store_ver, store_mode=True)
+                except ValueError as exc:
+                    if "duplicate" not in str(exc).lower():
+                        raise AssertionError(f"bundle dup-manifest error lacked 'duplicate': {exc}") from exc
+                else:
+                    raise AssertionError("verify_msixbundle_archive accepted duplicate AppxBundleManifest.xml!")
+
+                bad_bundle_sym = tmp_dir / "sym_bundle.msixbundle"
+                bad_bundle_sym.write_bytes(good_bundle_bytes)
+                with zipfile.ZipFile(bad_bundle_sym, "a") as zf:
+                    zi = zipfile.ZipInfo("evil_link.txt")
+                    zi.create_system = 3
+                    zi.external_attr = 0o120777 << 16
+                    zf.writestr(zi, b"target")
+                try:
+                    verify_msixbundle_archive(bad_bundle_sym, milestone="M4", expected_version=store_ver, store_mode=True)
+                except ValueError as exc:
+                    if "symbolic link" not in str(exc).lower():
+                        raise AssertionError(f"bundle symlink error lacked 'symbolic link': {exc}") from exc
+                else:
+                    raise AssertionError("verify_msixbundle_archive accepted symlink entry!")
+
+                # (b) .appxsym containing traversal, embedded cert.pfx, and fake non-MSF-7.00 PDBs
+                def _make_bad_sym(entries: list[tuple[str, bytes]]) -> bytes:
+                    b = io.BytesIO()
+                    with zipfile.ZipFile(b, "w", compression=zipfile.ZIP_DEFLATED) as szf:
+                        for n, data in entries:
+                            szf.writestr(n, data)
+                    return b.getvalue()
+
+                msf_ok = PDB_MSF7_MAGIC + b"\x00" * 16
+                base_pdb_entries = [(pdb, msf_ok) for pdb in sorted(REQUIRED_UPLOAD_PDBS)]
+                bad_sym_cases = (
+                    ("appxsym-traversal", base_pdb_entries + [("../evil.pdb", msf_ok)], "traversal"),
+                    ("appxsym-pfx", base_pdb_entries + [("cert.pfx", b"KEY")], "cert.pfx"),
+                    ("appxsym-fake-pdb", [(pdb, b"FAKE_NOT_MSF7") for pdb in sorted(REQUIRED_UPLOAD_PDBS)], "msf 7.00"),
+                    ("appxsym-portable-pdb", [(pdb, b"BSJB\x01\x00\x00\x00") for pdb in sorted(REQUIRED_UPLOAD_PDBS)], "msf 7.00"),
+                )
+                for tag, sym_entries, expect_tok in bad_sym_cases:
+                    up = tmp_dir / f"{tag}.msixupload"
+                    with zipfile.ZipFile(up, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                        zf.writestr(f"TotalDrop-{store_ver}.msixbundle", good_bundle_bytes)
+                        zf.writestr(f"TotalDrop_{store_ver}_x64.appxsym", sym_bytes)
+                        zf.writestr(f"TotalDrop_{store_ver}_arm64.appxsym", _make_bad_sym(sym_entries))
+                    try:
+                        verify_msixupload_archive(up, milestone="M4", expected_version=store_ver, store_mode=True)
+                    except ValueError as exc:
+                        if expect_tok not in str(exc).lower():
+                            raise AssertionError(f"R2-C2-F4({tag}): expected {expect_tok!r}, got: {exc}") from exc
+                    else:
+                        raise AssertionError(f"R2-C2-F4({tag}): tampered .msixupload unexpectedly passed!")
+            return "both verifiers rejected bare standalone .msix + R2-C2-F4 bundle/.appxsym smuggling (dup manifest, symlink, traversal, .pfx, non-MSF-7.00 PDB)"
 
         def t2_f22_04() -> str:
             with tempfile.TemporaryDirectory(prefix="td-f22-04-") as tmp:
