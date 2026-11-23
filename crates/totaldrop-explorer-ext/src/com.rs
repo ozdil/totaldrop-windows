@@ -1290,6 +1290,18 @@ mod tests {
         E_NOTIMPL
     }
 
+    static COM_UNIT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Resets `MODULE_REF_COUNT` to `0` on drop while `COM_UNIT_TEST_LOCK` is
+    /// still held so an early `Err` return or unwinding assertion cannot leak
+    /// stale module references into the next serialized COM unit test.
+    struct ModuleRefCleanupGuard;
+    impl Drop for ModuleRefCleanupGuard {
+        fn drop(&mut self) {
+            MODULE_REF_COUNT.store(0, Ordering::Release);
+        }
+    }
+
     struct ThreadMuiRestore;
     impl Drop for ThreadMuiRestore {
         fn drop(&mut self) {
@@ -1300,6 +1312,11 @@ mod tests {
 
     #[test]
     fn com_factory_double_instantiation_error_contracts_and_10001_cap() -> TestResult {
+        let _guard = COM_UNIT_TEST_LOCK
+            .lock()
+            .map_err(|_| "COM_UNIT_TEST_LOCK poisoned")?;
+        let _cleanup = ModuleRefCleanupGuard;
+
         // Error contract checks on DllGetClassObject.
         // SAFETY: Explicit null-pointer contract checks.
         let hr_null_ppv = unsafe {
@@ -1490,6 +1507,11 @@ mod tests {
     #[test]
     fn tier5_com_lock_server_query_interface_overflow_immortality_and_mixed_virtual_items()
     -> TestResult {
+        let _guard = COM_UNIT_TEST_LOCK
+            .lock()
+            .map_err(|_| "COM_UNIT_TEST_LOCK poisoned")?;
+        let _cleanup = ModuleRefCleanupGuard;
+
         // 1. Direct saturating_add_ref / saturating_release_ref overflow & underflow guards.
         let counter = AtomicU32::new(0);
         assert_eq!(saturating_release_ref(&counter), (false, 0));

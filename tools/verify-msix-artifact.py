@@ -2413,8 +2413,7 @@ def _extract_pri_candidate_qualifiers(
 
 def verify_pri_dump(pri_dump_path: Path) -> None:
     """Parse MakePri.exe XML dump and verify all 35 locales, 5 UI/COM keys, 6 logos, 5 XBFs, and 5x2 unplated matrix."""
-    raw_xml = pri_dump_path.read_text(encoding="utf-8")
-    root = ET.fromstring(raw_xml)
+    root = ET.parse(pri_dump_path).getroot()
 
     qualifier_sets: dict[str, list[tuple[str, str]]] = {}
     for el in root.iter():
@@ -6173,13 +6172,14 @@ def run_self_test_bundle() -> int:
                 "symbolic link",
             )
 
-        # Cases 39a..39d (Tier-5 C2-F4): XML-parsed verify_pri_dump positive & negative checks.
+        # Cases 39a..39e (Tier-5 C2-F4 / R2-N1): XML-parsed verify_pri_dump positive & negative checks.
         def _build_pri_xml(
             locales: list[str],
             *,
             unplated_sizes: tuple[str, ...] = REQUIRED_PRI_TARGET_SIZES,
             lightunplated_sizes: tuple[str, ...] = REQUIRED_PRI_TARGET_SIZES,
             use_qualifier_sets: bool = False,
+            xml_encoding: str = "UTF-8",
         ) -> str:
             qset_lines: list[str] = []
             res_lines: list[str] = []
@@ -6235,7 +6235,7 @@ def run_self_test_bundle() -> int:
                 )
             dec_block = f"    <DecisionInfo>\n" + "\n".join(qset_lines) + "\n    </DecisionInfo>\n" if qset_lines else ""
             return (
-                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                f'<?xml version="1.0" encoding="{xml_encoding}"?>\n'
                 "<PriInfo>\n"
                 '  <ResourceMap name="TotalDrop">\n'
                 + dec_block
@@ -6292,9 +6292,43 @@ def run_self_test_bundle() -> int:
             "missing expected NamedResource entries",
         )
 
+        # Case 39e (Tier-5 R2-N1): UTF-8 BOM and UTF-16LE MakePri.exe XML dumps pass when valid,
+        # and UTF-16LE still rejects missing locales.
+        pri_ok_utf8_bom = tmp_dir / "pri_39e_utf8_bom.xml"
+        pri_ok_utf8_bom.write_bytes(
+            b"\xef\xbb\xbf"
+            + _build_pri_xml(all_35, use_qualifier_sets=False, xml_encoding="utf-8").encode("utf-8")
+        )
+        verify_pri_dump(pri_ok_utf8_bom)
+
+        pri_ok_utf16le = tmp_dir / "pri_39e_utf16le.xml"
+        pri_utf16le_bytes = (
+            b"\xff\xfe"
+            + _build_pri_xml(all_35, use_qualifier_sets=False, xml_encoding="utf-16").encode("utf-16-le")
+        )
+        pri_ok_utf16le.write_bytes(pri_utf16le_bytes)
+        try:
+            pri_utf16le_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            pass
+        else:
+            raise AssertionError("case-39e-pri-utf16le: UTF-16LE fixture unexpectedly decoded as UTF-8")
+        verify_pri_dump(pri_ok_utf16le)
+
+        pri_bad_utf16le = tmp_dir / "pri_39e_utf16le_missing_sw.xml"
+        pri_bad_utf16le.write_bytes(
+            b"\xff\xfe"
+            + _build_pri_xml(
+                [loc for loc in all_35 if loc != "sw"],
+                use_qualifier_sets=False,
+                xml_encoding="utf-16",
+            ).encode("utf-16-le")
+        )
+        expect_fail("case-39e-pri-utf16le-missing-sw", lambda: verify_pri_dump(pri_bad_utf16le), "sw")
+
     print(
-        "self-test-bundle OK: 42/42 checks passed "
-        "(29/29 baseline + 13/13 hardened positive & negative bundle/msixupload/store-mode/PRI checks)."
+        "self-test-bundle OK: 43/43 checks passed "
+        "(29/29 baseline + 14/14 hardened positive & negative bundle/msixupload/store-mode/PRI checks)."
     )
     return 0
 

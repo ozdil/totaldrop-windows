@@ -1239,7 +1239,7 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
         store_ver = "1.0.1.0"
 
         def t1_f22_03() -> str:
-            # Self-test repo's bundle verifier CLI first (42/42 total, 29/29 baseline)
+            # Self-test repo's bundle verifier CLI first (43/43 total, 29/29 baseline)
             p_st = subprocess.run(
                 [sys.executable, "-B", "-W", "error", str(repo_root / "tools" / "verify-msix-artifact.py"), "--self-test-bundle"],
                 cwd=str(repo_root),
@@ -1247,7 +1247,7 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                 text=True,
                 check=False,
             )
-            if p_st.returncode != 0 or "42/42" not in p_st.stdout or "29/29" not in p_st.stdout:
+            if p_st.returncode != 0 or "43/43" not in p_st.stdout or "29/29" not in p_st.stdout:
                 raise AssertionError(
                     f"tools/verify-msix-artifact.py --self-test-bundle failed: {p_st.stdout}\n{p_st.stderr}"
                 )
@@ -1297,7 +1297,7 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                 )
                 if not ok:
                     raise AssertionError(f"tools/verify-msix-artifact.py rejected valid .msixupload: {msg}")
-            return "dual-arch .msixbundle + .msixupload (2 .appxsym, 3 PDBs, SHA-256 parity) & 42/42 (29/29 baseline) self-test PASS"
+            return "dual-arch .msixbundle + .msixupload (2 .appxsym, 3 PDBs, SHA-256 parity) & 43/43 (29/29 baseline) self-test PASS"
 
         def t1_f22_05() -> str:
             arm64_artifact_name, arm64_ver = resolve_recipe_artifact_name(repo_root, "arm64")
