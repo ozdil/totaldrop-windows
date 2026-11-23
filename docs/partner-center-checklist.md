@@ -85,7 +85,7 @@ Partner Center requires an EU Digital Services Act (DSA) self-declaration for vi
 - **Version and identity invariants:**
   - Monotonic 4-part version `Major.Minor.Build.0` with `1 <= Major <= 65535` and `Revision == 0` (e.g., `1.0.1.0` -> `1.0.2.0`).
   - Zero unsigned-package OID `2.25.311729368913984317654407730594956997722`.
-  - Zero signing keys/certificates (`.pfx`, `.p12`, `.cer`, `.snk`) inside any archive.
+  - Zero signing keys/certificates (`.pfx`, `.p12`, `.cer`, `.snk`, `.key`, `.pem`, `.pvk`, `.pepk`, `.jks`, `.keystore`) inside any archive.
   - Zero `x86` slices (64-bit `x64` and `ARM64` only).
 - **Closed Flight #1 verification checklist (Customer Group MSA testers on `x64` + `ARM64`):**
   - [ ] Local WACK (`tools/run-wack.ps1`) reports `OVERALL_RESULT="PASS"` and `0` failed tests.

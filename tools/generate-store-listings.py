@@ -162,6 +162,8 @@ PROHIBITED_EXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
     for ext in PROHIBITED_EXT_TERMS
 )
 HTML_TAG_RE = re.compile(r"<[A-Za-z/!]")
+SHA256_HEX_RE = re.compile(r"\A[0-9a-fA-F]{64}\Z", re.ASCII)
+CSV_FORMULA_PREFIXES: tuple[str, ...] = ("=", "+", "@", "-")
 
 CSV_COLUMNS: tuple[str, ...] = (
     "Locale",
@@ -267,6 +269,14 @@ def resolve_allowed_strings(l10n_dir: Path, tag: str, en_map: dict[str, str]) ->
 def inspect_png(path: Path, rel_label: str) -> tuple[dict[str, Any] | None, str | None]:
     if not path.is_file():
         return None, f"{rel_label}: screenshot file not found"
+    try:
+        st_size = path.stat().st_size
+    except OSError as exc:
+        return None, f"{rel_label}: failed to stat screenshot file: {exc}"
+    if st_size < PNG_MIN_BYTES:
+        return None, f"{rel_label}: file truncated ({st_size} bytes < {PNG_MIN_BYTES}-byte minimum PNG size)"
+    if st_size > SCREENSHOT_MAX_BYTES:
+        return None, f"{rel_label}: screenshot size {st_size} exceeds {SCREENSHOT_MAX_BYTES} bytes (50 MiB)"
     raw = path.read_bytes()
     size = len(raw)
     if size < PNG_MIN_BYTES:
@@ -283,6 +293,10 @@ def inspect_png(path: Path, rel_label: str) -> tuple[dict[str, Any] | None, str 
     color_type = -1
     idat_count = 0
     idat_total_bytes = 0
+    idat_closed = False
+    idat_dec = zlib.decompressobj()
+    max_uncomp_bytes = (SCREENSHOT_MAX_WIDTH * 8 + 1) * SCREENSHOT_MAX_HEIGHT + 1024
+    uncomp_bytes = 0
     plte_seen = False
     plte_seen_before_idat = False
     seen_iend = False
@@ -335,6 +349,8 @@ def inspect_png(path: Path, rel_label: str) -> tuple[dict[str, Any] | None, str 
         else:
             if chunk_type == b"IHDR":
                 return None, f"{rel_label}: duplicate PNG IHDR chunk at offset {pos}"
+            if chunk_type != b"IDAT" and idat_count > 0:
+                idat_closed = True
             if chunk_type == b"PLTE":
                 if color_type in (0, 4):
                     return None, f"{rel_label}: PNG PLTE chunk is forbidden for grayscale color_type={color_type}"
@@ -351,8 +367,24 @@ def inspect_png(path: Path, rel_label: str) -> tuple[dict[str, Any] | None, str 
                 plte_seen = True
                 plte_seen_before_idat = True
             elif chunk_type == b"IDAT":
+                if idat_closed:
+                    return None, f"{rel_label}: non-consecutive PNG IDAT chunk at offset {pos}"
                 idat_count += 1
                 idat_total_bytes += chunk_len
+                if chunk_len > 0:
+                    try:
+                        pending = raw[data_start:data_end]
+                        while pending:
+                            out_chunk = idat_dec.decompress(pending, 65536)
+                            uncomp_bytes += len(out_chunk)
+                            if uncomp_bytes > max_uncomp_bytes:
+                                return (
+                                    None,
+                                    f"{rel_label}: PNG IDAT decompressed payload exceeds maximum allowed pixel buffer",
+                                )
+                            pending = idat_dec.unconsumed_tail
+                    except zlib.error as exc:
+                        return None, f"{rel_label}: corrupt zlib stream in PNG IDAT chunk: {exc}"
             elif chunk_type == b"IEND":
                 if chunk_len != 0:
                     return None, f"{rel_label}: PNG IEND chunk must have length 0 (got {chunk_len})"
@@ -369,6 +401,18 @@ def inspect_png(path: Path, rel_label: str) -> tuple[dict[str, Any] | None, str 
         return None, f"{rel_label}: indexed PNG (color_type=3) missing required PLTE palette chunk before IDAT"
     if not seen_iend or pos != size:
         return None, f"{rel_label}: PNG missing terminating IEND chunk at EOF"
+
+    try:
+        tail = idat_dec.flush()
+        uncomp_bytes += len(tail)
+    except zlib.error as exc:
+        return None, f"{rel_label}: corrupt or truncated zlib stream in PNG IDAT: {exc}"
+    if not idat_dec.eof:
+        return None, f"{rel_label}: truncated zlib stream in PNG IDAT (missing EOF)"
+    if idat_dec.unused_data:
+        return None, f"{rel_label}: trailing unused bytes ({len(idat_dec.unused_data)}) after PNG IDAT zlib stream"
+    if uncomp_bytes < 1:
+        return None, f"{rel_label}: PNG IDAT decompressed to zero bytes"
 
     if width < SCREENSHOT_MIN_WIDTH or height < SCREENSHOT_MIN_HEIGHT:
         return (
@@ -430,8 +474,24 @@ def collect_screenshots(screenshots_dir: Path) -> tuple[dict[str, list[dict[str,
     if not children:
         return {}, [f"screenshots directory is empty: {screenshots_dir}"]
 
-    subdirs = [p for p in children if p.is_dir()]
-    root_files = [p for p in children if p.is_file() and not p.name.startswith(".")]
+    subdirs: list[Path] = []
+    root_files: list[Path] = []
+    for p in children:
+        rel = p.relative_to(screenshots_dir).as_posix()
+        if p.is_symlink() and not p.exists():
+            errors.append(f"screenshots: dangling symlink {rel!r} is forbidden")
+            continue
+        if p.is_dir():
+            resolved_dir = p.resolve()
+            if not resolved_dir.is_relative_to(root_resolved) or resolved_dir == root_resolved:
+                errors.append(f"screenshots: directory symlink {rel!r} escapes --screenshots-dir")
+                continue
+            subdirs.append(p)
+        elif p.is_file():
+            if not p.name.startswith("."):
+                root_files.append(p)
+        else:
+            errors.append(f"screenshots: unsupported non-regular entry {rel!r} is forbidden")
 
     def inspect_dir_files(files: list[Path], context: str) -> list[dict[str, Any]]:
         valid_entries: list[dict[str, Any]] = []
@@ -485,7 +545,20 @@ def collect_screenshots(screenshots_dir: Path) -> tuple[dict[str, list[dict[str,
     for tag in CANONICAL_TAGS:
         loc_dir = screenshots_dir / tag
         if loc_dir.is_dir():
-            loc_files = [p for p in loc_dir.iterdir() if p.is_file() and not p.name.startswith(".")]
+            loc_files: list[Path] = []
+            for p in sorted(loc_dir.iterdir(), key=lambda x: x.name):
+                sub_rel = p.relative_to(screenshots_dir).as_posix()
+                if p.is_symlink() and not p.exists():
+                    errors.append(f"locale {tag}: dangling symlink {sub_rel!r} is forbidden")
+                    continue
+                if p.is_dir():
+                    errors.append(f"locale {tag}: unexpected nested subdirectory {sub_rel!r} is forbidden")
+                    continue
+                if p.is_file():
+                    if not p.name.startswith("."):
+                        loc_files.append(p)
+                else:
+                    errors.append(f"locale {tag}: unsupported non-regular entry {sub_rel!r} is forbidden")
             loc_valid = inspect_dir_files(loc_files, f"locale {tag}")
             if len(loc_valid) < SCREENSHOT_MIN_COUNT:
                 errors.append(
@@ -625,11 +698,14 @@ def render_csv_bytes(doc: dict[str, Any]) -> bytes:
 def _load_forbidden_arb_strings(l10n_dir: Path) -> list[tuple[str, str]]:
     """Load deduplicated values of forbidden non-Windows ARB keys across all app_*.arb catalogs."""
     app_dir = l10n_dir / "app"
+    if not app_dir.is_dir():
+        raise ValueError(f"l10n app directory not found for forbidden ARB-key check: {app_dir}")
+    arb_paths = sorted(app_dir.glob("app_*.arb"))
+    if not arb_paths:
+        raise ValueError(f"l10n app directory contains zero app_*.arb files: {app_dir}")
     seen: set[tuple[str, str]] = set()
     out: list[tuple[str, str]] = []
-    if not app_dir.is_dir():
-        return out
-    for arb_path in sorted(app_dir.glob("app_*.arb")):
+    for arb_path in arb_paths:
         data = parse_json_no_duplicates(arb_path.read_text(encoding="utf-8"), arb_path.name)
         for fk in FORBIDDEN_ARB_KEYS:
             val = data.get(fk)
@@ -674,6 +750,11 @@ def _check_text_hygiene(
                 f"locale {locale} {field}: leaks forbidden non-Windows ARB string from key {fk!r}"
             )
 
+    if not allow_newline and text and text[0] in CSV_FORMULA_PREFIXES:
+        errors.append(
+            f"locale {locale} {field}: starts with spreadsheet formula-injection prefix {text[0]!r}"
+        )
+
 
 def validate_document(
     doc: dict[str, Any],
@@ -684,6 +765,27 @@ def validate_document(
 ) -> list[str]:
     """Validate a Store listing document thoroughly, collecting ALL errors before returning."""
     errors: list[str] = []
+
+    # Validate top-level schema v1 metadata fields.
+    schema_ver = doc.get("schemaVersion")
+    if isinstance(schema_ver, bool) or schema_ver != 1:
+        errors.append(f"document schemaVersion: expected 1, got {schema_ver!r}")
+    default_loc = doc.get("defaultLocale")
+    if default_loc != TEMPLATE_LOCALE:
+        errors.append(f"document defaultLocale: expected {TEMPLATE_LOCALE!r}, got {default_loc!r}")
+    locale_count = doc.get("localeCount")
+    if isinstance(locale_count, bool) or locale_count != len(CANONICAL_TAGS):
+        errors.append(f"document localeCount: expected {len(CANONICAL_TAGS)}, got {locale_count!r}")
+    top_privacy = doc.get("privacyPolicyUrl")
+    if top_privacy != EXPECTED_PRIVACY_URL:
+        errors.append(
+            f"document privacyPolicyUrl: expected HTTPS {EXPECTED_PRIVACY_URL!r}, got {top_privacy!r}"
+        )
+    top_support = doc.get("supportContact")
+    if top_support != EXPECTED_SUPPORT_CONTACT:
+        errors.append(
+            f"document supportContact: expected {EXPECTED_SUPPORT_CONTACT!r}, got {top_support!r}"
+        )
 
     raw_listings = doc.get("listings")
     entries: list[tuple[str, dict[str, Any]]] = []
@@ -709,7 +811,7 @@ def validate_document(
                 )
             entries.append((loc_str, item))
     else:
-        return ["document missing valid `listings` list or object"]
+        return errors + ["document missing valid `listings` list or object"]
 
     seen_locales: set[str] = set()
     for loc, _ in entries:
@@ -725,7 +827,11 @@ def validate_document(
             f"incomplete 35-locale Store catalog (found {len(seen_locales)}/35); missing locales: {missing_locales}"
         )
 
-    forbidden_strings = _load_forbidden_arb_strings(l10n_dir)
+    try:
+        forbidden_strings = _load_forbidden_arb_strings(l10n_dir)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        errors.append(str(exc))
+        forbidden_strings = []
 
     any_screenshots_present = any(
         isinstance(item.get("Screenshots"), list) and len(item.get("Screenshots", [])) > 0
@@ -747,6 +853,22 @@ def validate_document(
                 errors.append(
                     f"locale {loc}: storeLanguageCode {actual_store_code!r} != {expected_store_code!r}"
                 )
+
+        expected_autonym = AUTONYMS.get(loc)
+        if expected_autonym is not None:
+            actual_autonym = item.get("autonym")
+            if not isinstance(actual_autonym, str) or actual_autonym != expected_autonym:
+                errors.append(f"locale {loc}: autonym {actual_autonym!r} != {expected_autonym!r}")
+
+        pkg_tag = item.get("packageResourceTag")
+        if not isinstance(pkg_tag, str) or pkg_tag != loc:
+            errors.append(f"locale {loc}: packageResourceTag {pkg_tag!r} != {loc!r}")
+
+        reviewed_val = item.get("reviewed")
+        if not isinstance(reviewed_val, bool):
+            errors.append(f"locale {loc}: reviewed must be a boolean, got {reviewed_val!r}")
+        elif loc == TEMPLATE_LOCALE and not reviewed_val:
+            errors.append(f"locale {loc}: default template locale must have reviewed=true")
 
         expected_dir = "rtl" if loc in RTL_LOCALES else "ltr"
         actual_dir = item.get("dir")
@@ -875,6 +997,7 @@ def validate_document(
                     errors.append(
                         f"locale {loc} Screenshots: has {len(screenshots)} screenshots (max {SCREENSHOT_MAX_COUNT})"
                     )
+            seen_shot_files: set[str] = set()
             for idx, shot in enumerate(screenshots):
                 if not isinstance(shot, dict):
                     errors.append(f"locale {loc} Screenshots[{idx}]: entry must be a JSON object")
@@ -903,10 +1026,31 @@ def validate_document(
                             f"locale {loc} Screenshots[{idx}]: dimensions {w}x{h} exceed maximum "
                             f"{SCREENSHOT_MAX_WIDTH}x{SCREENSHOT_MAX_HEIGHT}"
                         )
+                decl_bytes = shot.get("bytes")
+                if isinstance(decl_bytes, bool) or not isinstance(decl_bytes, int):
+                    errors.append(
+                        f"locale {loc} Screenshots[{idx}]: missing or non-integer `bytes` field ({decl_bytes!r})"
+                    )
+                elif decl_bytes < PNG_MIN_BYTES or decl_bytes > SCREENSHOT_MAX_BYTES:
+                    errors.append(
+                        f"locale {loc} Screenshots[{idx}]: declared bytes {decl_bytes} outside valid PNG range "
+                        f"{PNG_MIN_BYTES}..={SCREENSHOT_MAX_BYTES}"
+                    )
+                decl_sha = shot.get("sha256")
+                if not isinstance(decl_sha, str) or not SHA256_HEX_RE.fullmatch(decl_sha):
+                    errors.append(
+                        f"locale {loc} Screenshots[{idx}]: declared sha256 {decl_sha!r} must be 64 hex characters"
+                    )
                 rel_file = shot.get("file")
                 if not isinstance(rel_file, str) or not rel_file.strip():
                     errors.append(f"locale {loc} Screenshots[{idx}]: missing non-empty `file` path")
                 else:
+                    file_key = rel_file.lower()
+                    if file_key in seen_shot_files:
+                        errors.append(
+                            f"locale {loc} Screenshots[{idx}]: duplicate screenshot file entry {rel_file!r}"
+                        )
+                    seen_shot_files.add(file_key)
                     if _is_unsafe_screenshot_rel_path(rel_file):
                         errors.append(
                             f"locale {loc} Screenshots[{idx}]: unsafe screenshot relative path {rel_file!r} "
@@ -933,24 +1077,20 @@ def validate_document(
                                         f"locale {loc} Screenshots[{idx}]: declared dimensions {w}x{h} "
                                         f"!= actual PNG dimensions {meta['width']}x{meta['height']}"
                                     )
-                                if "bytes" in shot:
-                                    decl_bytes = shot.get("bytes")
-                                    if (
-                                        isinstance(decl_bytes, bool)
-                                        or not isinstance(decl_bytes, int)
-                                        or decl_bytes != meta["bytes"]
-                                    ):
-                                        errors.append(
-                                            f"locale {loc} Screenshots[{idx}]: declared bytes {decl_bytes!r} "
-                                            f"!= actual PNG size {meta['bytes']}"
-                                        )
-                                if "sha256" in shot:
-                                    decl_sha = shot.get("sha256")
-                                    if not isinstance(decl_sha, str) or decl_sha.lower() != meta["sha256"]:
-                                        errors.append(
-                                            f"locale {loc} Screenshots[{idx}]: declared sha256 {decl_sha!r} "
-                                            f"!= actual PNG SHA-256 {meta['sha256']!r}"
-                                        )
+                                if (
+                                    not isinstance(decl_bytes, bool)
+                                    and isinstance(decl_bytes, int)
+                                    and decl_bytes != meta["bytes"]
+                                ):
+                                    errors.append(
+                                        f"locale {loc} Screenshots[{idx}]: declared bytes {decl_bytes!r} "
+                                        f"!= actual PNG size {meta['bytes']}"
+                                    )
+                                if isinstance(decl_sha, str) and decl_sha.lower() != meta["sha256"]:
+                                    errors.append(
+                                        f"locale {loc} Screenshots[{idx}]: declared sha256 {decl_sha!r} "
+                                        f"!= actual PNG SHA-256 {meta['sha256']!r}"
+                                    )
 
     return errors
 
@@ -964,6 +1104,7 @@ def check_manifest_resource_parity(errors: list[str]) -> None:
     ):
         path = REPO_ROOT / rel
         if not path.is_file():
+            errors.append(f"{rel}: missing AppxManifest for 35-language Store parity check")
             continue
         root = ET.fromstring(path.read_text(encoding="utf-8"))
         langs = [n.attrib.get("Language", "") for n in root.findall(f"{appx_ns}Resources/{appx_ns}Resource")]

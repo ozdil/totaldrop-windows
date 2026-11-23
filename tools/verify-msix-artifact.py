@@ -42,7 +42,48 @@ IDENTITY_NAME_RE = re.compile(r"^[A-Za-z0-9.-]{3,50}$")
 RDN_KEY_RE = re.compile(r"\A(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?[0-9]+(?:\.[0-9]+)+)\Z", re.ASCII)
 RFC2253_ESCAPABLE_CHARS: frozenset[str] = frozenset({",", "+", '"', "\\", "<", ">", ";", "#", "=", " "})
 ASCII_HEX_DIGITS: frozenset[str] = frozenset("0123456789ABCDEFabcdef")
-FORBIDDEN_UNQUOTED_RDN_CHARS: frozenset[str] = frozenset({'"', ";", "<", ">", "`", "$", "|", "&"})
+FORBIDDEN_UNQUOTED_RDN_CHARS: frozenset[str] = frozenset({'"', ";", "<", ">", "+", "`", "$", "|", "&"})
+PLACEHOLDER_CN_VALUES: frozenset[str] = frozenset({"totaldrop", "00000000-0000-0000-0000-000000000000"})
+PDB_MSF7_MAGIC: bytes = b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\x00\x00\x00"
+EXPECTED_MANIFEST_LANGUAGES: frozenset[str] = frozenset(
+    {
+        "ar",
+        "bn",
+        "cs",
+        "da",
+        "de",
+        "el",
+        "en",
+        "es",
+        "fa",
+        "fi",
+        "fr",
+        "he",
+        "hi",
+        "hu",
+        "id",
+        "it",
+        "ja",
+        "ko",
+        "ms",
+        "nb",
+        "nl",
+        "pl",
+        "pt-BR",
+        "pt-PT",
+        "ro",
+        "ru",
+        "sv",
+        "sw",
+        "th",
+        "tr",
+        "uk",
+        "ur",
+        "vi",
+        "zh-Hans",
+        "zh-Hant",
+    }
+)
 
 APPX_NS = "{http://schemas.microsoft.com/appx/manifest/foundation/windows10}"
 BUNDLE_NS = "{http://schemas.microsoft.com/appx/2013/bundle}"
@@ -105,6 +146,8 @@ FORBIDDEN_KEY_EXTS: tuple[str, ...] = (
     ".snk",
     ".key",
     ".pem",
+    ".pvk",
+    ".pepk",
     ".jks",
     ".keystore",
 )
@@ -848,16 +891,15 @@ def _validate_x500_publisher(publisher: str, label: str) -> None:
 
 
 def is_placeholder_test_identity(name: str, publisher: str) -> bool:
-    """Return True if Name or Publisher matches the temporary CN=TotalDrop / TotalDrop.TotalDrop test identity."""
+    """Return True if Name or Publisher matches a placeholder/all-zero test identity."""
     if isinstance(name, str) and name.strip().lower() == "totaldrop.totaldrop":
         return True
     try:
         parsed_rdns = _parse_x500_publisher(publisher, "Publisher")
     except ValueError:
         return False
-    if len(parsed_rdns) == 1:
-        key, val = parsed_rdns[0]
-        if key == "CN" and val.strip().lower() == "totaldrop":
+    for key, val in parsed_rdns:
+        if key == "CN" and val.strip().lower() in PLACEHOLDER_CN_VALUES:
             return True
     return False
 
@@ -946,9 +988,10 @@ def _extract_zip64_lfh_sizes(extra: bytes, label: str, entry_name: str) -> tuple
                 raise ValueError(
                     f"{label}: ZIP entry {entry_name!r} has duplicate local-header 0x0001 Zip64 extra field"
                 )
-            if data_size < 16:
+            if data_size != 16:
                 raise ValueError(
-                    f"{label}: ZIP entry {entry_name!r} has truncated local-header 0x0001 Zip64 extra field"
+                    f"{label}: ZIP entry {entry_name!r} local-header 0x0001 Zip64 extra field "
+                    f"must be exactly 16 bytes (got {data_size})"
                 )
             found = struct.unpack_from("<QQ", extra, off)
         off += data_size
@@ -1416,6 +1459,24 @@ def _check_opc_zip_entries(
                 f"{label}: raw ZIP entry name {info.orig_filename!r} differs from normalized name "
                 f"{info.filename!r} (NUL truncation, backslash separator, or 0x7075 extra-field spoofing is forbidden)"
             )
+        if info.create_system == 3:
+            unix_type = (info.external_attr >> 16) & 0o170000
+            if unix_type == 0o120000:
+                raise ValueError(
+                    f"{label}: symbolic link ZIP entry is forbidden: {info.orig_filename!r}"
+                )
+            if unix_type not in (0, 0o100000, 0o040000):
+                raise ValueError(
+                    f"{label}: non-regular Unix ZIP entry mode {unix_type:#o} is forbidden: {info.orig_filename!r}"
+                )
+            if unix_type == 0o040000 and not info.filename.endswith("/"):
+                raise ValueError(
+                    f"{label}: directory-mode ZIP entry missing trailing slash: {info.orig_filename!r}"
+                )
+            if unix_type == 0o100000 and info.filename.endswith("/"):
+                raise ValueError(
+                    f"{label}: regular-file-mode ZIP entry has trailing slash: {info.orig_filename!r}"
+                )
         _check_zip_extra_fields(info.extra or b"", label, info.orig_filename, "central-directory")
         if zf.fp is not None:
             saved_pos = zf.fp.tell()
@@ -1638,8 +1699,9 @@ def _canonicalize_manifest_for_parity(elem: ET.Element) -> tuple[object, ...]:
             continue
         attrs.append((k, v))
     text = (elem.text or "").strip()
+    tail = (elem.tail or "").strip()
     children = tuple(_canonicalize_manifest_for_parity(child) for child in elem)
-    return (elem.tag, tuple(attrs), text, children)
+    return (elem.tag, tuple(attrs), text, tail, children)
 
 
 def _parse_resource_directory(
@@ -1865,6 +1927,88 @@ def verify_manifest_extensions(manifest_root: ET.Element) -> None:
 
     if manifest_root.tag != f"{appx_ns}Package":
         raise ValueError(f"AppxManifest.xml root must be <Package>, got {manifest_root.tag!r}")
+
+    # 0a. <Properties> exact cardinality + non-empty DisplayName & PublisherDisplayName.
+    doc_props = manifest_root.findall(f".//{appx_ns}Properties")
+    direct_props = manifest_root.findall(f"{appx_ns}Properties")
+    if len(doc_props) != 1 or len(direct_props) != 1:
+        raise ValueError(
+            "AppxManifest.xml must contain exactly 1 top-level <Properties> element "
+            f"(doc={len(doc_props)}, direct={len(direct_props)})"
+        )
+    props_el = direct_props[0]
+    for prop_tag in ("DisplayName", "PublisherDisplayName"):
+        doc_tags = manifest_root.findall(f".//{appx_ns}{prop_tag}")
+        direct_tags = props_el.findall(f"{appx_ns}{prop_tag}")
+        if len(doc_tags) != 1 or len(direct_tags) != 1:
+            raise ValueError(
+                f"AppxManifest.xml <Properties> must contain exactly 1 <{prop_tag}> "
+                f"(doc={len(doc_tags)}, direct={len(direct_tags)})"
+            )
+        if not (direct_tags[0].text or "").strip():
+            raise ValueError(f"AppxManifest.xml <Properties>/<{prop_tag}> must be non-empty")
+
+    # 0b. <Dependencies> exact Windows.Desktop >= 10.0.19041.0 and Microsoft.WindowsAppRuntime.1.8.
+    doc_deps = manifest_root.findall(f".//{appx_ns}Dependencies")
+    direct_deps = manifest_root.findall(f"{appx_ns}Dependencies")
+    if len(doc_deps) != 1 or len(direct_deps) != 1:
+        raise ValueError(
+            "AppxManifest.xml must contain exactly 1 top-level <Dependencies> element "
+            f"(doc={len(doc_deps)}, direct={len(direct_deps)})"
+        )
+    deps_el = direct_deps[0]
+    doc_tdfs = manifest_root.findall(f".//{appx_ns}TargetDeviceFamily")
+    direct_tdfs = deps_el.findall(f"{appx_ns}TargetDeviceFamily")
+    if len(doc_tdfs) != 1 or len(direct_tdfs) != 1:
+        raise ValueError(
+            "AppxManifest.xml <Dependencies> must contain exactly 1 <TargetDeviceFamily> "
+            f"(doc={len(doc_tdfs)}, direct={len(direct_tdfs)})"
+        )
+    tdf = direct_tdfs[0]
+    if tdf.attrib.get("Name") != "Windows.Desktop" or tdf.attrib.get("MinVersion") != "10.0.19041.0":
+        raise ValueError(
+            "AppxManifest.xml <TargetDeviceFamily> must specify Name='Windows.Desktop' "
+            f"MinVersion='10.0.19041.0', got {tdf.attrib!r}"
+        )
+    doc_pkg_deps = manifest_root.findall(f".//{appx_ns}PackageDependency")
+    direct_pkg_deps = deps_el.findall(f"{appx_ns}PackageDependency")
+    if len(doc_pkg_deps) != len(direct_pkg_deps):
+        raise ValueError(
+            "AppxManifest.xml contains <PackageDependency> outside top-level <Dependencies>"
+        )
+    winappsdk_deps = [
+        dep for dep in direct_pkg_deps if dep.attrib.get("Name") == "Microsoft.WindowsAppRuntime.1.8"
+    ]
+    if (
+        len(winappsdk_deps) != 1
+        or not winappsdk_deps[0].attrib.get("MinVersion", "").strip()
+        or not winappsdk_deps[0].attrib.get("Publisher", "").strip()
+    ):
+        raise ValueError(
+            "AppxManifest.xml <Dependencies> must declare exactly 1 valid "
+            "<PackageDependency Name='Microsoft.WindowsAppRuntime.1.8' ...>"
+        )
+
+    # 0c. <Resources> exact 35 canonical languages (no duplicates, missing, or extras).
+    doc_res = manifest_root.findall(f".//{appx_ns}Resources")
+    direct_res = manifest_root.findall(f"{appx_ns}Resources")
+    if len(doc_res) != 1 or len(direct_res) != 1:
+        raise ValueError(
+            "AppxManifest.xml must contain exactly 1 top-level <Resources> element "
+            f"(doc={len(doc_res)}, direct={len(direct_res)})"
+        )
+    res_el = direct_res[0]
+    res_children = list(res_el)
+    if any(child.tag != f"{appx_ns}Resource" for child in res_children):
+        raise ValueError("AppxManifest.xml <Resources> contains unexpected child element(s)")
+    res_langs = [child.attrib.get("Language", "") for child in res_children]
+    if len(res_langs) != len(EXPECTED_MANIFEST_LANGUAGES) or set(res_langs) != EXPECTED_MANIFEST_LANGUAGES:
+        missing_langs = sorted(EXPECTED_MANIFEST_LANGUAGES - set(res_langs))
+        extra_langs = sorted(set(res_langs) - EXPECTED_MANIFEST_LANGUAGES)
+        raise ValueError(
+            "AppxManifest.xml <Resources> must declare the exact 35 canonical TotalDrop languages "
+            f"(count={len(res_langs)}, missing={missing_langs[:8]}, extra={extra_langs[:8]})"
+        )
 
     doc_applications = manifest_root.findall(f".//{appx_ns}Applications")
     direct_applications = manifest_root.findall(f"{appx_ns}Applications")
@@ -2322,6 +2466,7 @@ def verify_msix_archive(
     allow_test_identity: bool,
     pri_dump: Path | None = None,
     run_live_smoke: bool = True,
+    require_live_smoke: bool = False,
 ) -> dict[str, object]:
     """Deep-verify a single-architecture .msix package (from disk Path or in-memory bytes)."""
     if isinstance(source, Path):
@@ -2392,6 +2537,13 @@ def verify_msix_archive(
         ]
         if forbidden_entries:
             raise ValueError(f"{label}: forbidden staging/key artifacts packed in MSIX: {forbidden_entries}")
+
+        for opc_xml_name in ("AppxBlockMap.xml", "[Content_Types].xml"):
+            try:
+                opc_xml_raw = _read_zip_member(zf, opc_xml_name, label).decode("utf-8", errors="strict")
+                ET.fromstring(opc_xml_raw)
+            except (UnicodeDecodeError, ET.ParseError) as exc:
+                raise ValueError(f"{label}: invalid XML in {opc_xml_name}: {exc}") from exc
 
         manifest_raw = _read_zip_member(zf, "AppxManifest.xml", label).decode("utf-8", errors="strict")
         if UNSIGNED_PACKAGE_OID in manifest_raw.lower():
@@ -2483,21 +2635,51 @@ def verify_msix_archive(
                 f"(types={sorted(exe_rsrc_types)})"
             )
 
-        if sys.platform == "win32" and run_live_smoke:
-            host_arch = _python_host_arch()
-            if host_arch == arch:
-                with tempfile.TemporaryDirectory(prefix="totaldrop-msix-smoke-") as tmp:
-                    tmp_dir = Path(tmp)
-                    ffi_path = tmp_dir / "totaldrop_windows_ffi.dll"
-                    ext_path = tmp_dir / "totaldrop_explorer_ext.dll"
-                    ffi_path.write_bytes(ffi_bytes)
-                    ext_path.write_bytes(ext_bytes)
-                    smoke_test_ffi_dll(ffi_path)
-                    smoke_test_explorer_ext_dll(ext_path)
-            else:
-                print(
-                    f"note: skipping live ctypes smoke test for {label} (arch={arch}) on host Python arch={host_arch}; "
-                    "all static PE32+, export, resource, and manifest checks passed."
+        # Scan every .dll and .exe entry in the MSIX for packed CRT/CLR binaries and cross-arch PE contamination.
+        core_pe_entries = {"totaldrop-winui.exe", "totaldrop_windows_ffi.dll", "totaldrop_explorer_ext.dll"}
+        for entry_name in raw_names:
+            if entry_name.endswith("/"):
+                continue
+            if not entry_name.lower().endswith((".dll", ".exe")):
+                continue
+            base_lower = Path(entry_name).name.lower()
+            if base_lower in FORBIDDEN_CLR_HOST_DLLS:
+                raise ValueError(f"{label}: forbidden CLR host binary packed in MSIX: {entry_name!r}")
+            if any(base_lower.startswith(f.replace(".dll", "")) for f in FORBIDDEN_CRT_DLLS):
+                raise ValueError(f"{label}: forbidden dynamic MSVC CRT binary packed in MSIX: {entry_name!r}")
+            if entry_name not in core_pe_entries:
+                extra_pe = parse_pe64_bytes(_read_zip_member(zf, entry_name, label), f"{label}:{entry_name}")
+                if extra_pe["machine"] != expected_machine:
+                    raise ValueError(
+                        f"{label}:{entry_name}: expected machine {expected_machine:#x}, got {extra_pe['machine']:#x}"
+                    )
+
+        if run_live_smoke:
+            if sys.platform == "win32":
+                host_arch = _python_host_arch()
+                if host_arch == arch:
+                    with tempfile.TemporaryDirectory(prefix="totaldrop-msix-smoke-") as tmp:
+                        tmp_dir = Path(tmp)
+                        ffi_path = tmp_dir / "totaldrop_windows_ffi.dll"
+                        ext_path = tmp_dir / "totaldrop_explorer_ext.dll"
+                        ffi_path.write_bytes(ffi_bytes)
+                        ext_path.write_bytes(ext_bytes)
+                        smoke_test_ffi_dll(ffi_path)
+                        smoke_test_explorer_ext_dll(ext_path)
+                elif require_live_smoke:
+                    raise ValueError(
+                        f"{label}: --require-live-smoke failed because host Python arch={host_arch!r} "
+                        f"does not match package arch={arch!r}"
+                    )
+                else:
+                    print(
+                        f"note: skipping live ctypes smoke test for {label} (arch={arch}) on host Python arch={host_arch}; "
+                        "all static PE32+, export, resource, and manifest checks passed."
+                    )
+            elif require_live_smoke:
+                raise ValueError(
+                    f"{label}: --require-live-smoke requires native Windows execution "
+                    f"(current platform={sys.platform!r})"
                 )
 
     if pri_dump is not None:
@@ -2522,6 +2704,7 @@ def verify_msixbundle_archive(
     store_mode: bool,
     allow_test_identity: bool,
     run_live_smoke: bool = True,
+    require_live_smoke: bool = False,
 ) -> dict[str, object]:
     """Deep-verify a unified dual-arch (x64 + arm64) .msixbundle archive."""
     if isinstance(source, Path):
@@ -2559,6 +2742,13 @@ def verify_msixbundle_archive(
         bad_entries = [n for n in raw_names if n.lower().endswith(forbidden_bundle_exts)]
         if bad_entries:
             raise ValueError(f"{label}: forbidden key/symbol/staging files inside .msixbundle: {bad_entries}")
+
+        for opc_xml_name in ("AppxBlockMap.xml", "[Content_Types].xml"):
+            try:
+                opc_xml_raw = _read_zip_member(zf, opc_xml_name, label).decode("utf-8", errors="strict")
+                ET.fromstring(opc_xml_raw)
+            except (UnicodeDecodeError, ET.ParseError) as exc:
+                raise ValueError(f"{label}: invalid XML in {opc_xml_name}: {exc}") from exc
 
         manifest_raw = _read_zip_member(zf, "AppxMetadata/AppxBundleManifest.xml", label).decode(
             "utf-8", errors="strict"
@@ -2635,9 +2825,16 @@ def verify_msixbundle_archive(
                 raise ValueError(
                     f"{label}: <Package Architecture={pkg_arch!r}> Version={pkg_ver!r} != bundle Version={b_ver!r}"
                 )
-            if not pkg_file or not pkg_file.lower().endswith(".msix") or pkg_file not in names:
+            if (
+                not pkg_file
+                or "/" in pkg_file
+                or "\\" in pkg_file
+                or not pkg_file.lower().endswith(".msix")
+                or pkg_file not in names
+            ):
                 raise ValueError(
-                    f"{label}: <Package Architecture={pkg_arch!r}> FileName={pkg_file!r} missing or not an .msix in bundle"
+                    f"{label}: <Package Architecture={pkg_arch!r}> FileName={pkg_file!r} "
+                    "must be a flat root .msix entry present in bundle"
                 )
             app_packages_by_arch[pkg_arch] = (pkg_file, pkg_ver)
             referenced_files.add(pkg_file)
@@ -2657,6 +2854,24 @@ def verify_msixbundle_archive(
                 f"{label}: unreferenced .msix/.appx entries inside .msixbundle: {unreferenced_msix}"
             )
 
+        allowed_bundle_files = referenced_files | {
+            "AppxMetadata/AppxBundleManifest.xml",
+            "AppxBlockMap.xml",
+            "[Content_Types].xml",
+            "AppxSignature.p7x",
+            "AppxMetadata/CodeIntegrity.cat",
+        }
+        unexpected_bundle_entries = sorted(
+            n
+            for n in raw_names
+            if (n.endswith("/") and n != "AppxMetadata/")
+            or (not n.endswith("/") and n not in allowed_bundle_files)
+        )
+        if unexpected_bundle_entries:
+            raise ValueError(
+                f"{label}: unexpected/unreferenced entries inside .msixbundle: {unexpected_bundle_entries}"
+            )
+
         inner_results: dict[str, dict[str, object]] = {}
         for arch in ("x64", "arm64"):
             pkg_file, _ = app_packages_by_arch[arch]
@@ -2670,6 +2885,7 @@ def verify_msixbundle_archive(
                 store_mode=store_mode,
                 allow_test_identity=allow_test_identity,
                 run_live_smoke=run_live_smoke,
+                require_live_smoke=require_live_smoke,
             )
             if res["name"] != b_name:
                 raise ValueError(
@@ -2698,6 +2914,7 @@ def verify_msixbundle_archive(
         "publisher": b_pub,
         "version": b_ver,
         "arches": ("x64", "arm64"),
+        "package_files": {arch: pkg_file for arch, (pkg_file, _) in app_packages_by_arch.items()},
         "size_bytes": len(raw_bytes),
         "sha256": hashlib.sha256(raw_bytes).hexdigest(),
     }
@@ -2718,6 +2935,11 @@ def _verify_appxsym_bytes(data: bytes, label: str) -> set[str]:
                 raise ValueError(f"{label}: unexpected non-PDB file inside .appxsym archive: {name!r}")
             if sym_zf.getinfo(name).file_size <= 0:
                 raise ValueError(f"{label}: empty PDB entry inside .appxsym archive: {name!r}")
+            pdb_bytes = _read_zip_member(sym_zf, name, label)
+            if len(pdb_bytes) < len(PDB_MSF7_MAGIC) or not pdb_bytes.startswith(PDB_MSF7_MAGIC):
+                raise ValueError(
+                    f"{label}: PDB entry {name!r} does not start with Microsoft MSF 7.00 magic header"
+                )
             pdb_basenames.add(lower)
     if not pdb_basenames:
         raise ValueError(f"{label}: .appxsym archive contains zero .pdb entries")
@@ -2733,6 +2955,7 @@ def verify_msixupload_archive(
     allow_test_identity: bool,
     expected_bundle_path: Path | None = None,
     run_live_smoke: bool = True,
+    require_live_smoke: bool = False,
 ) -> dict[str, object]:
     """Deep-verify a Microsoft Store Partner Center .msixupload archive."""
     if not upload_path.is_file():
@@ -2798,7 +3021,19 @@ def verify_msixupload_archive(
             store_mode=store_mode,
             allow_test_identity=allow_test_identity,
             run_live_smoke=run_live_smoke,
+            require_live_smoke=require_live_smoke,
         )
+
+        package_files: dict[str, str] = bundle_info["package_files"]  # type: ignore[assignment]
+        expected_appxsyms = {f"{Path(pf).stem}.appxsym" for pf in package_files.values()}
+        actual_appxsyms = set(appxsyms)
+        if actual_appxsyms != expected_appxsyms:
+            missing_syms = sorted(expected_appxsyms - actual_appxsyms)
+            extra_syms = sorted(actual_appxsyms - expected_appxsyms)
+            raise ValueError(
+                f"{label}: .msixupload .appxsym archive set must match bundle slices exactly "
+                f"(expected={sorted(expected_appxsyms)}, missing={missing_syms}, unexpected={extra_syms})"
+            )
 
         combined_pdbs: set[str] = set()
         for sym_name in sorted(appxsyms):
@@ -3508,6 +3743,7 @@ def run_self_test_bundle() -> int:
                 [
                     (bundle_ok_path.name, bundle_ok_bytes),
                     (f"TotalDrop_{store_ver}_x64.appxsym", sym_incomplete),
+                    (f"TotalDrop_{store_ver}_arm64.appxsym", sym_ok),
                 ]
             )
         )
@@ -3518,7 +3754,6 @@ def run_self_test_bundle() -> int:
             ),
             "totaldrop_explorer_ext.pdb",
         )
-        other_bundle_path = tmp_dir / bundle_ok_path.name
         mismatch_dir = tmp_dir / "other"
         mismatch_dir.mkdir()
         other_bundle_path = mismatch_dir / bundle_ok_path.name
@@ -5372,7 +5607,428 @@ def run_self_test_bundle() -> int:
             run_live_smoke=False,
         )
 
-    print("self-test-bundle OK: 29/29 positive & negative bundle/msixupload/store-mode checks passed.")
+        # Case 30: .msixupload dual-arch .appxsym stem correlation & MSF 7.00 PDB header checks.
+        missing_arm64_sym_upload = tmp_dir / "missing-arm64-sym.msixupload"
+        missing_arm64_sym_upload.write_bytes(
+            _make_synthetic_upload(
+                [
+                    (bundle_ok_path.name, bundle_ok_bytes),
+                    (f"TotalDrop_{store_ver}_x64.appxsym", sym_ok),
+                ]
+            )
+        )
+        expect_fail(
+            "case-30a-missing-arm64-appxsym",
+            lambda: verify_msixupload_archive(
+                missing_arm64_sym_upload,
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "arm64.appxsym",
+        )
+        unmatched_sym_upload = tmp_dir / "unmatched-sym.msixupload"
+        unmatched_sym_upload.write_bytes(
+            _make_synthetic_upload(
+                [
+                    (bundle_ok_path.name, bundle_ok_bytes),
+                    ("unrelated_foo.appxsym", sym_ok),
+                    (f"TotalDrop_{store_ver}_arm64.appxsym", sym_ok),
+                ]
+            )
+        )
+        expect_fail(
+            "case-30b-unmatched-appxsym-stem",
+            lambda: verify_msixupload_archive(
+                unmatched_sym_upload,
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "unrelated_foo.appxsym",
+        )
+        fake_pdb_buf = io.BytesIO()
+        with zipfile.ZipFile(fake_pdb_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf_fake:
+            for pdb_n in all_pdbs:
+                zf_fake.writestr(pdb_n, b"X")
+        fake_pdb_upload = tmp_dir / "fake-pdb.msixupload"
+        fake_pdb_upload.write_bytes(
+            _make_synthetic_upload(
+                [
+                    (bundle_ok_path.name, bundle_ok_bytes),
+                    (f"TotalDrop_{store_ver}_x64.appxsym", fake_pdb_buf.getvalue()),
+                    (f"TotalDrop_{store_ver}_arm64.appxsym", sym_ok),
+                ]
+            )
+        )
+        expect_fail(
+            "case-30c-non-msf7-pdb",
+            lambda: verify_msixupload_archive(
+                fake_pdb_upload,
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "MSF 7.00",
+        )
+
+        # Case 31: Extra .dll/.exe cross-arch contamination and packed CRT/CLR binaries inside .msix.
+        extra_x64_dll = _build_synthetic_pe64(machine=IMAGE_FILE_MACHINE_AMD64, is_dll=True, cet_compat=True)
+        arm64_extra_x64 = _make_synthetic_msix(
+            arm64_tpl,
+            arch="arm64",
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            extra_entries=[("extra_helper.dll", extra_x64_dll)],
+        )
+        expect_fail(
+            "case-31a-extra-cross-arch-dll",
+            lambda: verify_msix_archive(
+                arm64_extra_x64,
+                "31a-extra-x64.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "expected machine",
+        )
+        for packed_bad_dll, expect_msg in (
+            ("vcruntime140.dll", "MSVC CRT"),
+            ("sub/coreclr.dll", "CLR host"),
+        ):
+            arm64_packed_bad = _make_synthetic_msix(
+                arm64_tpl,
+                arch="arm64",
+                name=store_name,
+                publisher=store_pub,
+                version=store_ver,
+                extra_entries=[(packed_bad_dll, extra_x64_dll)],
+            )
+            expect_fail(
+                f"case-31b-packed-{Path(packed_bad_dll).name}",
+                lambda b=arm64_packed_bad: verify_msix_archive(
+                    b,
+                    "31b-packed.msix",
+                    arch="arm64",
+                    expected_version=store_ver,
+                    expect_signed=False,
+                    store_mode=True,
+                    allow_test_identity=False,
+                    run_live_smoke=False,
+                ),
+                expect_msg,
+            )
+
+        # Case 32: .pvk / .pepk forbidden key extensions + M1 Fix #4 subdirectory split-PRI regression.
+        for bad_entry, expect_msg in (
+            ("signing.pvk", "forbidden staging/key"),
+            ("sub/resources.scale-200.pri", "forbidden staging/key"),
+        ):
+            arm64_bad_art = _make_synthetic_msix(
+                arm64_tpl,
+                arch="arm64",
+                name=store_name,
+                publisher=store_pub,
+                version=store_ver,
+                extra_entries=[(bad_entry, b"SECRET")],
+            )
+            expect_fail(
+                f"case-32a-{Path(bad_entry).name}",
+                lambda b=arm64_bad_art: verify_msix_archive(
+                    b,
+                    "32a-bad.msix",
+                    arch="arm64",
+                    expected_version=store_ver,
+                    expect_signed=False,
+                    store_mode=True,
+                    allow_test_identity=False,
+                    run_live_smoke=False,
+                ),
+                expect_msg,
+            )
+        bundle_pvk = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_ok),
+            ],
+            extra_entries=[("signing.pvk", b"PVK")],
+        )
+        expect_fail(
+            "case-32b-bundle-pvk",
+            lambda: verify_msixbundle_archive(
+                bundle_pvk,
+                "32b-pvk.msixbundle",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "signing.pvk",
+        )
+        pepk_upload = tmp_dir / "leak-pepk.msixupload"
+        pepk_upload.write_bytes(
+            _make_synthetic_upload(
+                [
+                    (bundle_ok_path.name, bundle_ok_bytes),
+                    (f"TotalDrop_{store_ver}_x64.appxsym", sym_ok),
+                    (f"TotalDrop_{store_ver}_arm64.appxsym", sym_ok),
+                    ("upload.pepk", b"PEPK"),
+                ]
+            )
+        )
+        expect_fail(
+            "case-32c-upload-pepk",
+            lambda: verify_msixupload_archive(
+                pepk_upload,
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "signing key",
+        )
+
+        # Case 33: Unix symlink and non-regular mode ZIP entries rejected by _check_opc_zip_entries.
+        sym_zip_buf = io.BytesIO()
+        with (
+            zipfile.ZipFile(io.BytesIO(arm64_ok), "r") as zin,
+            zipfile.ZipFile(sym_zip_buf, "w", compression=zipfile.ZIP_DEFLATED) as zout,
+        ):
+            for item in zin.infolist():
+                zout.writestr(item.filename, zin.read(item))
+            link_info = zipfile.ZipInfo("evil_link.txt")
+            link_info.create_system = 3
+            link_info.external_attr = (0o120777 << 16)
+            zout.writestr(link_info, b"../../etc/passwd")
+        expect_fail(
+            "case-33-unix-symlink",
+            lambda: verify_msix_archive(
+                sym_zip_buf.getvalue(),
+                "33-symlink.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "symbolic link",
+        )
+
+        # Case 34: Multi-RDN placeholder, RFC 2253 multi-valued RDN '+', and all-zero GUID bypasses.
+        for bad_pub, expect_msg in (
+            ("CN=TotalDrop, O=TotalDrop", "placeholder"),
+            ("CN=TotalDrop+O=Evil", "forbidden unescaped"),
+            ("CN=00000000-0000-0000-0000-000000000000", "placeholder"),
+        ):
+            arm64_bad_id = _make_synthetic_msix(
+                arm64_tpl, arch="arm64", name=store_name, publisher=bad_pub, version=store_ver
+            )
+            expect_fail(
+                f"case-34-pub-{bad_pub[:12]}",
+                lambda b=arm64_bad_id: verify_msix_archive(
+                    b,
+                    "34-bad-pub.msix",
+                    arch="arm64",
+                    expected_version=store_ver,
+                    expect_signed=False,
+                    store_mode=True,
+                    allow_test_identity=False,
+                    run_live_smoke=False,
+                ),
+                expect_msg,
+            )
+
+        # Case 35: Unreferenced arbitrary file and nested slice FileName inside .msixbundle.
+        bundle_rogue = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_ok),
+            ],
+            extra_entries=[("rogue.exe", b"MZ\x00\x00")],
+        )
+        expect_fail(
+            "case-35a-bundle-rogue-entry",
+            lambda: verify_msixbundle_archive(
+                bundle_rogue,
+                "35a-rogue.msixbundle",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "rogue.exe",
+        )
+        bundle_nested_pkg = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"sub/TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_ok),
+            ],
+        )
+        expect_fail(
+            "case-35b-bundle-nested-filename",
+            lambda: verify_msixbundle_archive(
+                bundle_nested_pkg,
+                "35b-nested.msixbundle",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "flat root",
+        )
+
+        # Case 36: Manifest Properties/Resources/Dependencies, OPC XML well-formedness, and elem.tail parity.
+        arm64_no_res = _make_synthetic_msix(
+            arm64_tpl.replace('<Resource Language="tr" />', ""),
+            arch="arm64",
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+        )
+        expect_fail(
+            "case-36a-missing-resource-lang",
+            lambda: verify_msix_archive(
+                arm64_no_res,
+                "36a-no-res.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "35 canonical",
+        )
+        arm64_empty_pubdisp = _make_synthetic_msix(
+            arm64_tpl,
+            arch="arm64",
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            publisher_display_name="",
+        )
+        expect_fail(
+            "case-36b-empty-pubdisp",
+            lambda: verify_msix_archive(
+                arm64_empty_pubdisp,
+                "36b-empty-pubdisp.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "PublisherDisplayName",
+        )
+        arm64_bad_xml_buf = io.BytesIO()
+        with (
+            zipfile.ZipFile(io.BytesIO(arm64_ok), "r") as zin,
+            zipfile.ZipFile(arm64_bad_xml_buf, "w", compression=zipfile.ZIP_DEFLATED) as zout,
+        ):
+            for item in zin.infolist():
+                payload = b"NOT VALID XML <<<" if item.filename == "AppxBlockMap.xml" else zin.read(item)
+                zout.writestr(item.filename, payload)
+        expect_fail(
+            "case-36c-corrupt-blockmap-xml",
+            lambda: verify_msix_archive(
+                arm64_bad_xml_buf.getvalue(),
+                "36c-bad-blockmap.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "AppxBlockMap.xml",
+        )
+        arm64_tail_div = _make_synthetic_msix(
+            arm64_tpl.replace("</DisplayName>", "</DisplayName>ROGUE_TAIL"),
+            arch="arm64",
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+        )
+        bundle_tail_div = _make_synthetic_bundle(
+            name=store_name,
+            publisher=store_pub,
+            version=store_ver,
+            packages=[
+                ("x64", store_ver, f"TotalDrop_{store_ver}_x64.msix", x64_ok),
+                ("arm64", store_ver, f"TotalDrop_{store_ver}_arm64.msix", arm64_tail_div),
+            ],
+        )
+        expect_fail(
+            "case-36d-tail-parity",
+            lambda: verify_msixbundle_archive(
+                bundle_tail_div,
+                "36d-tail.msixbundle",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "diverge",
+        )
+
+        # Case 37: LFH 0x0001 Zip64 extra field with trailing slack (data_size == 24 != 16).
+        c_slack = zlib.compressobj(6, zlib.DEFLATED, -15)
+        d_slack = c_slack.compress(b"<BlockMap />") + c_slack.flush()
+        slack_z64_extra = struct.pack("<HHQQQ", 0x0001, 24, len(b"<BlockMap />"), len(d_slack), 0xDEADBEEFCAFECAFE)
+        arm64_slack_z64 = _rebuild_zip_with_raw_entry(
+            arm64_ok,
+            "AppxBlockMap.xml",
+            method=zipfile.ZIP_DEFLATED,
+            raw_payload=d_slack,
+            declared_uncomp_size=len(b"<BlockMap />"),
+            declared_crc=zlib.crc32(b"<BlockMap />") & 0xFFFFFFFF,
+            lfh_extra_override=slack_z64_extra,
+        )
+        expect_fail(
+            "case-37-lfh-z64-slack",
+            lambda: verify_msix_archive(
+                arm64_slack_z64,
+                "37-z64-slack.msix",
+                arch="arm64",
+                expected_version=store_ver,
+                expect_signed=False,
+                store_mode=True,
+                allow_test_identity=False,
+                run_live_smoke=False,
+            ),
+            "exactly 16 bytes",
+        )
+
+    print(
+        "self-test-bundle OK: 37/37 checks passed "
+        "(29/29 baseline + 8/8 hardened positive & negative bundle/msixupload/store-mode checks)."
+    )
     return 0
 
 
@@ -5411,6 +6067,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Permit temporary CN=TotalDrop / TotalDrop.TotalDrop identity during --store-mode dry-runs.",
     )
+    parser.add_argument(
+        "--require-live-smoke",
+        action="store_true",
+        help="Fail instead of skipping if live ctypes FFI/COM smoke cannot run (e.g. wrong host Python arch).",
+    )
     args = parser.parse_args(argv)
 
     if not any((args.msix, args.bundle, args.msixupload, args.self_test_bundle)):
@@ -5433,6 +6094,7 @@ def main(argv: list[str] | None = None) -> int:
                 store_mode=args.store_mode,
                 allow_test_identity=args.allow_test_identity,
                 pri_dump=args.pri_dump,
+                require_live_smoke=args.require_live_smoke,
             )
             cet_note = " + CET_COMPAT" if args.arch == "x64" else ""
             print(
@@ -5451,6 +6113,7 @@ def main(argv: list[str] | None = None) -> int:
                 expect_signed=args.expect_signed,
                 store_mode=args.store_mode,
                 allow_test_identity=args.allow_test_identity,
+                require_live_smoke=args.require_live_smoke,
             )
             print(
                 f"msixbundle verify OK: {args.bundle.name} ({b_res['size_bytes']} bytes, "
@@ -5466,6 +6129,7 @@ def main(argv: list[str] | None = None) -> int:
                 store_mode=args.store_mode,
                 allow_test_identity=args.allow_test_identity,
                 expected_bundle_path=args.bundle,
+                require_live_smoke=args.require_live_smoke,
             )
             b_info = u_res["bundle_info"]
             print(

@@ -17,7 +17,7 @@ Companion governance and certification documents:
 2. **Dual-architecture `.msixbundle` inside `.msixupload` from Flight #1:**
    - Every Store submission (starting at the very first closed Package Flight) MUST upload a `.msixupload` archive containing ONE unified dual-architecture `TotalDrop-<version>.msixbundle` (`x64` + `arm64`, zero `x86`) and its `.appxsym` PDB symbol archives (`totaldrop-winui.pdb`, `totaldrop_windows_ffi.pdb`, `totaldrop_explorer_ext.pdb`).
    - Microsoft Store enforces an irreversible format lock-in: once a product publishes a standalone `.msix`, it cannot cleanly migrate existing installations to a `.msixbundle` (and vice versa). Always ship `.msixbundle` inside `.msixupload` from Flight #1.
-   - Never pack bare `.msix` packages at the root of `.msixupload` and never include signing keys/certificates (`.pfx`, `.p12`, `.cer`, `.snk`, `.key`, `.pem`) or raw `.pdb`/`.resw` files inside `.msix` or `.msixbundle`.
+   - Never pack bare `.msix` packages at the root of `.msixupload` and never include signing keys/certificates (`.pfx`, `.p12`, `.cer`, `.snk`, `.key`, `.pem`, `.pvk`, `.pepk`, `.jks`, `.keystore`) or raw `.pdb`/`.resw` files inside `.msix` or `.msixbundle`.
 3. **Store MSIX version projection (`Major >= 1`, `Revision == 0`):**
    - Local development and CI test builds use MSIX version `0.1.1.0` (`Major == 0`) alongside application SemVer `0.1.0-beta.1` and core crate SemVer `0.2.0-beta.5`.
    - Microsoft Store strictly rejects `Major == 0` and reserves the 4th component (`Revision`) for Store re-signing (`Revision` MUST be `0`).

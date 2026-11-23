@@ -29,7 +29,8 @@ IDENTITY_NAME_RE = re.compile(r"^[A-Za-z0-9.-]{3,50}$")
 RDN_KEY_RE = re.compile(r"\A(?:[A-Za-z][A-Za-z0-9-]*|(?:OID\.)?[0-9]+(?:\.[0-9]+)+)\Z", re.ASCII)
 RFC2253_ESCAPABLE_CHARS: frozenset[str] = frozenset({",", "+", '"', "\\", "<", ">", ";", "#", "=", " "})
 ASCII_HEX_DIGITS: frozenset[str] = frozenset("0123456789ABCDEFabcdef")
-FORBIDDEN_UNQUOTED_RDN_CHARS: frozenset[str] = frozenset({'"', ";", "<", ">", "`", "$", "|", "&"})
+FORBIDDEN_UNQUOTED_RDN_CHARS: frozenset[str] = frozenset({'"', ";", "<", ">", "+", "`", "$", "|", "&"})
+PLACEHOLDER_CN_VALUES: frozenset[str] = frozenset({"totaldrop", "00000000-0000-0000-0000-000000000000"})
 QUAD_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$", re.ASCII)
 
 # Split forbidden literals so this script never matches itself if scanned naively.
@@ -302,16 +303,15 @@ def validate_x500_publisher(publisher: str, label: str, errors: list[str]) -> bo
 
 
 def is_placeholder_test_identity(name: str, publisher: str) -> bool:
-    """Return True if Name or Publisher matches the temporary CN=TotalDrop / TotalDrop.TotalDrop test identity."""
+    """Return True if Name or Publisher matches a placeholder/all-zero test identity."""
     if isinstance(name, str) and name.strip().lower() == "totaldrop.totaldrop":
         return True
     try:
         parsed_rdns = parse_x500_publisher(publisher, "Publisher")
     except ValueError:
         return False
-    if len(parsed_rdns) == 1:
-        key, val = parsed_rdns[0]
-        if key == "CN" and val.strip().lower() == "totaldrop":
+    for key, val in parsed_rdns:
+        if key == "CN" and val.strip().lower() in PLACEHOLDER_CN_VALUES:
             return True
     return False
 
@@ -883,20 +883,40 @@ def check_cross_arch_identity_parity(
             require_store_rules=require_store_rules,
         )
 
-        props = root.find(f"{appx_ns}Properties")
+        doc_props = root.findall(f".//{appx_ns}Properties")
+        direct_props = root.findall(f"{appx_ns}Properties")
         disp_name = ""
         pub_disp = ""
-        if props is None:
-            errors.append(f"{label}: missing <Properties>")
+        if len(doc_props) != 1 or len(direct_props) != 1:
+            errors.append(
+                f"{label}: AppxManifest.xml must declare exactly 1 top-level <Properties> "
+                f"(doc={len(doc_props)}, direct={len(direct_props)})"
+            )
         else:
-            dn_el = props.find(f"{appx_ns}DisplayName")
-            pd_el = props.find(f"{appx_ns}PublisherDisplayName")
-            disp_name = dn_el.text.strip() if dn_el is not None and dn_el.text else ""
-            pub_disp = pd_el.text.strip() if pd_el is not None and pd_el.text else ""
-            if not disp_name:
-                errors.append(f"{label}: Properties/DisplayName must be non-empty")
-            if not pub_disp:
-                errors.append(f"{label}: Properties/PublisherDisplayName must be non-empty")
+            props = direct_props[0]
+            doc_dns = root.findall(f".//{appx_ns}DisplayName")
+            direct_dns = props.findall(f"{appx_ns}DisplayName")
+            if len(doc_dns) != 1 or len(direct_dns) != 1:
+                errors.append(
+                    f"{label}: Properties must declare exactly 1 <DisplayName> "
+                    f"(doc={len(doc_dns)}, direct={len(direct_dns)})"
+                )
+            else:
+                disp_name = (direct_dns[0].text or "").strip()
+                if not disp_name:
+                    errors.append(f"{label}: Properties/DisplayName must be non-empty")
+
+            doc_pds = root.findall(f".//{appx_ns}PublisherDisplayName")
+            direct_pds = props.findall(f"{appx_ns}PublisherDisplayName")
+            if len(doc_pds) != 1 or len(direct_pds) != 1:
+                errors.append(
+                    f"{label}: Properties must declare exactly 1 <PublisherDisplayName> "
+                    f"(doc={len(doc_pds)}, direct={len(direct_pds)})"
+                )
+            else:
+                pub_disp = (direct_pds[0].text or "").strip()
+                if not pub_disp:
+                    errors.append(f"{label}: Properties/PublisherDisplayName must be non-empty")
 
         _check_manifest_extensions(label, root, errors)
         extracted[arch] = {
@@ -1003,6 +1023,15 @@ def check_manifests_and_scripts(repo_root: Path, errors: list[str]) -> None:
         ("target-arm64/winget/app.totaldrop.TotalDrop.arm64.yaml", "arm64"),
     ):
         text = (repo_root / rel).read_text(encoding="utf-8")
+        if "winget-manifest.singleton.1.9.0.schema.json" not in text:
+            errors.append(f"{rel}: missing winget-manifest.singleton.1.9.0.schema.json schema header")
+        m_mver = re.search(r"^ManifestVersion:\s*(\S+)\s*$", text, re.MULTILINE)
+        expect_eq(
+            errors,
+            f"{rel} ManifestVersion",
+            m_mver.group(1) if m_mver else None,
+            "1.9.0",
+        )
         m_pkg = re.search(r"^PackageVersion:\s*(\S+)\s*$", text, re.MULTILINE)
         expect_eq(
             errors,
@@ -1216,6 +1245,22 @@ def check_store_mode(
                     effective_ver,
                 )
 
+        csproj_path = repo_root / "ui-winui3-fluent2" / "TotalDrop.WinUI.csproj"
+        if csproj_path.is_file():
+            try:
+                csproj_root = ET.fromstring(csproj_path.read_text(encoding="utf-8"))
+                for tag in ("AssemblyVersion", "FileVersion"):
+                    elems = csproj_root.findall(f".//{tag}")
+                    val = (elems[0].text or "").strip() if len(elems) == 1 else None
+                    expect_eq(
+                        errors,
+                        f"ui-winui3-fluent2/TotalDrop.WinUI.csproj <{tag}>",
+                        val,
+                        effective_ver,
+                    )
+            except ET.ParseError as exc:
+                errors.append(f"ui-winui3-fluent2/TotalDrop.WinUI.csproj: invalid XML: {exc}")
+
     return (effective_ver, ident_name, publisher)
 
 
@@ -1253,6 +1298,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.require_store_identity and args.allow_test_identity:
         parser.error("--require-store-identity and --allow-test-identity are mutually exclusive.")
+    if (args.require_store_identity or args.allow_test_identity) and not args.store:
+        parser.error("--require-store-identity and --allow-test-identity require --store.")
 
     errors: list[str] = []
     notes: list[str] = []
