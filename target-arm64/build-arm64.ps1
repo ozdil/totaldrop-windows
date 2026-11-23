@@ -59,8 +59,15 @@ function Resolve-SourceDateEpoch {
         return [int64]1760000000
     }
     [int64]$parsed = 0
-    if (-not [int64]::TryParse($raw.Trim(), [ref]$parsed) -or $parsed -lt 315532800) {
-        throw "Invalid SOURCE_DATE_EPOCH '$raw'. Expected integer UNIX seconds >= 315532800 (1980-01-01T00:00:00Z)."
+    if (
+        -not [int64]::TryParse(
+            $raw.Trim(),
+            [System.Globalization.NumberStyles]::None,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$parsed
+        ) -or $parsed -lt 315532800 -or $parsed -gt 4354819199
+    ) {
+        throw "Invalid SOURCE_DATE_EPOCH '$raw'. Expected integer UNIX seconds in 315532800..4354819199 (1980-01-01 to 2107-12-31 UTC)."
     }
     return $parsed
 }
@@ -132,14 +139,54 @@ function Read-XmlDocumentStrict {
     $readerSettings = [System.Xml.XmlReaderSettings]::new()
     $readerSettings.DtdProcessing = [System.Xml.DtdProcessing]::Prohibit
     $readerSettings.XmlResolver = $null
-    $reader = [System.Xml.XmlReader]::Create($Path, $readerSettings)
+    $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
+    $fs = [System.IO.File]::OpenRead($resolvedPath)
     try {
-        $doc.Load($reader)
+        $reader = [System.Xml.XmlReader]::Create($fs, $readerSettings)
+        try {
+            $doc.Load($reader)
+        }
+        finally {
+            $reader.Dispose()
+        }
     }
     finally {
-        $reader.Dispose()
+        $fs.Dispose()
     }
     return $doc
+}
+
+function Remove-PathWithRetry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter()]
+        [int]$MaxAttempts = 5,
+
+        [Parameter()]
+        [int]$DelayMs = 250
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            if (Test-Path -LiteralPath $Path) {
+                Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            }
+            if (-not (Test-Path -LiteralPath $Path)) {
+                return
+            }
+        }
+        catch {
+            if ($attempt -ge $MaxAttempts) {
+                throw
+            }
+        }
+        Start-Sleep -Milliseconds $DelayMs
+    }
 }
 
 function Remove-UnescapedX500Whitespace {
@@ -206,9 +253,9 @@ function ConvertFrom-Rfc2253RdnValue {
         [char]0x2C, [char]0x2B, [char]0x22, [char]0x5C, [char]0x3C,
         [char]0x3E, [char]0x3B, [char]0x23, [char]0x3D, [char]0x20
     )
-    # Forbidden unescaped chars in unquoted RDN values: ", ;, <, >, `, $, |, &
+    # Forbidden unescaped chars in unquoted RDN values: ", ;, <, >, +, `, $, |, &
     $forbiddenUnquoted = @(
-        [char]0x22, [char]0x3B, [char]0x3C, [char]0x3E,
+        [char]0x22, [char]0x3B, [char]0x3C, [char]0x3E, [char]0x2B,
         [char]0x60, [char]0x24, [char]0x7C, [char]0x26
     )
     $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
@@ -397,9 +444,12 @@ function Test-PlaceholderTestIdentity {
     if ($IdentityName.Trim().Equals("TotalDrop.TotalDrop", [System.StringComparison]::OrdinalIgnoreCase)) {
         return $true
     }
+    $placeholderCns = @("totaldrop", "00000000-0000-0000-0000-000000000000")
     $rdns = @(ConvertFrom-X500Publisher -Publisher $Publisher)
-    if ($rdns.Count -eq 1 -and $rdns[0].Key -eq "CN" -and $rdns[0].Value.Trim().Equals("TotalDrop", [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $true
+    foreach ($rdn in $rdns) {
+        if ($rdn.Key -eq "CN" -and ($placeholderCns -contains $rdn.Value.Trim().ToLowerInvariant())) {
+            return $true
+        }
     }
     return $false
 }
@@ -415,6 +465,76 @@ function Resolve-WindowsKitTool {
 
     $archOrder = if ($PreferredArch -eq "arm64") { @("arm64", "x64") } else { @("x64", "arm64") }
 
+    # Self-contained strict ASCII 4-part numeric version sorter (zero external helpers for isolated AST extraction).
+    $sortDirsByVersionDesc = {
+        param(
+            [AllowNull()]
+            [AllowEmptyCollection()]
+            [System.IO.DirectoryInfo[]]$Dirs,
+
+            [bool]$AllowPrerelease
+        )
+
+        $rx = if ($AllowPrerelease) {
+            '\A([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z.-]+))?\z'
+        } else {
+            '\A([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)\z'
+        }
+        $ranked = [System.Collections.Generic.List[object]]::new()
+        foreach ($d in @($Dirs)) {
+            if ($null -eq $d) {
+                continue
+            }
+            $name = [string]$d.Name
+            $isNum = 0
+            [uint64]$v0 = 0
+            [uint64]$v1 = 0
+            [uint64]$v2 = 0
+            [uint64]$v3 = 0
+            $isStable = 0
+            if ($name -cmatch $rx) {
+                $ok0 = [uint64]::TryParse($Matches[1], [System.Globalization.NumberStyles]::None, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$v0)
+                $ok1 = [uint64]::TryParse($Matches[2], [System.Globalization.NumberStyles]::None, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$v1)
+                $ok2 = [uint64]::TryParse($Matches[3], [System.Globalization.NumberStyles]::None, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$v2)
+                $ok3 = [uint64]::TryParse($Matches[4], [System.Globalization.NumberStyles]::None, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$v3)
+                if ($ok0 -and $ok1 -and $ok2 -and $ok3) {
+                    $isNum = 1
+                    $isStable = if ($AllowPrerelease -and $Matches.ContainsKey(5) -and -not [string]::IsNullOrEmpty($Matches[5])) { 0 } else { 1 }
+                }
+            }
+            if ($isNum -eq 0 -and -not $AllowPrerelease) {
+                continue
+            }
+            $ranked.Add([PSCustomObject]@{
+                Dir      = $d
+                IsNum    = $isNum
+                V0       = $v0
+                V1       = $v1
+                V2       = $v2
+                V3       = $v3
+                IsStable = $isStable
+                Name     = $name
+            })
+        }
+        $sorted = @(
+            $ranked | Sort-Object -Property @(
+                @{ Expression = { $_.IsNum };    Descending = $true },
+                @{ Expression = { $_.V0 };       Descending = $true },
+                @{ Expression = { $_.V1 };       Descending = $true },
+                @{ Expression = { $_.V2 };       Descending = $true },
+                @{ Expression = { $_.V3 };       Descending = $true },
+                @{ Expression = { $_.IsStable }; Descending = $true },
+                @{ Expression = { $_.Name };     Descending = $true }
+            )
+        )
+        $result = [System.Collections.Generic.List[System.IO.DirectoryInfo]]::new()
+        foreach ($item in $sorted) {
+            $result.Add($item.Dir)
+        }
+        return $result.ToArray()
+    }
+
+    # 1. WindowsSdkDir and installed Windows 10/11 SDK roots
     $kitBinRoots = [System.Collections.Generic.List[string]]::new()
     $winSdkDir = [System.Environment]::GetEnvironmentVariable("WindowsSdkDir")
     if (-not [string]::IsNullOrWhiteSpace($winSdkDir)) {
@@ -427,13 +547,25 @@ function Resolve-WindowsKitTool {
         }
     }
 
+    $winSdkVer = [System.Environment]::GetEnvironmentVariable("WindowsSDKVersion")
+    if (-not [string]::IsNullOrWhiteSpace($winSdkVer)) {
+        $winSdkVer = $winSdkVer.Trim().TrimEnd('\', '/')
+    }
+
     foreach ($kitsBin in $kitBinRoots) {
         if (-not (Test-Path -LiteralPath $kitsBin)) {
             continue
         }
-        $versionDirs = @(Get-ChildItem -LiteralPath $kitsBin -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
-            Sort-Object { [version]$_.Name } -Descending)
+        if (-not [string]::IsNullOrWhiteSpace($winSdkVer) -and $winSdkVer -cmatch '\A[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\z') {
+            foreach ($arch in $archOrder) {
+                $envCandidate = Join-Path $kitsBin "$winSdkVer\$arch\$ToolName"
+                if (Test-Path -LiteralPath $envCandidate) {
+                    return $envCandidate
+                }
+            }
+        }
+        $rawVersionDirs = @(Get-ChildItem -LiteralPath $kitsBin -Directory -ErrorAction SilentlyContinue)
+        $versionDirs = @(& $sortDirsByVersionDesc -Dirs $rawVersionDirs -AllowPrerelease $false)
         foreach ($vDir in $versionDirs) {
             foreach ($arch in $archOrder) {
                 $candidate = Join-Path $vDir.FullName "$arch\$ToolName"
@@ -444,6 +576,7 @@ function Resolve-WindowsKitTool {
         }
     }
 
+    # 2. Restored NuGet Microsoft.Windows.SDK.BuildTools package
     $nugetEnv = [System.Environment]::GetEnvironmentVariable("NUGET_PACKAGES")
     $userProfileEnv = [System.Environment]::GetEnvironmentVariable("USERPROFILE")
     $nugetRoot = ""
@@ -455,14 +588,13 @@ function Resolve-WindowsKitTool {
     if (-not [string]::IsNullOrWhiteSpace($nugetRoot)) {
         $btRoot = Join-Path $nugetRoot "microsoft.windows.sdk.buildtools"
         if (Test-Path -LiteralPath $btRoot) {
-            $pkgDirs = @(Get-ChildItem -LiteralPath $btRoot -Directory -ErrorAction SilentlyContinue |
-                Sort-Object Name -Descending)
+            $rawPkgDirs = @(Get-ChildItem -LiteralPath $btRoot -Directory -ErrorAction SilentlyContinue)
+            $pkgDirs = @(& $sortDirsByVersionDesc -Dirs $rawPkgDirs -AllowPrerelease $true)
             foreach ($pkgDir in $pkgDirs) {
                 $binRoot = Join-Path $pkgDir.FullName "bin"
                 if (-not (Test-Path -LiteralPath $binRoot)) { continue }
-                $sdkDirs = @(Get-ChildItem -LiteralPath $binRoot -Directory -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
-                    Sort-Object { [version]$_.Name } -Descending)
+                $rawSdkDirs = @(Get-ChildItem -LiteralPath $binRoot -Directory -ErrorAction SilentlyContinue)
+                $sdkDirs = @(& $sortDirsByVersionDesc -Dirs $rawSdkDirs -AllowPrerelease $false)
                 foreach ($sdkDir in $sdkDirs) {
                     foreach ($arch in $archOrder) {
                         $candidate = Join-Path $sdkDir.FullName "$arch\$ToolName"
@@ -475,6 +607,7 @@ function Resolve-WindowsKitTool {
         }
     }
 
+    # 3. Ambient PATH fallback
     $cmd = Get-Command $ToolName -ErrorAction SilentlyContinue
     if ($null -ne $cmd) {
         return $cmd.Source
@@ -496,9 +629,6 @@ function New-DeterministicZipArchive {
     )
 
     Add-Type -AssemblyName System.IO.Compression
-    if (Test-Path -LiteralPath $DestinationPath) {
-        Remove-Item -LiteralPath $DestinationPath -Force
-    }
     $sortedNames = [System.Collections.Generic.List[string]]::new()
     foreach ($key in $EntryMap.Keys) {
         $sortedNames.Add([string]$key)
@@ -507,38 +637,52 @@ function New-DeterministicZipArchive {
 
     # Use UTC DateTimeOffset directly so ZIP DOS timestamps are timezone-independent.
     $zipTimestamp = [System.DateTimeOffset]::FromUnixTimeSeconds($EpochSeconds)
-    $fs = [System.IO.File]::Open($DestinationPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+    $tmpPath = "$DestinationPath.$PID.tmp"
+    if (Test-Path -LiteralPath $tmpPath) {
+        Remove-Item -LiteralPath $tmpPath -Force
+    }
     try {
-        $archive = [System.IO.Compression.ZipArchive]::new($fs, [System.IO.Compression.ZipArchiveMode]::Create, $false)
+        $fs = [System.IO.File]::Open($tmpPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
         try {
-            foreach ($entryName in $sortedNames) {
-                $sourceFile = [string]$EntryMap[$entryName]
-                $entry = $archive.CreateEntry($entryName, [System.IO.Compression.CompressionLevel]::Optimal)
-                $entry.LastWriteTime = $zipTimestamp
-                $entry.ExternalAttributes = 0
-                $srcStream = [System.IO.File]::OpenRead($sourceFile)
-                try {
-                    $dstStream = $entry.Open()
+            $archive = [System.IO.Compression.ZipArchive]::new($fs, [System.IO.Compression.ZipArchiveMode]::Create, $false)
+            try {
+                foreach ($entryName in $sortedNames) {
+                    $sourceFile = (Resolve-Path -LiteralPath ([string]$EntryMap[$entryName])).Path
+                    $entry = $archive.CreateEntry($entryName, [System.IO.Compression.CompressionLevel]::Optimal)
+                    $entry.LastWriteTime = $zipTimestamp
+                    $entry.ExternalAttributes = 0
+                    $srcStream = [System.IO.File]::OpenRead($sourceFile)
                     try {
-                        $srcStream.CopyTo($dstStream)
+                        $dstStream = $entry.Open()
+                        try {
+                            $srcStream.CopyTo($dstStream)
+                        }
+                        finally {
+                            $dstStream.Dispose()
+                        }
                     }
                     finally {
-                        $dstStream.Dispose()
+                        $srcStream.Dispose()
                     }
                 }
-                finally {
-                    $srcStream.Dispose()
-                }
+            }
+            finally {
+                $archive.Dispose()
             }
         }
         finally {
-            $archive.Dispose()
+            $fs.Dispose()
         }
+        [System.IO.File]::SetLastWriteTimeUtc($tmpPath, $zipTimestamp.UtcDateTime)
+        [System.IO.File]::Move($tmpPath, $DestinationPath, $true)
+        [System.IO.File]::SetLastWriteTimeUtc($DestinationPath, $zipTimestamp.UtcDateTime)
     }
-    finally {
-        $fs.Dispose()
+    catch {
+        if (Test-Path -LiteralPath $tmpPath) {
+            Remove-Item -LiteralPath $tmpPath -Force -ErrorAction SilentlyContinue
+        }
+        throw
     }
-    [System.IO.File]::SetLastWriteTimeUtc($DestinationPath, $zipTimestamp.UtcDateTime)
 }
 
 $SourceDateEpoch = Resolve-SourceDateEpoch
@@ -547,7 +691,7 @@ $EpochUtc = [System.DateTimeOffset]::FromUnixTimeSeconds($SourceDateEpoch).UtcDa
 Assert-MsixVersionQuad -Value $Version -RequireStoreRules:$StoreMode
 
 $ScriptDir = $PSScriptRoot
-$RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..")).Path
+$RepoRoot = (Resolve-Path -LiteralPath (Join-Path $ScriptDir "..")).Path
 $SourceManifestPath = Join-Path $ScriptDir "Package.arm64.appxmanifest"
 
 Assert-NoControlOrBidiChars -Value $StoreIdentityName -Label "StoreIdentityName"
@@ -663,9 +807,7 @@ if (-not (Test-Path -LiteralPath $ExplorerExtDll)) {
 }
 
 Write-Host "==> [arm64 2/5] Publishing WinUI 3 shell with .NET 10 LTS Native AOT (win-arm64)..."
-if (Test-Path -LiteralPath $PublishDir) {
-    Remove-Item -LiteralPath $PublishDir -Recurse -Force
-}
+Remove-PathWithRetry -Path $PublishDir
 New-Item -ItemType Directory -Force -Path $PublishDir | Out-Null
 
 Push-Location (Join-Path $RepoRoot "ui-winui3-fluent2")
@@ -694,7 +836,8 @@ try {
     if ($EmitSymbols) {
         $publishArgs += @(
             "-p:DebugSymbols=true",
-            "-p:DebugType=pdbonly",
+            "-p:DebugType=portable",
+            "-p:NativeDebugSymbols=true",
             "-p:StripSymbols=false",
             "-p:CopyOutputSymbolsToPublishDirectory=true"
         )
@@ -714,18 +857,17 @@ Write-Host "    MakePri:  $MakePriExe"
 Write-Host "    MakeAppx: $MakeAppxExe"
 
 Write-Host "==> [arm64 3/5] Staging arm64 MSIX layout & compiling unified resources.pri..."
-if (Test-Path -LiteralPath $StagingDir) {
-    Remove-Item -LiteralPath $StagingDir -Recurse -Force
-}
-if (Test-Path -LiteralPath $PriWorkDir) {
-    Remove-Item -LiteralPath $PriWorkDir -Recurse -Force
-}
+Remove-PathWithRetry -Path $StagingDir
+Remove-PathWithRetry -Path $PriWorkDir
 New-Item -ItemType Directory -Force -Path $StagingDir, $PriWorkDir | Out-Null
 
-Copy-Item -Path (Join-Path $PublishDir "*") -Destination $StagingDir -Recurse -Force
+Get-ChildItem -LiteralPath $PublishDir | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination $StagingDir -Recurse -Force
+}
 Copy-Item -LiteralPath $ExplorerExtDll -Destination (Join-Path $StagingDir "totaldrop_explorer_ext.dll") -Force
-Get-ChildItem -LiteralPath $StagingDir -Include "*.pdb", "*.pri" -Recurse -File -ErrorAction SilentlyContinue |
-    Remove-Item -Force
+foreach ($staleItem in @(Get-ChildItem -LiteralPath $StagingDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension.ToLowerInvariant() -in @(".pdb", ".pri") })) {
+    Remove-PathWithRetry -Path $staleItem.FullName
+}
 
 foreach ($requiredRel in @(
     "totaldrop-winui.exe",
@@ -805,10 +947,10 @@ if ($LASTEXITCODE -ne 0) {
     throw "MakePri.exe createconfig failed with exit code $LASTEXITCODE"
 }
 
-[xml]$priXml = Get-Content -LiteralPath $PriConfigPath -Raw
+$priXml = Read-XmlDocumentStrict -Path $PriConfigPath -PreserveWhitespace
 $pkgNode = $priXml.SelectSingleNode("/resources/packaging")
-if ($null -ne $pkgNode) {
-    [void]$priXml.resources.RemoveChild($pkgNode)
+if ($null -ne $pkgNode -and $null -ne $pkgNode.ParentNode) {
+    [void]$pkgNode.ParentNode.RemoveChild($pkgNode)
 }
 $priXml.Save($PriConfigPath)
 
@@ -836,7 +978,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "MakePri.exe dump failed with exit code $LASTEXITCODE"
 }
 
-Remove-Item -LiteralPath $StringsStage -Recurse -Force
+Remove-PathWithRetry -Path $StringsStage
 
 # Normalize staged file timestamps to SOURCE_DATE_EPOCH prior to makeappx pack.
 foreach ($stagedFile in @(Get-ChildItem -LiteralPath $StagingDir -Recurse -File)) {
@@ -866,27 +1008,31 @@ if ($EmitSymbols) {
     New-DeterministicZipArchive -DestinationPath $OutAppxSym -EntryMap $pdbEntries -EpochSeconds $SourceDateEpoch
 }
 
+# Local developer convenience bundling switch (canonical Store release CI uses tools/build-msixbundle.ps1).
 if ($CreateStoreBundle) {
-    Write-Host "==> [arm64 5/5] Bundling x64 + arm64 MSIX slices into $OutBundleName..."
+    Write-Host "==> [arm64 5/5] Bundling x64 + arm64 MSIX slices into $OutBundleName (local convenience bundle)..."
     if (-not (Test-Path -LiteralPath $X64Msix)) {
         throw "x64 MSIX slice not found at $X64Msix. Run target-x86_64/build-x64.ps1 first."
     }
-    if (Test-Path -LiteralPath $BundleInputDir) {
-        Remove-Item -LiteralPath $BundleInputDir -Recurse -Force
-    }
+    Remove-PathWithRetry -Path $BundleInputDir
     New-Item -ItemType Directory -Force -Path $BundleInputDir | Out-Null
-    Copy-Item -LiteralPath $X64Msix -Destination $BundleInputDir -Force
-    Copy-Item -LiteralPath $OutMsix -Destination $BundleInputDir -Force
-    foreach ($bundleInputFile in @(Get-ChildItem -LiteralPath $BundleInputDir -File)) {
-        [System.IO.File]::SetLastWriteTimeUtc($bundleInputFile.FullName, $EpochUtc)
-    }
+    try {
+        Copy-Item -LiteralPath $X64Msix -Destination $BundleInputDir -Force
+        Copy-Item -LiteralPath $OutMsix -Destination $BundleInputDir -Force
+        foreach ($bundleInputFile in @(Get-ChildItem -LiteralPath $BundleInputDir -File)) {
+            [System.IO.File]::SetLastWriteTimeUtc($bundleInputFile.FullName, $EpochUtc)
+        }
 
-    & $MakeAppxExe bundle /o /bv $Version /d $BundleInputDir /p $OutBundle
-    if ($LASTEXITCODE -ne 0) {
-        throw "makeappx.exe bundle failed with exit code $LASTEXITCODE"
+        & $MakeAppxExe bundle /o /bv $Version /d $BundleInputDir /p $OutBundle
+        if ($LASTEXITCODE -ne 0) {
+            throw "makeappx.exe bundle failed with exit code $LASTEXITCODE"
+        }
+        [System.IO.File]::SetLastWriteTimeUtc($OutBundle, $EpochUtc)
+        Write-Host "==> Built multi-arch local bundle: $OutBundle"
     }
-    [System.IO.File]::SetLastWriteTimeUtc($OutBundle, $EpochUtc)
-    Write-Host "==> Built multi-arch Store bundle: $OutBundle"
+    finally {
+        Remove-PathWithRetry -Path $BundleInputDir
+    }
 }
 
 $TargetArtifact = if ($CreateStoreBundle) { $OutBundle } else { $OutMsix }
@@ -925,6 +1071,9 @@ if ($SelfSignEphemeral) {
 
 $ArtifactsToHash = [System.Collections.Generic.List[string]]::new()
 $ArtifactsToHash.Add($TargetName)
+if ($CreateStoreBundle -and ($OutMsixName -ne $TargetName)) {
+    $ArtifactsToHash.Add($OutMsixName)
+}
 if ($EmitSymbols) {
     $ArtifactsToHash.Add($OutAppxSymName)
 }

@@ -235,6 +235,11 @@ jobs:
               Name      = "duplicate-overall-result-attr"
               Xml       = '<REPORT OVERALL_RESULT="PASS" overall_result="FAIL"><TEST NAME="Supported APIs" RESULT="PASS" /></REPORT>'
               ExpectAll = @("OVERALL_RESULT", "duplicate")
+            },
+            @{
+              Name      = "all-skipped-zero-pass"
+              Xml       = '<REPORT OVERALL_RESULT="PASS"><TEST NAME="Supported APIs" RESULT="SKIPPED" /></REPORT>'
+              ExpectAll = @("zero PASS")
             }
           )
           foreach ($case in $negCases) {
@@ -258,7 +263,7 @@ jobs:
               }
             }
           }
-          Write-Host "WACK -CheckReportOnly 2 positive & 6 negative smoke tests OK"
+          Write-Host "WACK -CheckReportOnly 2 positive & 7 negative smoke tests OK"
       - name: Validate XML well-formedness (.xaml, .appxmanifest, app.manifest, and 35-locale .resw)
         shell: pwsh
         run: |
@@ -333,6 +338,7 @@ jobs:
           --arch x64
           --expected-version 0.1.1.0
           --expect-signed
+          --require-live-smoke
           --pri-dump dist/work-x64/pri-work-x64/resources-x64.pri.xml
       - name: Verify ephemeral Authenticode signature on test MSIX
         shell: pwsh
@@ -376,9 +382,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Setup Python 3.12 (arm64)
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          architecture: arm64
       - name: Install the pinned Rust toolchain
         shell: bash
-        run: rustup show active-toolchain || rustup toolchain install
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add aarch64-pc-windows-msvc
       - name: Setup .NET 10 LTS SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
@@ -406,11 +419,12 @@ jobs:
       - name: Deep-verify ARM64 MSIX contents, PRI dump, PE32+ hardening, CRT isolation & live C ABI
         shell: bash
         run: >-
-          python3 tools/verify-msix-artifact.py
+          python tools/verify-msix-artifact.py
           --msix dist/TotalDrop_0.1.1.0_arm64.msix
           --arch arm64
           --expected-version 0.1.1.0
           --expect-signed
+          --require-live-smoke
           --pri-dump dist/work-arm64/pri-work-arm64/resources-arm64.pri.xml
       - name: Verify ephemeral Authenticode signature on test MSIX
         shell: pwsh

@@ -202,6 +202,30 @@ function Get-XmlAttributeValues {
     return ,$values
 }
 
+function Format-SanitizedWackText {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Value
+    )
+
+    $sb = [System.Text.StringBuilder]::new($Value.Length)
+    foreach ($ch in $Value.ToCharArray()) {
+        $cp = [int][char]$ch
+        if (
+            $cp -lt 0x20 -or $cp -eq 0x7F -or ($cp -ge 0x80 -and $cp -le 0x9F) -or
+            ($cp -ge 0x202A -and $cp -le 0x202E) -or ($cp -ge 0x2066 -and $cp -le 0x2069) -or
+            $cp -eq 0x061C
+        ) {
+            [void]$sb.Append(('<U+{0:X4}>' -f $cp))
+        }
+        else {
+            [void]$sb.Append($ch)
+        }
+    }
+    return $sb.ToString()
+}
+
 function Test-WackReportXml {
     param(
         [Parameter(Mandatory = $true)]
@@ -209,9 +233,12 @@ function Test-WackReportXml {
     )
 
     if (-not (Test-Path -LiteralPath $ReportFile)) {
-        [Console]::Error.WriteLine("WACK error: report file not found: $ReportFile")
+        $safeReportPath = Format-SanitizedWackText -Value $ReportFile
+        [Console]::Error.WriteLine("WACK error: report file not found: $safeReportPath")
         return $false
     }
+    $resolvedFile = (Resolve-Path -LiteralPath $ReportFile).Path
+    $safeResolvedFile = Format-SanitizedWackText -Value $resolvedFile
 
     $doc = [System.Xml.XmlDocument]::new()
     $doc.XmlResolver = $null
@@ -220,16 +247,23 @@ function Test-WackReportXml {
     $readerSettings.XmlResolver = $null
 
     try {
-        $reader = [System.Xml.XmlReader]::Create($ReportFile, $readerSettings)
+        $fs = [System.IO.File]::OpenRead($resolvedFile)
         try {
-            $doc.Load($reader)
+            $reader = [System.Xml.XmlReader]::Create($fs, $readerSettings)
+            try {
+                $doc.Load($reader)
+            }
+            finally {
+                $reader.Dispose()
+            }
         }
         finally {
-            $reader.Dispose()
+            $fs.Dispose()
         }
     }
-    catch [System.Xml.XmlException] {
-        [Console]::Error.WriteLine("WACK error: malformed or unsafe XML report '$ReportFile': $($_.Exception.Message)")
+    catch [System.Xml.XmlException], [System.Text.DecoderFallbackException], [System.IO.IOException] {
+        $safeErr = Format-SanitizedWackText -Value $_.Exception.Message
+        [Console]::Error.WriteLine("WACK error: malformed, unreadable, or unsafe XML report '$safeResolvedFile': $safeErr")
         return $false
     }
 
@@ -274,6 +308,7 @@ function Test-WackReportXml {
 
     $allowedTestResults = @("PASS", "NOT APPLICABLE", "SKIPPED")
     $failedTests = [System.Collections.Generic.List[string]]::new()
+    $passCount = 0
     foreach ($testNode in $testNodes) {
         $resultValues = Get-XmlAttributeValues -Node $testNode -AttributeName "RESULT"
         foreach ($child in $testNode.ChildNodes) {
@@ -303,6 +338,9 @@ function Test-WackReportXml {
         else {
             $resultRaw = $resultValues[0]
             $resultNorm = $resultRaw.Trim().ToUpperInvariant()
+            if ($resultNorm -eq "PASS") {
+                $passCount++
+            }
             if ($allowedTestResults -notcontains $resultNorm) {
                 $testFailed = $true
                 $displayResult = if ([string]::IsNullOrWhiteSpace($resultRaw)) { "<missing>" } else { $resultRaw.Trim() }
@@ -328,18 +366,24 @@ function Test-WackReportXml {
             if ([string]::IsNullOrWhiteSpace($testName)) {
                 $testName = "<unnamed test>"
             }
-            $failedTests.Add("$testName (RESULT='$displayResult')")
+            $safeTestName = Format-SanitizedWackText -Value $testName
+            $safeDisplayResult = Format-SanitizedWackText -Value $displayResult
+            $failedTests.Add("$safeTestName (RESULT='$safeDisplayResult')")
         }
     }
 
-    $passed = ($null -eq $overallError) -and ($overall -eq "PASS") -and ($testNodes.Count -ge 1) -and ($failedTests.Count -eq 0)
+    $passed = ($null -eq $overallError) -and ($overall -eq "PASS") -and ($testNodes.Count -ge 1) -and ($passCount -ge 1) -and ($failedTests.Count -eq 0)
     if (-not $passed) {
-        [Console]::Error.WriteLine("WACK report FAILED: $ReportFile (OVERALL_RESULT='$overallRaw', tests=$($testNodes.Count), failed=$($failedTests.Count))")
+        $safeOverallRaw = Format-SanitizedWackText -Value $overallRaw
+        [Console]::Error.WriteLine("WACK report FAILED: $safeResolvedFile (OVERALL_RESULT='$safeOverallRaw', tests=$($testNodes.Count), passed=$passCount, failed=$($failedTests.Count))")
         if ($null -ne $overallError) {
-            [Console]::Error.WriteLine($overallError)
+            [Console]::Error.WriteLine((Format-SanitizedWackText -Value $overallError))
         }
         if ($testNodes.Count -lt 1) {
             [Console]::Error.WriteLine("WACK error: report contains zero <TEST> elements")
+        }
+        elseif ($passCount -lt 1) {
+            [Console]::Error.WriteLine("WACK error: report contains zero PASS <TEST> elements (all tests skipped, not applicable, or failed)")
         }
         foreach ($failedEntry in $failedTests) {
             [Console]::Error.WriteLine("WACK FAILED test: $failedEntry")
@@ -347,7 +391,7 @@ function Test-WackReportXml {
         return $false
     }
 
-    Write-Host "WACK report PASS: $ReportFile (tests=$($testNodes.Count), failed=0)"
+    Write-Host "WACK report PASS: $safeResolvedFile (tests=$($testNodes.Count), passed=$passCount, failed=0)"
     return $true
 }
 
@@ -355,8 +399,7 @@ if ($CheckReportOnly) {
     if ([string]::IsNullOrWhiteSpace($ReportPath)) {
         throw "-ReportPath is required when -CheckReportOnly is specified."
     }
-    $resolvedReport = (Resolve-Path -LiteralPath $ReportPath).Path
-    $ok = Test-WackReportXml -ReportFile $resolvedReport
+    $ok = Test-WackReportXml -ReportFile $ReportPath
     if (-not $ok) {
         exit 1
     }
@@ -401,8 +444,15 @@ if ($LASTEXITCODE -ne 0) {
     throw "appcert.exe reset failed with exit code $LASTEXITCODE"
 }
 
-& $appCert test -appxpackagepath $resolvedPackage -reportoutputpath $resolvedReport
-$testExitCode = $LASTEXITCODE
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    & $appCert test -appxpackagepath $resolvedPackage -reportoutputpath $resolvedReport
+    $testExitCode = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $prevEap
+}
 
 $reportValid = $false
 if (Test-Path -LiteralPath $resolvedReport) {
