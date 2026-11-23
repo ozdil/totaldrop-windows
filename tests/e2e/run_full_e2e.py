@@ -162,15 +162,16 @@ def _resolve_sibling_repo(
     env_var: str,
     cli_override: Path | None = None,
 ) -> Path:
+    root = repo_root.expanduser().resolve()
     if cli_override is not None:
         return cli_override.expanduser().resolve()
     env_val = os.environ.get(env_var, "").strip()
     if env_val:
         return Path(env_val).expanduser().resolve()
-    direct = repo_root.parent / name
+    direct = root.parent / name
     if direct.is_dir():
         return direct.resolve()
-    org_fallback = repo_root.parent.parent / "totaldrop-app" / name
+    org_fallback = root.parent.parent / "totaldrop-app" / name
     if org_fallback.is_dir():
         return org_fallback.resolve()
     return direct

@@ -442,7 +442,7 @@ function Read-EntryBytesFromZip {
                 $ms = [System.IO.MemoryStream]::new()
                 try {
                     $es.CopyTo($ms)
-                    return $ms.ToArray()
+                    return ,$ms.ToArray()
                 }
                 finally {
                     $ms.Dispose()
