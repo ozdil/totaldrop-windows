@@ -84,16 +84,12 @@ EXPLORER_EXT_EXPORTS: tuple[str, ...] = (
 
 EXPLORER_ICON_RESOURCE_ID = 101
 
-FORBIDDEN_CRT_DLLS: tuple[str, ...] = (
-    "vcruntime140.dll",
-    "vcruntime140_1.dll",
-    "msvcp140.dll",
-    "msvcp140_1.dll",
-    "msvcp140_2.dll",
-    "concrt140.dll",
-    "vcomp140.dll",
-    "vcruntime140d.dll",
-    "ucrtbased.dll",
+FORBIDDEN_CRT_PREFIXES: tuple[str, ...] = (
+    "vcruntime140",
+    "msvcp140",
+    "concrt140",
+    "vcomp140",
+    "ucrtbased",
 )
 
 FORBIDDEN_CLR_IMPORTS: tuple[str, ...] = (
@@ -102,6 +98,12 @@ FORBIDDEN_CLR_IMPORTS: tuple[str, ...] = (
     "clrjit.dll",
     "mscoree.dll",
 )
+
+
+def _align_up(value: int, alignment: int) -> int:
+    if alignment <= 1:
+        return value
+    return ((value + alignment - 1) // alignment) * alignment
 
 
 def parse_pe32_plus(path: Path) -> dict[str, Any]:
@@ -127,6 +129,9 @@ def parse_pe32_plus(path: Path) -> dict[str, Any]:
     if opt_size < 112 or opt_off + opt_size > len(data):
         raise ValueError(f"{path.name}: truncated PE32+ Optional Header")
 
+    section_alignment = struct.unpack_from("<I", data, opt_off + 32)[0]
+    file_alignment = struct.unpack_from("<I", data, opt_off + 36)[0]
+    size_of_image = struct.unpack_from("<I", data, opt_off + 56)[0]
     dll_chars_off = opt_off + 70
     dll_chars = struct.unpack_from("<H", data, dll_chars_off)[0]
     num_rvas = struct.unpack_from("<I", data, opt_off + 108)[0]
@@ -139,6 +144,7 @@ def parse_pe32_plus(path: Path) -> dict[str, Any]:
         return struct.unpack_from("<II", data, off)
 
     sections: list[tuple[int, int, int, int]] = []
+    sections_meta: list[dict[str, int]] = []
     sec_off = opt_off + opt_size
     if sec_off + num_sections * 40 > len(data):
         raise ValueError(f"{path.name}: truncated section table")
@@ -148,6 +154,15 @@ def parse_pe32_plus(path: Path) -> dict[str, Any]:
             "<8sIIIIIIHHI", data, eoff
         )
         sections.append((v_addr, max(v_size, raw_size), raw_ptr, raw_size))
+        sections_meta.append(
+            {
+                "hdr_off": eoff,
+                "v_size": v_size,
+                "v_addr": v_addr,
+                "raw_size": raw_size,
+                "raw_ptr": raw_ptr,
+            }
+        )
 
     def rva_to_off(rva: int) -> int | None:
         if rva == 0:
@@ -186,11 +201,12 @@ def parse_pe32_plus(path: Path) -> dict[str, Any]:
                     ex_dll_chars = struct.unpack_from("<I", data, val_off)[0]
                     ex_dll_chars_off = val_off
 
-    # Load Config Directory (DataDirectory[10]) -> DependentLoadFlags @ +0x4E
+    # Load Config Directory (DataDirectory[10]) -> DependentLoadFlags @ +0x4E.
+    # Windows PE loader ignores LoadConfig unless DataDirectory[10].Size > 0.
     dependent_load_flags: int | None = None
     dependent_load_flags_off: int | None = None
-    lc_rva, _ = data_dir(10)
-    lc_off = rva_to_off(lc_rva)
+    lc_rva, lc_size = data_dir(10)
+    lc_off = rva_to_off(lc_rva) if lc_size > 0 else None
     if lc_off is not None and lc_off + 4 <= len(data):
         lc_struct_size = struct.unpack_from("<I", data, lc_off)[0]
         if lc_struct_size >= 0x50 and lc_off + 0x50 <= len(data):
@@ -200,6 +216,7 @@ def parse_pe32_plus(path: Path) -> dict[str, Any]:
     # Import Directory (DataDirectory[1])
     imports: list[str] = []
     import_name_offsets: list[tuple[str, int]] = []
+    import_name_rva_offsets: list[int] = []
     imp_rva, _ = data_dir(1)
     imp_off = rva_to_off(imp_rva)
     if imp_off is not None:
@@ -213,6 +230,7 @@ def parse_pe32_plus(path: Path) -> dict[str, Any]:
                 imports.append(dll_name.lower())
                 if noff is not None:
                     import_name_offsets.append((dll_name.lower(), noff))
+                import_name_rva_offsets.append(pos + 12)
             pos += 20
 
     # Delay-Import Directory (DataDirectory[13])
@@ -300,11 +318,17 @@ def parse_pe32_plus(path: Path) -> dict[str, Any]:
         "dependent_load_flags_off": dependent_load_flags_off,
         "imports": imports,
         "import_name_offsets": import_name_offsets,
+        "import_name_rva_offsets": import_name_rva_offsets,
         "delay_imports": delay_imports,
         "exports": exports,
         "resources": resources,
         "resource_ids": resource_ids,
         "clr_header": (clr_rva, clr_size),
+        "opt_off": opt_off,
+        "section_alignment": section_alignment,
+        "file_alignment": file_alignment,
+        "size_of_image": size_of_image,
+        "sections_meta": sections_meta,
     }
 
 
@@ -334,7 +358,11 @@ def _check_common_hardening(pe: dict[str, Any], arch: str, expect_dll: bool, req
             raise ValueError(f"{label}: missing LoadConfig DependentLoadFlags=0x800 (got {dlf})")
 
     all_imports = set(pe["imports"]) | set(pe["delay_imports"])
-    bad_crt = sorted(d for d in FORBIDDEN_CRT_DLLS if d in all_imports)
+    bad_crt = sorted(
+        imp
+        for imp in all_imports
+        if any(imp.startswith(prefix) for prefix in FORBIDDEN_CRT_PREFIXES)
+    )
     if bad_crt:
         raise ValueError(f"{label}: forbidden dynamic/debug CRT import(s) found: {bad_crt}")
 
@@ -427,9 +455,40 @@ def _patch_import_name(pe_path: Path, new_dll_name: str) -> None:
             raw[off : off + len(target_bytes)] = target_bytes
             pe_path.write_bytes(bytes(raw))
             return
-    # Fallback: expand last import name at end of file & rewrite Name RVA? Find any long import or append
-    # Locate the first import descriptor's Name RVA field if no slot was wide enough.
-    raise ValueError(f"{pe_path.name}: no import slot wide enough to patch {new_dll_name!r}")
+
+    rva_offsets: list[int] = pe["import_name_rva_offsets"]
+    sections_meta: list[dict[str, int]] = pe["sections_meta"]
+    if not rva_offsets or not sections_meta:
+        raise ValueError(f"{pe_path.name}: no import descriptor available to patch {new_dll_name!r}")
+
+    # Append the new ASCII DLL name into the tail of the last file-backed section
+    # and repoint the first IMAGE_IMPORT_DESCRIPTOR.Name RVA to it so short-import
+    # binaries (e.g. KERNEL32.dll / ole32.dll / ntdll.dll) mutate cleanly.
+    last_sec = max(sections_meta, key=lambda s: s["raw_ptr"] + s["raw_size"])
+    file_align = pe["file_alignment"] or 0x200
+    sec_align = pe["section_alignment"] or 0x1000
+    append_delta = max(last_sec["v_size"], last_sec["raw_size"], max(0, len(raw) - last_sec["raw_ptr"]))
+    write_off = last_sec["raw_ptr"] + append_delta
+    if len(raw) < write_off:
+        raw.extend(b"\x00" * (write_off - len(raw)))
+    raw.extend(target_bytes)
+
+    new_v_size = append_delta + len(target_bytes)
+    new_raw_size = _align_up(new_v_size, file_align)
+    target_file_end = last_sec["raw_ptr"] + new_raw_size
+    if len(raw) < target_file_end:
+        raw.extend(b"\x00" * (target_file_end - len(raw)))
+
+    new_name_rva = last_sec["v_addr"] + append_delta
+    struct.pack_into("<I", raw, last_sec["hdr_off"] + 8, new_v_size)
+    struct.pack_into("<I", raw, last_sec["hdr_off"] + 16, new_raw_size)
+    new_size_of_image = max(
+        pe["size_of_image"],
+        _align_up(last_sec["v_addr"] + new_v_size, sec_align),
+    )
+    struct.pack_into("<I", raw, pe["opt_off"] + 56, new_size_of_image)
+    struct.pack_into("<I", raw, rva_offsets[0], new_name_rva)
+    pe_path.write_bytes(bytes(raw))
 
 
 def run_self_test_mutations(unpacked: Path, arch: str, milestone: str) -> None:
@@ -908,6 +967,95 @@ def run_synthetic_unit_tests() -> None:
             assert "0xaa64" in low and "0x8664" in low, f"unexpected error: {exc}"
         else:
             raise AssertionError("x64-in-arm64 cross-architecture contamination was not caught")
+
+        # Tier-5 (C2-F1a): Realistic short-import x64 & ARM64 binaries (NO kernel32_long_placeholder.dll)
+        # must pass verification AND run_self_test_mutations via append-to-last-section fallback.
+        for arch_tag, machine_id, want_cet in (
+            ("x64", IMAGE_FILE_MACHINE_AMD64, True),
+            ("arm64", IMAGE_FILE_MACHINE_ARM64, False),
+        ):
+            d_short = Path(tmp) / f"short-imports-{arch_tag}"
+            d_short.mkdir()
+            (d_short / "totaldrop-winui.exe").write_bytes(
+                _build_synthetic_pe32_plus(
+                    machine=machine_id,
+                    is_dll=False,
+                    imports=["KERNEL32.dll", "user32.dll", "ntdll.dll"],
+                    exports=[],
+                    include_icons=True,
+                    include_load_config=False,
+                    include_cet=want_cet,
+                )
+            )
+            (d_short / "totaldrop_windows_ffi.dll").write_bytes(
+                _build_synthetic_pe32_plus(
+                    machine=machine_id,
+                    is_dll=True,
+                    imports=["KERNEL32.dll", "bcrypt.dll", "WS2_32.dll", "ntdll.dll"],
+                    exports=all_ffi_exports,
+                    include_icons=False,
+                    include_load_config=True,
+                    include_cet=want_cet,
+                )
+            )
+            (d_short / "totaldrop_explorer_ext.dll").write_bytes(
+                _build_synthetic_pe32_plus(
+                    machine=machine_id,
+                    is_dll=True,
+                    imports=["KERNEL32.dll", "ole32.dll", "ntdll.dll"],
+                    exports=list(EXPLORER_EXT_EXPORTS),
+                    include_icons=True,
+                    include_load_config=True,
+                    include_cet=want_cet,
+                    icon_group_id=EXPLORER_ICON_RESOURCE_ID,
+                )
+            )
+            verify_unpacked_dir(d_short, arch=arch_tag, milestone="M4")
+            run_self_test_mutations(d_short, arch=arch_tag, milestone="M4")
+
+        # Tier-5 (C2-F1b): DataDirectory[10].Size == 0 (LoadConfig disabled by PE loader) must fail.
+        d_lc_zero = Path(tmp) / "lc-size-zero"
+        shutil.copytree(d, d_lc_zero)
+        ffi_lc_zero = d_lc_zero / "totaldrop_windows_ffi.dll"
+        raw_lc = bytearray(ffi_lc_zero.read_bytes())
+        e_lfanew = struct.unpack_from("<I", raw_lc, 0x3C)[0]
+        lc_size_off = e_lfanew + 24 + 112 + 10 * 8 + 4
+        struct.pack_into("<I", raw_lc, lc_size_off, 0)
+        ffi_lc_zero.write_bytes(bytes(raw_lc))
+        try:
+            verify_unpacked_dir(d_lc_zero, arch="x64", milestone="M4")
+        except ValueError as exc:
+            assert "DependentLoadFlags" in str(exc), f"unexpected error: {exc}"
+        else:
+            raise AssertionError("DataDirectory[10].Size == 0 LoadConfig bypass was not caught")
+
+        # Tier-5 (C2-F1c): Debug & auxiliary MSVC CRT stems caught by prefix matching.
+        for aux_crt in (
+            "msvcp140d.dll",
+            "vcruntime140_1d.dll",
+            "vcruntime140_threads.dll",
+            "concrt140d.dll",
+            "vcomp140d.dll",
+        ):
+            d_aux = Path(tmp) / f"aux-{aux_crt}"
+            shutil.copytree(d, d_aux)
+            (d_aux / "totaldrop_windows_ffi.dll").write_bytes(
+                _build_synthetic_pe32_plus(
+                    machine=IMAGE_FILE_MACHINE_AMD64,
+                    is_dll=True,
+                    imports=["KERNEL32.dll", aux_crt],
+                    exports=all_ffi_exports,
+                    include_icons=False,
+                    include_load_config=True,
+                    include_cet=True,
+                )
+            )
+            try:
+                verify_unpacked_dir(d_aux, arch="x64", milestone="M4")
+            except ValueError as exc:
+                assert aux_crt in str(exc).lower(), f"unexpected error for {aux_crt}: {exc}"
+            else:
+                raise AssertionError(f"forbidden debug/auxiliary CRT {aux_crt!r} was not caught")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1094,7 +1094,31 @@ def run_test_suite(
             )
             if p_zero_val.returncode == 0 or "tr" not in (p_zero_val.stdout + p_zero_val.stderr):
                 raise AssertionError(f"empty tr Screenshots[] not rejected: {p_zero_val.stdout}\n{p_zero_val.stderr}")
-        return "1366x768 PASS; 1365x768, 1366x767, JPEG-as-PNG & 0-screenshot locale all rejected"
+
+            # (f) Tier-5 (C2-F3): Spreadsheet formula prefixes & CSV/list delimiters in screenshot filenames -> FAIL
+            for bad_tag, bad_name in (
+                ("eq_formula", "=cmd|calc!A0.png"),
+                ("dash_formula", "-shot.png"),
+                ("plus_formula", "+shot.png"),
+                ("at_formula", "@shot.png"),
+                ("semicolon_delim", "a;b.png"),
+                ("comma_delim", "a,b.png"),
+            ):
+                bad_fn_dir = t / f"fn_{bad_tag}"
+                _write_png(bad_fn_dir / bad_name, 1366, 768, (109, 74, 224, 255))
+                p_fn = _run_cmd(
+                    [
+                        sys.executable, "-B", str(repo_root / "tools" / "generate-store-listings.py"),
+                        "--out", str(t / f"out_{bad_tag}"), "--screenshots-dir", str(bad_fn_dir), "--require-screenshots",
+                    ],
+                    cwd=repo_root,
+                )
+                fn_out = f"{p_fn.stdout}\n{p_fn.stderr}"
+                if p_fn.returncode == 0 or "unsafe screenshot relative path" not in fn_out.lower():
+                    raise AssertionError(
+                        f"unsafe screenshot filename {bad_name!r} was not rejected (rc={p_fn.returncode}): {fn_out}"
+                    )
+        return "1366x768 PASS; 1365x768, 1366x767, JPEG-as-PNG, 0-screenshot locale & formula/delimiter filenames all rejected"
 
     def t2_f23_06() -> str:
         base_doc = json.loads((repo_root / "packaging" / "store-listings" / "store-listings.json").read_text(encoding="utf-8"))
@@ -1124,7 +1148,26 @@ def run_test_suite(
             for tok in ("U+202E", "HTML/XML", "Plasma", ".pkg", "metainfoTheme", "metainfoOnePackage", "http://totaldrop.app/privacy/"):
                 if tok not in out:
                     raise AssertionError(f"validator output missing violation diagnostic {tok!r}:\n{out}")
-        return "all 6 Store listing hygiene violations caught in a single validation pass"
+
+            # Tier-5 (C2-F3): Leading-space and newline+space spreadsheet formula injections must fail.
+            mut_formula = json.loads(json.dumps(base_doc))
+            by_loc_f = {item["locale"]: item for item in mut_formula["listings"]}
+            by_loc_f["en"]["ShortDescription"] = " =1+1"
+            by_loc_f["en"]["Description"] = "\n  =cmd()"
+            by_loc_f["tr"]["Description"] = "Normal line\n  =HYPERLINK(\"http://evil.test\")"
+            jp_f = Path(tmp) / "poisoned_formula.json"
+            jp_f.write_text(json.dumps(mut_formula, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            p_f = _run_cmd(
+                [sys.executable, "-B", str(repo_root / "tools" / "generate-store-listings.py"), "--validate-file", str(jp_f)],
+                cwd=repo_root,
+            )
+            out_f = p_f.stdout + p_f.stderr
+            if p_f.returncode == 0:
+                raise AssertionError("leading-whitespace spreadsheet formula injection unexpectedly passed!")
+            for tok in ("locale en ShortDescription", "locale en Description", "locale tr Description", "formula-injection"):
+                if tok not in out_f:
+                    raise AssertionError(f"formula validator output missing {tok!r}:\n{out_f}")
+        return "all Store listing hygiene & leading-whitespace formula-injection violations caught"
 
     def t1_f24_01() -> str:
         cl_path = repo_root / "docs" / "partner-center-checklist.md"

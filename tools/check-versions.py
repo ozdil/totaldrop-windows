@@ -1024,21 +1024,21 @@ def check_manifests_and_scripts(repo_root: Path, errors: list[str]) -> None:
     ):
         text = (repo_root / rel).read_text(encoding="utf-8")
         if not re.search(
-            r"^#\s*yaml-language-server:\s*\$schema=https://aka\.ms/winget-manifest\.singleton\.1\.9\.0\.schema\.json\s*$",
+            r"^#[ \t]*yaml-language-server:[ \t]*\$schema=https://aka\.ms/winget-manifest\.singleton\.1\.9\.0\.schema\.json[ \t]*$",
             text,
             re.MULTILINE,
         ):
             errors.append(
                 f"{rel}: missing https://aka.ms/winget-manifest.singleton.1.9.0.schema.json schema header"
             )
-        m_mver = re.search(r"^ManifestVersion:\s*(\S+)\s*$", text, re.MULTILINE)
+        m_mver = re.search(r"^ManifestVersion:[ \t]*(\S+)[ \t]*$", text, re.MULTILINE)
         expect_eq(
             errors,
             f"{rel} ManifestVersion",
             m_mver.group(1) if m_mver else None,
             "1.9.0",
         )
-        m_pkg = re.search(r"^PackageVersion:\s*(\S+)\s*$", text, re.MULTILINE)
+        m_pkg = re.search(r"^PackageVersion:[ \t]*(\S+)[ \t]*$", text, re.MULTILINE)
         expect_eq(
             errors,
             f"{rel} PackageVersion",

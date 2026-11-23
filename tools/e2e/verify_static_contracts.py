@@ -153,8 +153,125 @@ def _resolve_posix_shells() -> list[tuple[str, str]]:
     return shells
 
 
+def _match_rust_char_literal(src: str, i: int) -> int:
+    """If src[i:] starts a Rust char or byte-char literal ('x', b'x', '\\'', '\\u{...}'), return end index; else -1."""
+    n = len(src)
+    q = i
+    if src[i] == "b" and i + 1 < n and src[i + 1] == "'":
+        if i > 0 and (src[i - 1].isalnum() or src[i - 1] == "_"):
+            return -1
+        q = i + 1
+    elif src[i] != "'":
+        return -1
+
+    if q + 2 >= n:
+        return -1
+    if src[q + 1] == "\\":
+        # Escape sequence: \', \\, \n, \xHH, \u{...}
+        j = q + 2
+        if j >= n:
+            return -1
+        if src[j] == "u" and j + 1 < n and src[j + 1] == "{":
+            close_brace = src.find("}", j + 2)
+            if close_brace != -1 and close_brace + 1 < n and src[close_brace + 1] == "'" and close_brace - j <= 10:
+                return close_brace + 2
+            return -1
+        if src[j] == "x":
+            if j + 3 < n and src[j + 3] == "'":
+                return j + 4
+            return -1
+        if j + 1 < n and src[j + 1] == "'":
+            return j + 2
+        return -1
+    if src[q + 1] not in ("'", "\\", "\n", "\r") and src[q + 2] == "'":
+        return q + 3
+    return -1
+
+
+def _mask_rust_comments_and_strings(src: str) -> str:
+    """Return a same-length copy of Rust source with comments, strings, and char literals replaced by spaces (preserving \\n)."""
+    out: list[str] = []
+    i = 0
+    n = len(src)
+
+    def _emit_masked(seg: str) -> None:
+        out.append("".join("\n" if c == "\n" else " " for c in seg))
+
+    while i < n:
+        ch = src[i]
+        nxt = src[i + 1] if i + 1 < n else ""
+        # Line comment
+        if ch == "/" and nxt == "/":
+            start = i
+            i += 2
+            while i < n and src[i] != "\n":
+                i += 1
+            _emit_masked(src[start:i])
+            continue
+        # Nested block comment
+        if ch == "/" and nxt == "*":
+            start = i
+            depth = 1
+            i += 2
+            while i < n and depth > 0:
+                if src[i : i + 2] == "/*":
+                    depth += 1
+                    i += 2
+                elif src[i : i + 2] == "*/":
+                    depth -= 1
+                    i += 2
+                else:
+                    i += 1
+            _emit_masked(src[start:i])
+            continue
+        # Raw string r#"..."#, br#"..."#, cr#"..."#
+        if (ch == "r" or (ch in ("b", "c") and nxt == "r")) and (
+            i == 0 or not (src[i - 1].isalnum() or src[i - 1] == "_")
+        ):
+            j = i + 2 if ch in ("b", "c") else i + 1
+            hashes = 0
+            while j < n and src[j] == "#":
+                hashes += 1
+                j += 1
+            if j < n and src[j] == '"':
+                end_marker = '"' + ("#" * hashes)
+                end_pos = src.find(end_marker, j + 1)
+                end_idx = n if end_pos == -1 else end_pos + len(end_marker)
+                _emit_masked(src[i:end_idx])
+                i = end_idx
+                continue
+        # Regular / byte / C string "...", b"...", c"..."
+        if ch == '"' or (
+            ch in ("b", "c")
+            and nxt == '"'
+            and (i == 0 or not (src[i - 1].isalnum() or src[i - 1] == "_"))
+        ):
+            start = i
+            i = (i + 2) if ch in ("b", "c") else (i + 1)
+            while i < n:
+                if src[i] == "\\" and i + 1 < n:
+                    i += 2
+                    continue
+                if src[i] == '"':
+                    i += 1
+                    break
+                i += 1
+            _emit_masked(src[start:i])
+            continue
+        # Character / byte-character literal (not lifetime 'a)
+        if ch in ("'", "b"):
+            char_end = _match_rust_char_literal(src, i)
+            if char_end != -1:
+                _emit_masked(src[i:char_end])
+                i = char_end
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def strip_rust_comments_and_strings(src: str) -> str:
-    """Strip Rust // comments, nested /* */ comments, raw strings, strings, and char literals."""
+    """Strip Rust // comments, nested /* */ comments, raw strings, strings, and char/byte-char literals."""
     out: list[str] = []
     i = 0
     n = len(src)
@@ -184,9 +301,11 @@ def strip_rust_comments_and_strings(src: str) -> str:
                     i += 1
             out.append(" ")
             continue
-        # Raw string r#"..."# or br#"..."#
-        if (ch == "r" or (ch == "b" and nxt == "r")) and i + 1 < n:
-            start = i + 2 if ch == "b" else i + 1
+        # Raw string r#"..."#, br#"..."#, cr#"..."#
+        if (ch == "r" or (ch in ("b", "c") and nxt == "r")) and (
+            i == 0 or not (src[i - 1].isalnum() or src[i - 1] == "_")
+        ):
+            start = i + 2 if ch in ("b", "c") else i + 1
             hashes = 0
             j = start
             while j < n and src[j] == "#":
@@ -197,33 +316,35 @@ def strip_rust_comments_and_strings(src: str) -> str:
                 end_marker = '"' + ("#" * hashes)
                 end_pos = src.find(end_marker, j)
                 if end_pos == -1:
+                    out.append("\n" * src[i:].count("\n"))
                     break
+                nl_count = src[i : end_pos + len(end_marker)].count("\n")
                 i = end_pos + len(end_marker)
-                out.append('""')
+                out.append('""' + ("\n" * nl_count))
                 continue
-        # Regular string "..."
-        if ch == '"':
-            i += 1
+        # Regular / byte / C string "..."
+        if ch == '"' or (
+            ch in ("b", "c")
+            and nxt == '"'
+            and (i == 0 or not (src[i - 1].isalnum() or src[i - 1] == "_"))
+        ):
+            start = i
+            i = (i + 2) if ch in ("b", "c") else (i + 1)
             while i < n:
-                if src[i] == "\\":
+                if src[i] == "\\" and i + 1 < n:
                     i += 2
                     continue
                 if src[i] == '"':
                     i += 1
                     break
                 i += 1
-            out.append('""')
+            out.append('""' + ("\n" * src[start:i].count("\n")))
             continue
-        # Character literal (not lifetime 'a)
-        if ch == "'":
-            if i + 2 < n and src[i + 1] == "\\":
-                end_q = src.find("'", i + 2)
-                if end_q != -1 and end_q - i <= 12:
-                    i = end_q + 1
-                    out.append("''")
-                    continue
-            elif i + 2 < n and src[i + 2] == "'":
-                i += 3
+        # Character / byte-character literal (not lifetime 'a)
+        if ch in ("'", "b"):
+            char_end = _match_rust_char_literal(src, i)
+            if char_end != -1:
+                i = char_end
                 out.append("''")
                 continue
         out.append(ch)
@@ -232,7 +353,7 @@ def strip_rust_comments_and_strings(src: str) -> str:
 
 
 def strip_csharp_comments(src: str) -> str:
-    """Strip C# // and /* */ comments while preserving string contents."""
+    """Strip C# // and /* */ comments while accurately lexing char literals, verbatim strings, and raw strings."""
     out: list[str] = []
     i = 0
     n = len(src)
@@ -252,15 +373,79 @@ def strip_csharp_comments(src: str) -> str:
             i += 2
             out.append(" ")
             continue
+        # C# raw string literal: optional $+ followed by 3 or more `"`
+        if ch in ('"', "$"):
+            k = i
+            while k < n and src[k] == "$":
+                k += 1
+            q_start = k
+            while k < n and src[k] == '"':
+                k += 1
+            q_count = k - q_start
+            if q_count >= 3:
+                out.append(src[i:k])
+                i = k
+                end_quotes = '"' * q_count
+                while i < n:
+                    if src[i : i + q_count] == end_quotes:
+                        out.append(end_quotes)
+                        i += q_count
+                        break
+                    out.append(src[i])
+                    i += 1
+                continue
+        # C# verbatim string literal: @"...", $@"...", @$"..."
+        verbatim_prefix_len = 0
+        if ch == "@" and nxt == '"':
+            verbatim_prefix_len = 2
+        elif (
+            (ch == "$" and nxt == "@" and i + 2 < n and src[i + 2] == '"')
+            or (ch == "@" and nxt == "$" and i + 2 < n and src[i + 2] == '"')
+        ):
+            verbatim_prefix_len = 3
+        if verbatim_prefix_len:
+            out.append(src[i : i + verbatim_prefix_len])
+            i += verbatim_prefix_len
+            while i < n:
+                if src[i] == '"':
+                    if i + 1 < n and src[i + 1] == '"':
+                        out.append('""')
+                        i += 2
+                        continue
+                    out.append('"')
+                    i += 1
+                    break
+                out.append(src[i])
+                i += 1
+            continue
+        # C# character literal: 'x', '\'', '\\', '\"', '"'
+        if ch == "'":
+            out.append("'")
+            i += 1
+            while i < n:
+                if src[i] == "\\" and i + 1 < n:
+                    out.append(src[i : i + 2])
+                    i += 2
+                    continue
+                out.append(src[i])
+                if src[i] == "'":
+                    i += 1
+                    break
+                if src[i] == "\n":
+                    i += 1
+                    break
+                i += 1
+            continue
+        # Regular / interpolated string literal: "..." or $"..."
         if ch == '"':
             out.append(ch)
             i += 1
             while i < n:
-                out.append(src[i])
                 if src[i] == "\\" and i + 1 < n:
-                    out.append(src[i + 1])
+                    out.append(src[i : i + 2])
                     i += 2
                     continue
+                out.append(src[i])
                 if src[i] == '"':
                     i += 1
                     break
@@ -272,9 +457,63 @@ def strip_csharp_comments(src: str) -> str:
 
 
 def strip_cfg_test_modules(src: str) -> str:
-    """Truncate Rust source before `#[cfg(test)]` module blocks for production-code checks."""
-    m = re.search(r"#\[cfg\(test\)\]", src)
-    return src[: m.start()] if m else src
+    """Blank out actual `#[cfg(test)] mod ... { ... }` blocks (ignoring comments/strings and preserving line numbers)."""
+    masked = _mask_rust_comments_and_strings(src)
+    n = len(masked)
+    spans: list[tuple[int, int]] = []
+    cfg_re = re.compile(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]")
+
+    pos = 0
+    while True:
+        m = cfg_re.search(masked, pos)
+        if not m:
+            break
+        cur = m.end()
+        # Skip whitespace and any sibling attributes `#[...]` before `mod <ident> {`.
+        while cur < n:
+            while cur < n and masked[cur].isspace():
+                cur += 1
+            if cur + 1 < n and masked[cur] == "#" and masked[cur + 1] == "[":
+                depth = 1
+                cur += 2
+                while cur < n and depth > 0:
+                    if masked[cur] == "[":
+                        depth += 1
+                    elif masked[cur] == "]":
+                        depth -= 1
+                    cur += 1
+                continue
+            break
+
+        # Optional visibility (`pub`, `pub(crate)`, etc.) followed by `mod <ident> {`.
+        vis_m = re.match(r"pub(?:\s*\([^)]*\))?\s+", masked[cur:])
+        if vis_m:
+            cur += vis_m.end()
+        mod_m = re.match(r"mod\s+[A-Za-z_]\w*\s*\{", masked[cur:])
+        if not mod_m:
+            pos = m.end()
+            continue
+
+        brace_pos = cur + mod_m.end()
+        depth = 1
+        while brace_pos < n and depth > 0:
+            if masked[brace_pos] == "{":
+                depth += 1
+            elif masked[brace_pos] == "}":
+                depth -= 1
+            brace_pos += 1
+        spans.append((m.start(), brace_pos))
+        pos = brace_pos
+
+    if not spans:
+        return src
+
+    chars = list(src)
+    for start, end in spans:
+        for k in range(start, end):
+            if chars[k] != "\n":
+                chars[k] = " "
+    return "".join(chars)
 
 
 # ---------------------------------------------------------------------------
@@ -327,19 +566,21 @@ def check_rust_safety_isolation(root: Path) -> None:
 
         for rs in sources:
             raw = strip_cfg_test_modules(rs.read_text(encoding="utf-8"))
+            masked_raw = _mask_rust_comments_and_strings(raw)
             lines = raw.splitlines()
-            # Check every `unsafe {` block (ignoring `#[unsafe(no_mangle)]` and `unsafe fn` signatures)
-            for idx, line in enumerate(lines):
-                code_part = line.split("//", 1)[0]
-                if re.search(r"(?<!#\[)\bunsafe\s*\{", code_part):
+            masked_lines = masked_raw.splitlines()
+            # Check every `unsafe {` block on string/comment-masked source so URL strings
+            # containing `//` (e.g. `"https://..."; unsafe { 1 }`) can never hide an unsafe block.
+            for idx, masked_line in enumerate(masked_lines):
+                if re.search(r"(?<!#\[)\bunsafe\s*\{", masked_line):
                     # Look backward over contiguous comments/blank lines for `// SAFETY:`.
                     # Also permit a single immediately preceding rustfmt statement-header line
                     # ending in `=` (e.g. `let hr =\n    unsafe { ... };`) when the unsafe block
                     # starts the continuation line (still rejecting `fn bad() {\n    unsafe {}\n}`).
                     found_safety = False
                     j = idx - 1
-                    if j >= 0 and line.lstrip().startswith("unsafe {"):
-                        prev_code = lines[j].split("//", 1)[0].strip()
+                    if j >= 0 and masked_line.lstrip().startswith("unsafe {"):
+                        prev_code = masked_lines[j].strip()
                         if prev_code.endswith("="):
                             j -= 1
                     while j >= 0:
@@ -738,11 +979,15 @@ def _analyze_ps1_hardening(ps1_path: Path, rel_label: str, *, require_rustflags_
             pending_finally = True
         in_finally = bool(finally_entry_depths)
 
-        if re.search(r"Remove-Item\s+Env:RUSTFLAGS\b", code, flags=re.IGNORECASE) and not saw_cargo_build:
+        code_no_strings = re.sub(r'"[^"]*"|\'[^\']*\'', "", code)
+        if re.search(r"Remove-Item\s+Env:RUSTFLAGS\b", code_no_strings, flags=re.IGNORECASE) and not saw_cargo_build:
             cleared_rustflags = True
-        if re.search(r"Remove-Item\s+Env:CARGO_ENCODED_RUSTFLAGS\b", code, flags=re.IGNORECASE) and not saw_cargo_build:
+        if re.search(r"Remove-Item\s+Env:CARGO_ENCODED_RUSTFLAGS\b", code_no_strings, flags=re.IGNORECASE) and not saw_cargo_build:
             cleared_encoded = True
-        if re.search(r"\bcargo\s+build\b", code):
+        if (
+            re.search(r"\bcargo\s+build\b", code_no_strings, flags=re.IGNORECASE)
+            or re.search(r"(?:^|[\s;(&|])&\s*cargo\s+@", code_no_strings, flags=re.IGNORECASE)
+        ):
             saw_cargo_build = True
 
         # Active $env:RUSTFLAGS = ... or $env:CARGO_ENCODED_RUSTFLAGS = ... outside finally
@@ -901,11 +1146,18 @@ def check_workflows_and_subplatform_scripts(root: Path) -> None:
         raise ValueError("subplatforms/msix/x86_64/verify.sh must validate both SHA256SUMS and OPC/ZIP AppxManifest.xml")
 
 
+_ASCII_MSIX_QUAD_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$", re.ASCII)
+
+
 def _validate_msix_quad(version: str, source_label: str) -> None:
-    parts = version.split(".")
-    if len(parts) != 4 or not all(p.isdigit() for p in parts):
+    if not _ASCII_MSIX_QUAD_RE.fullmatch(version):
         raise ValueError(
-            f"{source_label}: invalid 4-part quad MSIX version {version!r} (must have 4 numeric parts)"
+            f"{source_label}: invalid 4-part quad MSIX version {version!r} (must have 4 ASCII numeric parts)"
+        )
+    parts = version.split(".")
+    if any(len(p) > 1 and p.startswith("0") for p in parts):
+        raise ValueError(
+            f"{source_label}: MSIX quad {version!r} must not contain leading zeros"
         )
     nums = [int(p) for p in parts]
     for idx, val in enumerate(nums):
@@ -1302,7 +1554,10 @@ def _strip_comments_preserve_lines(src: str, suffix: str) -> str:
             i += 1
         return "".join(out)
 
-    # Rust (.rs) and C# (.cs): preserve string literals (incl. Rust raw strings & C# verbatim strings).
+    if suffix == ".cs":
+        return strip_csharp_comments(src)
+
+    # Rust (.rs): preserve string & char/byte-char literals (incl. raw strings) and 1:1 line numbering.
     out = []
     i = 0
     n = len(src)
@@ -1318,7 +1573,7 @@ def _strip_comments_preserve_lines(src: str, suffix: str) -> str:
             depth = 1
             i += 2
             while i < n and depth > 0:
-                if suffix == ".rs" and src[i : i + 2] == "/*":
+                if src[i : i + 2] == "/*":
                     depth += 1
                     i += 2
                 elif src[i : i + 2] == "*/":
@@ -1330,8 +1585,10 @@ def _strip_comments_preserve_lines(src: str, suffix: str) -> str:
                     i += 1
             out.append(" ")
             continue
-        if suffix == ".rs" and (ch == "r" or (ch == "b" and nxt == "r")) and i + 1 < n:
-            start = i + 2 if ch == "b" else i + 1
+        if (ch == "r" or (ch in ("b", "c") and nxt == "r")) and (
+            i == 0 or not (src[i - 1].isalnum() or src[i - 1] == "_")
+        ):
+            start = i + 2 if ch in ("b", "c") else i + 1
             j = start
             hashes = 0
             while j < n and src[j] == "#":
@@ -1346,21 +1603,12 @@ def _strip_comments_preserve_lines(src: str, suffix: str) -> str:
                 out.append(src[i : end_pos + len(end_marker)])
                 i = end_pos + len(end_marker)
                 continue
-        if suffix == ".cs" and ch == "@" and nxt == '"':
-            out.append('@"')
-            i += 2
-            while i < n:
-                if src[i] == '"':
-                    if i + 1 < n and src[i + 1] == '"':
-                        out.append('""')
-                        i += 2
-                        continue
-                    out.append('"')
-                    i += 1
-                    break
-                out.append(src[i])
-                i += 1
-            continue
+        if ch in ("'", "b"):
+            char_end = _match_rust_char_literal(src, i)
+            if char_end != -1:
+                out.append(src[i:char_end])
+                i = char_end
+                continue
         if ch == '"':
             out.append('"')
             i += 1
@@ -2089,6 +2337,38 @@ def self_test_prod_scanner() -> None:
         v_pipe = scan_no_live_production_probing(root)
         if v_pipe:
             raise AssertionError(f"E10b false-positived on local NamedPipeClientStream.Connect(5000): {v_pipe}")
+        (tests_dir / "e10b_pipe_ok.cs").unlink()
+
+        # Tier-5 (C2-F2): C# char literal '"' and verbatim @"\\?\" must NOT desync comment stripping
+        (tests_dir / "t5_cs_desync.cs").write_text(
+            "class BadProbe {\n"
+            "    bool IsQuote(char c) => c == '\"';\n"
+            '    string Prefix => @"\\\\?\\";\n'
+            '    string Marker => "/*";\n'
+            '    void Attack() => new HttpClient().GetAsync("https://rendezvous.totaldrop.app/health");\n'
+            "    // */\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        v_cs = scan_no_live_production_probing(root)
+        if not v_cs:
+            raise AssertionError("Tier-5 C2-F2 C# char-literal/verbatim desync bypassed anti-production-probing scanner")
+        (tests_dir / "t5_cs_desync.cs").unlink()
+
+        # Tier-5 (C2-F2): Rust char literal '"' and byte-char b'"' must NOT desync comment stripping
+        (tests_dir / "t5_rs_desync.rs").write_text(
+            "fn attack(c: char, b: u8) {\n"
+            "    let _ = c == '\"' && b == b'\"';\n"
+            '    let _m = "/*";\n'
+            '    let _ = TcpStream::connect("rendezvous.totaldrop.app:443");\n'
+            "    // */\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        v_rs = scan_no_live_production_probing(root)
+        if not v_rs:
+            raise AssertionError("Tier-5 C2-F2 Rust char-literal desync bypassed anti-production-probing scanner")
+        (tests_dir / "t5_rs_desync.rs").unlink()
 
 
 def verify_all_static(root: Path, milestone: str) -> None:
@@ -2239,7 +2519,29 @@ def run_test_suite(root: Path, milestone: str) -> dict[str, dict[str, Any]]:
             ins_c = '\n#[unsafe(no_mangle)]\npub extern "C" fn totaldrop_win_unguarded() -> i32 { 0 }\n'
             p_c.write_text((raw_c[:idx_test] + ins_c + raw_c[idx_test:]) if idx_test != -1 else (raw_c + ins_c), encoding="utf-8")
             _expect_fail_proc(_run_self_on(c, "M1"), "T2-F01-05(c)", ("totaldrop_win_unguarded", "catch_unwind"))
-        return "clean PASS; all 3 safety mutations caught"
+
+            # (d) Tier-5 (C2-F2): comment containing `#[cfg(test)]` must NOT hide production unsafe / unguarded exports
+            d_cmt = t / "d_cmt"
+            _copy_lightweight_tree(root, d_cmt, m1_light_paths)
+            p_d = d_cmt / "crates" / "totaldrop-windows-ffi" / "src" / "lib.rs"
+            p_d.write_text(
+                "// Note: #[cfg(test)] helpers live at the bottom\n"
+                "fn sneaky_undoc() -> i32 { unsafe { 42 } }\n"
+                + p_d.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            _expect_fail_proc(_run_self_on(d_cmt, "M1"), "T2-F01-05(d-cfg-comment)", ("SAFETY:",))
+
+            # (e) Tier-5 (C2-F2): URL string with `//` before `unsafe {` on the same line must NOT hide it
+            e_url = t / "e_url"
+            _copy_lightweight_tree(root, e_url, m1_light_paths)
+            p_e = e_url / "crates" / "totaldrop-windows-ffi" / "src" / "lib.rs"
+            raw_e = p_e.read_text(encoding="utf-8")
+            idx_test_e = raw_e.find("#[cfg(test)]")
+            ins_e = '\nfn sneaky_url_unsafe() -> i32 { let _u = "https://example.test"; unsafe { 1 } }\n'
+            p_e.write_text((raw_e[:idx_test_e] + ins_e + raw_e[idx_test_e:]) if idx_test_e != -1 else (raw_e + ins_e), encoding="utf-8")
+            _expect_fail_proc(_run_self_on(e_url, "M1"), "T2-F01-05(e-url-unsafe)", ("SAFETY:",))
+        return "clean PASS; all 5 safety & lexer-bypass mutations caught"
 
     def t1_f02_01() -> str:
         check_csproj_and_aot_contracts(root)
@@ -2286,7 +2588,22 @@ def run_test_suite(root: Path, milestone: str) -> dict[str, dict[str, Any]]:
             _copy_lightweight_tree(root, e, m1_light_paths)
             (e / "ui-winui3-fluent2" / "BadBinding.xaml").write_text('<Page><TextBlock Text="{Binding Text}" /></Page>\n', encoding="utf-8")
             _expect_fail_proc(_run_self_on(e, "M1"), "T2-F02-03(e)", ("{Binding ",))
-        return "all 5 forbidden AOT/Rule-2 constructs caught"
+
+            # (f) Tier-5 (C2-F2): C# char literal `'"'` & verbatim `@"\\?\"` followed by `"/*"` must NOT mask [DllImport]
+            for tag, leader in (("f_char", "bool Q(char c) => c == '\"';"), ("f_verb", 'string P => @"\\\\?\\";')):
+                f_dir = t / tag
+                _copy_lightweight_tree(root, f_dir, m1_light_paths)
+                (f_dir / "ui-winui3-fluent2" / "BadDesync.cs").write_text(
+                    f"class BadDesync {{\n"
+                    f"    {leader}\n"
+                    f'    string Marker => "/*";\n'
+                    f'    [DllImport("evil.dll")] static extern void Boom();\n'
+                    f"    // */\n"
+                    f"}}\n",
+                    encoding="utf-8",
+                )
+                _expect_fail_proc(_run_self_on(f_dir, "M1"), f"T2-F02-03({tag})", ("[DllImport]",))
+        return "all 7 forbidden AOT/Rule-2 & C# lexer-desync constructs caught"
 
     def t2_f02_05() -> str:
         check_csproj_and_aot_contracts(root, milestone=milestone)
@@ -2376,18 +2693,32 @@ def run_test_suite(root: Path, milestone: str) -> dict[str, dict[str, Any]]:
         check_cargo_hardening_and_ps1(root)
         with tempfile.TemporaryDirectory(prefix="td-f05-01-") as tmp:
             t = Path(tmp)
-            # (a) inject $env:RUSTFLAGS = "-D warnings" before cargo build
+            # (a) inject $env:RUSTFLAGS = "-D warnings" before `& cargo @cargoArgs`
             a = t / "a"
             _copy_lightweight_tree(root, a, m1_light_paths)
             ps_a = a / "target-x86_64" / "build-x64.ps1"
-            ps_a.write_text(ps_a.read_text(encoding="utf-8").replace("cargo build", '$env:RUSTFLAGS = "-D warnings"\n    cargo build', 1), encoding="utf-8")
+            ps_a.write_text(
+                ps_a.read_text(encoding="utf-8").replace(
+                    "& cargo @cargoArgs",
+                    '$env:RUSTFLAGS = "-D warnings"\n    & cargo @cargoArgs',
+                    1,
+                ),
+                encoding="utf-8",
+            )
             _expect_fail_proc(_run_self_on(a, "M1"), "T2-F05-01(a)", ("RUSTFLAGS",))
 
-            # (b) inject $env:CARGO_ENCODED_RUSTFLAGS before cargo build
+            # (b) inject $env:CARGO_ENCODED_RUSTFLAGS before `& cargo @cargoArgs`
             b = t / "b"
             _copy_lightweight_tree(root, b, m1_light_paths)
             ps_b = b / "target-arm64" / "build-arm64.ps1"
-            ps_b.write_text(ps_b.read_text(encoding="utf-8").replace("cargo build", '$env:CARGO_ENCODED_RUSTFLAGS = "-D"\n    cargo build', 1), encoding="utf-8")
+            ps_b.write_text(
+                ps_b.read_text(encoding="utf-8").replace(
+                    "& cargo @cargoArgs",
+                    '$env:CARGO_ENCODED_RUSTFLAGS = "-D"\n    & cargo @cargoArgs',
+                    1,
+                ),
+                encoding="utf-8",
+            )
             _expect_fail_proc(_run_self_on(b, "M1"), "T2-F05-01(b)", ("CARGO_ENCODED_RUSTFLAGS",))
 
             # (c) append /nv to makeappx pack (single-line, multi-line backtick, and quoted "/nv")
@@ -2416,7 +2747,21 @@ def run_test_suite(root: Path, milestone: str) -> dict[str, dict[str, Any]]:
                 encoding="utf-8",
             )
             _expect_fail_proc(_run_self_on(c3, "M1"), "T2-F05-01(c3-E11)", ("/nv",))
-        return "clean PS1 passes; RUSTFLAGS, CARGO_ENCODED_RUSTFLAGS, single-line, backtick & E11 <#..#> /nv mutations all caught"
+
+            # (d) Tier-5 (C2-F2): Move Remove-Item Env:RUSTFLAGS AFTER `& cargo @cargoArgs`
+            d_ord = t / "d_ord"
+            _copy_lightweight_tree(root, d_ord, m1_light_paths)
+            ps_d = d_ord / "target-x86_64" / "build-x64.ps1"
+            raw_d = ps_d.read_text(encoding="utf-8")
+            raw_d = raw_d.replace("Remove-Item Env:RUSTFLAGS -ErrorAction SilentlyContinue", "", 1)
+            raw_d = raw_d.replace(
+                "& cargo @cargoArgs",
+                "& cargo @cargoArgs\n    Remove-Item Env:RUSTFLAGS -ErrorAction SilentlyContinue",
+                1,
+            )
+            ps_d.write_text(raw_d, encoding="utf-8")
+            _expect_fail_proc(_run_self_on(d_ord, "M1"), "T2-F05-01(d-order)", ("RUSTFLAGS",))
+        return "clean PS1 passes; RUSTFLAGS, CARGO_ENCODED_RUSTFLAGS, post-cargo clear, backtick & E11 <#..#> /nv mutations all caught"
 
     def t1_f06_01() -> str:
         check_workflows_and_subplatform_scripts(root)
@@ -2500,7 +2845,31 @@ def run_test_suite(root: Path, milestone: str) -> dict[str, dict[str, Any]]:
             recipe = clone / "subplatforms" / "msix" / "x86_64" / "RECIPE.toml"
             recipe.write_text(recipe.read_text(encoding="utf-8").replace('version = "0.1.0-beta.1"', f'version = "{STALE_SUBPLATFORM_VER}"', 1), encoding="utf-8")
             _expect_fail_proc(_run_check_versions(clone), "T2-F07-01", ("RECIPE.toml", STALE_SUBPLATFORM_VER))
-        return "mutated RECIPE.toml stale version caught by tools/check-versions.py"
+
+            # Tier-5 (C2-F5): Multi-line broken WinGet schema header must be rejected by tools/check-versions.py
+            clone_wg = Path(tmp) / "repo_wg"
+            _clone_temp_git_repo(root, clone_wg)
+            wg_yaml = clone_wg / "target-x86_64" / "winget" / "app.totaldrop.TotalDrop.x64.yaml"
+            wg_txt = wg_yaml.read_text(encoding="utf-8")
+            broken_hdr = "#\nyaml-language-server:\n$schema=https://aka.ms/winget-manifest.singleton.1.9.0.schema.json"
+            mut_wg = re.sub(
+                r"^#[ \t]*yaml-language-server:[ \t]*\$schema=https://aka\.ms/winget-manifest\.singleton\.1\.9\.0\.schema\.json[ \t]*$",
+                broken_hdr,
+                wg_txt,
+                count=1,
+                flags=re.MULTILINE,
+            )
+            assert mut_wg != wg_txt
+            wg_yaml.write_text(mut_wg, encoding="utf-8")
+            p_wg = subprocess.run(
+                [sys.executable, "-B", str(root / "tools" / "check-versions.py"), "--root", str(clone_wg)],
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            _expect_fail_proc(p_wg, "T2-F07-01(winget-multiline-schema)", ("winget-manifest.singleton.1.9.0.schema.json",))
+        return "mutated RECIPE.toml stale version & multi-line broken WinGet schema header caught by tools/check-versions.py"
 
     def t2_f07_02() -> str:
         with tempfile.TemporaryDirectory(prefix="td-f07-02-") as tmp:
@@ -2518,6 +2887,8 @@ def run_test_suite(root: Path, milestone: str) -> dict[str, dict[str, Any]]:
             for tag, bad_ver, token in (
                 ("overflow", "0.1.65536.0", "65535"),
                 ("threepart", "0.1.1", "4-part"),
+                ("leadingzero", "01.0.1.0", "leading zero"),
+                ("nonascii", "١.٠.١.٠", "4-part"),
             ):
                 clone = t / tag
                 _clone_temp_git_repo(root, clone)
@@ -2525,7 +2896,7 @@ def run_test_suite(root: Path, milestone: str) -> dict[str, dict[str, Any]]:
                 man.write_text(man.read_text(encoding="utf-8").replace('Version="0.1.1.0"', f'Version="{bad_ver}"', 1), encoding="utf-8")
                 _expect_fail_proc(_run_check_versions(clone), f"T2-F07-03({tag},cv)", ("Package.x64.appxmanifest",))
                 _expect_fail_proc(_run_self_on(clone, "M1"), f"T2-F07-03({tag},static)", (token,))
-        return "uint16 overflow 0.1.65536.0 and 3-part 0.1.1 caught by both tools"
+        return "uint16 overflow, 3-part, leading-zero (01.0.1.0), and non-ASCII digit quads caught by both tools"
 
     def t2_f07_04() -> str:
         with tempfile.TemporaryDirectory(prefix="td-f07-04-") as tmp:

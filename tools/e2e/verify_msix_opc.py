@@ -425,9 +425,18 @@ def self_test_pri_dump() -> str:
         else:
             raise AssertionError("E13 partial UNPLATED (256 only while LIGHTUNPLATED has all 5) unexpectedly passed!")
 
+    # Tier-5 (C2-F5): Leading-zero and non-ASCII digit MSIX version quads must be rejected.
+    for bad_quad in ("01.0.1.0", "1.00.1.0", "00.1.1.0", "١.٠.١.٠", "٠.١.١.٠"):
+        try:
+            _validate_quad(bad_quad, store_mode=False, label="tier5-quad")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"_validate_quad unexpectedly accepted invalid MSIX quad {bad_quad!r}")
+
     return (
         "realistic MakePri dump (35-locale, missing zh-Hant 34!=35, LIGHTUNPLATED-only, "
-        "QualifierSet, E13 per-altform 5-size matrix) verified"
+        "QualifierSet, E13 per-altform 5-size matrix, Tier-5 ASCII quad guard) verified"
     )
 
 
@@ -528,10 +537,15 @@ REQUIRED_UPLOAD_PDBS: frozenset[str] = frozenset(
 )
 
 
+_ASCII_MSIX_QUAD_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$", re.ASCII)
+
+
 def _validate_quad(version: str, *, store_mode: bool, label: str) -> tuple[int, int, int, int]:
+    if not _ASCII_MSIX_QUAD_RE.fullmatch(version):
+        raise ValueError(f"{label}: invalid 4-part ASCII MSIX version {version!r}")
     parts = version.split(".")
-    if len(parts) != 4 or not all(p.isdigit() for p in parts):
-        raise ValueError(f"{label}: invalid 4-part MSIX version {version!r}")
+    if any(len(p) > 1 and p.startswith("0") for p in parts):
+        raise ValueError(f"{label}: MSIX version quad must not contain leading zeros: {version!r}")
     quad = tuple(int(p) for p in parts)
     if any(n < 0 or n > 65535 for n in quad):
         raise ValueError(f"{label}: MSIX version quad out of 0..=65535 uint16 bounds: {version!r}")
@@ -1225,7 +1239,7 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
         store_ver = "1.0.1.0"
 
         def t1_f22_03() -> str:
-            # Self-test repo's bundle verifier CLI first (38/38 total, 29/29 baseline)
+            # Self-test repo's bundle verifier CLI first (42/42 total, 29/29 baseline)
             p_st = subprocess.run(
                 [sys.executable, "-B", "-W", "error", str(repo_root / "tools" / "verify-msix-artifact.py"), "--self-test-bundle"],
                 cwd=str(repo_root),
@@ -1233,7 +1247,7 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                 text=True,
                 check=False,
             )
-            if p_st.returncode != 0 or "38/38" not in p_st.stdout or "29/29" not in p_st.stdout:
+            if p_st.returncode != 0 or "42/42" not in p_st.stdout or "29/29" not in p_st.stdout:
                 raise AssertionError(
                     f"tools/verify-msix-artifact.py --self-test-bundle failed: {p_st.stdout}\n{p_st.stderr}"
                 )
@@ -1283,7 +1297,7 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                 )
                 if not ok:
                     raise AssertionError(f"tools/verify-msix-artifact.py rejected valid .msixupload: {msg}")
-            return "dual-arch .msixbundle + .msixupload (2 .appxsym, 3 PDBs, SHA-256 parity) & 38/38 (29/29 baseline) self-test PASS"
+            return "dual-arch .msixbundle + .msixupload (2 .appxsym, 3 PDBs, SHA-256 parity) & 42/42 (29/29 baseline) self-test PASS"
 
         def t1_f22_05() -> str:
             arm64_artifact_name, arm64_ver = resolve_recipe_artifact_name(repo_root, "arm64")
