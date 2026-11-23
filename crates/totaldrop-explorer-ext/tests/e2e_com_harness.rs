@@ -81,18 +81,19 @@ mod win_com_e2e {
         IShellItemArrayVtbl, IShellItemVtbl, guid_eq,
     };
     use totaldrop_explorer_ext::{HRESULT_ERROR_BUFFER_OVERFLOW, MAX_EXPLORER_SELECTION_ITEMS};
-    use totaldrop_windows_bridge::activation::{
-        ActivationPayload, IpcFrameDecoder, session_named_pipe_path,
-    };
+    use totaldrop_windows_bridge::activation::{ActivationPayload, session_named_pipe_path};
+    use totaldrop_windows_bridge::ipc_router::IpcFrameDecoder;
     use windows_sys::Win32::Foundation::{
         CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, CloseHandle, E_INVALIDARG, E_NOINTERFACE,
-        E_NOTIMPL, E_POINTER, ERROR_PIPE_CONNECTED, GetLastError, HANDLE, HMODULE,
-        INVALID_HANDLE_VALUE, S_FALSE, S_OK,
+        E_NOTIMPL, E_POINTER, ERROR_PIPE_CONNECTED, FreeLibrary, GENERIC_WRITE, GetLastError,
+        HANDLE, HMODULE, INVALID_HANDLE_VALUE, S_FALSE, S_OK,
     };
     use windows_sys::Win32::Globalization::{MUI_LANGUAGE_NAME, SetThreadPreferredUILanguages};
-    use windows_sys::Win32::Storage::FileSystem::{PIPE_ACCESS_INBOUND, ReadFile};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, OPEN_EXISTING, PIPE_ACCESS_INBOUND, ReadFile,
+    };
     use windows_sys::Win32::System::Com::{CoTaskMemAlloc, CoTaskMemFree};
-    use windows_sys::Win32::System::LibraryLoader::{FreeLibrary, GetProcAddress, LoadLibraryW};
+    use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
     use windows_sys::Win32::System::Pipes::{
         ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
         PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT,
@@ -107,6 +108,7 @@ mod win_com_e2e {
 
     type TestResult = Result<(), Box<dyn StdError>>;
 
+    type RawFarProc = unsafe extern "system" fn() -> isize;
     type FnDllGetClassObject =
         unsafe extern "system" fn(*const GUID, *const GUID, *mut *mut c_void) -> HRESULT;
     type FnDllCanUnloadNow = unsafe extern "system" fn() -> HRESULT;
@@ -147,10 +149,11 @@ mod win_com_e2e {
                     );
                 };
                 // SAFETY: Standard Win32 COM DLL exported signatures (`DllGetClassObject` & `DllCanUnloadNow`).
-                let dll_get_class_object: FnDllGetClassObject =
-                    unsafe { std::mem::transmute(gco_fn) };
+                let dll_get_class_object =
+                    unsafe { std::mem::transmute::<RawFarProc, FnDllGetClassObject>(gco_fn) };
                 // SAFETY: Standard Win32 COM DLL exported signature (`DllCanUnloadNow`).
-                let dll_can_unload_now: FnDllCanUnloadNow = unsafe { std::mem::transmute(cun_fn) };
+                let dll_can_unload_now =
+                    unsafe { std::mem::transmute::<RawFarProc, FnDllCanUnloadNow>(cun_fn) };
                 return Ok(Self {
                     module: Some(module),
                     dll_get_class_object,
@@ -285,7 +288,8 @@ mod win_com_e2e {
 
     #[repr(C)]
     struct MockShellItem {
-        vtbl: *const IShellItemVtbl,
+        // First #[repr(C)] field: COM interface vtable pointer read through raw ABI pointers.
+        _vtbl: *const IShellItemVtbl,
         ref_count: AtomicU32,
         path_w: Vec<u16>,
     }
@@ -398,7 +402,8 @@ mod win_com_e2e {
 
     #[repr(C)]
     struct MockShellItemArray {
-        vtbl: *const IShellItemArrayVtbl,
+        // First #[repr(C)] field: COM interface vtable pointer read through raw ABI pointers.
+        _vtbl: *const IShellItemArrayVtbl,
         paths: Vec<String>,
         override_count: Option<u32>,
     }
@@ -478,7 +483,7 @@ mod win_com_e2e {
             None => format!(r"C:\t\f{idx:04}.txt"),
         };
         let boxed = Box::new(MockShellItem {
-            vtbl: &MOCK_ITEM_VTBL,
+            _vtbl: &MOCK_ITEM_VTBL,
             ref_count: AtomicU32::new(1),
             path_w: to_utf16_nul(&path_str),
         });
@@ -497,7 +502,7 @@ mod win_com_e2e {
     impl MockShellItemArray {
         fn new(paths: Vec<String>) -> Self {
             Self {
-                vtbl: &MOCK_ARRAY_VTBL,
+                _vtbl: &MOCK_ARRAY_VTBL,
                 paths,
                 override_count: None,
             }
@@ -505,7 +510,7 @@ mod win_com_e2e {
 
         fn with_virtual_count(count: u32) -> Self {
             Self {
-                vtbl: &MOCK_ARRAY_VTBL,
+                _vtbl: &MOCK_ARRAY_VTBL,
                 paths: Vec::new(),
                 override_count: Some(count),
             }
@@ -525,70 +530,141 @@ mod win_com_e2e {
         if ok != 0 { sid } else { 0 }
     }
 
-    fn spawn_single_shot_pipe_server()
-    -> Result<thread::JoinHandle<Result<Vec<u8>, String>>, Box<dyn StdError>> {
-        let pipe_path = session_named_pipe_path(current_session_id());
-        let pipe_w = to_utf16_nul(&pipe_path);
-        // SAFETY: Creating an inbound byte-mode Named Pipe rejecting remote clients.
-        let handle: HANDLE = unsafe {
-            CreateNamedPipeW(
-                pipe_w.as_ptr(),
-                PIPE_ACCESS_INBOUND,
-                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                1,
-                65_536,
-                65_536,
-                5_000,
-                ptr::null(),
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE || handle.is_null() {
-            return Err(format!("CreateNamedPipeW failed for {pipe_path}").into());
-        }
-        let raw_addr = handle as usize;
-        let jh = thread::spawn(move || -> Result<Vec<u8>, String> {
-            let h = raw_addr as HANDLE;
-            // SAFETY: `ConnectNamedPipe` waits for the client on `h`.
-            let conn = unsafe { ConnectNamedPipe(h, ptr::null_mut()) };
-            if conn == 0 {
-                // SAFETY: `GetLastError` reads thread-local Win32 error code.
-                let err = unsafe { GetLastError() };
-                if err != ERROR_PIPE_CONNECTED {
-                    // SAFETY: Closing owned handle on failure.
-                    let _ = unsafe { CloseHandle(h) };
-                    return Err(format!("ConnectNamedPipe failed with Win32 error {err}"));
-                }
+    fn expected_extended_path(raw: &str) -> String {
+        if let Some(rest) = raw.strip_prefix(r"\\?\") {
+            if let Some(unc_tail) = rest
+                .strip_prefix(r"UNC\")
+                .or_else(|| rest.strip_prefix(r"unc\"))
+            {
+                return format!(r"\\?\UNC\{unc_tail}");
             }
-            let mut received = Vec::new();
-            let mut buf = [0u8; 16_384];
-            loop {
-                let mut nread: u32 = 0;
-                // SAFETY: Reading from connected Named Pipe into live stack buffer.
-                let ok = unsafe {
-                    ReadFile(
-                        h,
-                        buf.as_mut_ptr(),
-                        u32::try_from(buf.len()).unwrap_or(16_384),
-                        &mut nread,
+            let mut chars = rest.chars();
+            if let (Some(drive), Some(':')) = (chars.next(), chars.next())
+                && drive.is_ascii_alphabetic()
+            {
+                return format!(r"\\?\{}:{}", drive.to_ascii_uppercase(), chars.as_str());
+            }
+            return format!(r"\\?\{rest}");
+        }
+        if let Some(unc_rest) = raw.strip_prefix(r"\\") {
+            return format!(r"\\?\UNC\{unc_rest}");
+        }
+        let mut chars = raw.chars();
+        if let (Some(drive), Some(':')) = (chars.next(), chars.next())
+            && drive.is_ascii_alphabetic()
+        {
+            return format!(r"\\?\{}:{}", drive.to_ascii_uppercase(), chars.as_str());
+        }
+        format!(r"\\?\{raw}")
+    }
+
+    struct SingleShotPipeServer {
+        pipe_path_w: Vec<u16>,
+        handle: Option<thread::JoinHandle<Result<Vec<u8>, String>>>,
+    }
+
+    impl SingleShotPipeServer {
+        fn spawn() -> Result<Self, Box<dyn StdError>> {
+            let pipe_path = session_named_pipe_path(current_session_id());
+            let pipe_w = to_utf16_nul(&pipe_path);
+            // SAFETY: Creating an inbound byte-mode Named Pipe rejecting remote clients.
+            let handle: HANDLE = unsafe {
+                CreateNamedPipeW(
+                    pipe_w.as_ptr(),
+                    PIPE_ACCESS_INBOUND,
+                    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                    1,
+                    65_536,
+                    65_536,
+                    5_000,
+                    ptr::null(),
+                )
+            };
+            if handle == INVALID_HANDLE_VALUE || handle.is_null() {
+                return Err(format!("CreateNamedPipeW failed for {pipe_path}").into());
+            }
+            let raw_addr = handle as usize;
+            let jh = thread::spawn(move || -> Result<Vec<u8>, String> {
+                let h = raw_addr as HANDLE;
+                // SAFETY: `ConnectNamedPipe` waits for the client on `h`.
+                let conn = unsafe { ConnectNamedPipe(h, ptr::null_mut()) };
+                if conn == 0 {
+                    // SAFETY: `GetLastError` reads thread-local Win32 error code.
+                    let err = unsafe { GetLastError() };
+                    if err != ERROR_PIPE_CONNECTED {
+                        // SAFETY: Closing owned handle on failure.
+                        let _ = unsafe { CloseHandle(h) };
+                        return Err(format!("ConnectNamedPipe failed with Win32 error {err}"));
+                    }
+                }
+                let mut received = Vec::new();
+                let mut buf = [0u8; 16_384];
+                loop {
+                    let mut nread: u32 = 0;
+                    // SAFETY: Reading from connected Named Pipe into live stack buffer.
+                    let ok = unsafe {
+                        ReadFile(
+                            h,
+                            buf.as_mut_ptr(),
+                            u32::try_from(buf.len()).unwrap_or(16_384),
+                            &mut nread,
+                            ptr::null_mut(),
+                        )
+                    };
+                    if ok == 0 || nread == 0 {
+                        break;
+                    }
+                    if let Some(chunk) = buf.get(..nread as usize) {
+                        received.extend_from_slice(chunk);
+                    }
+                }
+                // SAFETY: Disconnect & close owned pipe handle.
+                unsafe {
+                    let _ = DisconnectNamedPipe(h);
+                    let _ = CloseHandle(h);
+                }
+                Ok(received)
+            });
+            thread::sleep(Duration::from_millis(30));
+            Ok(Self {
+                pipe_path_w: pipe_w,
+                handle: Some(jh),
+            })
+        }
+
+        fn finish(mut self) -> Result<Vec<u8>, Box<dyn StdError>> {
+            let jh = self
+                .handle
+                .take()
+                .ok_or("SingleShotPipeServer already joined")?;
+            let bytes = jh.join().map_err(|_| "pipe thread panicked")??;
+            Ok(bytes)
+        }
+    }
+
+    impl Drop for SingleShotPipeServer {
+        fn drop(&mut self) {
+            if let Some(jh) = self.handle.take() {
+                // SAFETY: Unblock a server thread still waiting in `ConnectNamedPipe` by opening
+                // and immediately closing a client handle to the same pipe path.
+                let wake = unsafe {
+                    CreateFileW(
+                        self.pipe_path_w.as_ptr(),
+                        GENERIC_WRITE,
+                        0,
+                        ptr::null(),
+                        OPEN_EXISTING,
+                        0,
                         ptr::null_mut(),
                     )
                 };
-                if ok == 0 || nread == 0 {
-                    break;
+                if wake != INVALID_HANDLE_VALUE && !wake.is_null() {
+                    // SAFETY: Closing the wakeup client handle opened above.
+                    let _ = unsafe { CloseHandle(wake) };
                 }
-                if let Some(chunk) = buf.get(..nread as usize) {
-                    received.extend_from_slice(chunk);
-                }
+                let _ = jh.join();
             }
-            // SAFETY: Disconnect & close owned pipe handle.
-            unsafe {
-                let _ = DisconnectNamedPipe(h);
-                let _ = CloseHandle(h);
-            }
-            Ok(received)
-        });
-        thread::sleep(Duration::from_millis(30));
-        Ok(jh)
+        }
     }
 
     fn verify_extracted_icon(icon_spec: &str) -> TestResult {
@@ -599,7 +675,7 @@ mod win_com_e2e {
         let dll_part = icon_spec
             .strip_suffix(",-101")
             .ok_or("missing ,-101 suffix")?;
-        if std::env::var("TOTALDROP_EXPLORER_EXT_DLL").is_ok() {
+        if std::env::var("TOTALDROP_EXPLORER_EXT_DLL").is_ok_and(|v| !v.trim().is_empty()) {
             let dll_w = to_utf16_nul(dll_part);
             let mut large_icon: HICON = ptr::null_mut();
             let mut small_icon: HICON = ptr::null_mut();
@@ -691,7 +767,7 @@ mod win_com_e2e {
         std::fs::write(&f1, b"alpha")?;
         std::fs::write(&f2, b"beta")?;
 
-        let pipe_jh = spawn_single_shot_pipe_server()?;
+        let pipe_srv = SingleShotPipeServer::spawn()?;
         let mut arr = MockShellItemArray::new(vec![
             f1.to_string_lossy().into_owned(),
             f2.to_string_lossy().into_owned(),
@@ -700,7 +776,7 @@ mod win_com_e2e {
         let hr = unsafe { (cmd.vtbl().invoke)(cmd.raw(), arr.as_ptr(), ptr::null_mut()) };
         assert_eq!(hr, S_OK);
 
-        let raw_bytes = pipe_jh.join().map_err(|_| "pipe thread panicked")??;
+        let raw_bytes = pipe_srv.finish()?;
         let mut dec = IpcFrameDecoder::new();
         let envelopes = dec.push_bytes(&raw_bytes)?;
         dec.finish_eof()?;
@@ -709,14 +785,13 @@ mod win_com_e2e {
         match &env.payload {
             ActivationPayload::ExplorerSend { paths } => {
                 assert_eq!(paths.len(), 2);
+                let exp1 = expected_extended_path(&f1.to_string_lossy());
+                let exp2 = expected_extended_path(&f2.to_string_lossy());
                 assert_eq!(
                     paths.first().map(|p| p.extended_path()),
-                    Some(format!(r"\\?\{}", f1.display()).as_str())
+                    Some(exp1.as_str())
                 );
-                assert_eq!(
-                    paths.get(1).map(|p| p.extended_path()),
-                    Some(format!(r"\\?\{}", f2.display()).as_str())
-                );
+                assert_eq!(paths.get(1).map(|p| p.extended_path()), Some(exp2.as_str()));
             }
             other => return Err(format!("expected ExplorerSend payload, got {other:?}").into()),
         }
@@ -740,29 +815,21 @@ mod win_com_e2e {
         let mut g1 = GUID::from_u128(0);
         let mut g2 = GUID::from_u128(0);
         // SAFETY: Valid COM calls on both concurrent instances.
-        assert_eq!(
-            unsafe { (cmd1.vtbl().get_canonical_name)(cmd1.raw(), &mut g1) },
-            S_OK
-        );
+        let hr_g1 = unsafe { (cmd1.vtbl().get_canonical_name)(cmd1.raw(), &mut g1) };
+        assert_eq!(hr_g1, S_OK);
         // SAFETY: Valid COM calls on both concurrent instances.
-        assert_eq!(
-            unsafe { (cmd2.vtbl().get_canonical_name)(cmd2.raw(), &mut g2) },
-            S_OK
-        );
+        let hr_g2 = unsafe { (cmd2.vtbl().get_canonical_name)(cmd2.raw(), &mut g2) };
+        assert_eq!(hr_g2, S_OK);
         assert!(guid_eq(&g1, &g2));
 
         let mut t1: PWSTR = ptr::null_mut();
         let mut t2: PWSTR = ptr::null_mut();
         // SAFETY: Valid COM calls on both concurrent instances.
-        assert_eq!(
-            unsafe { (cmd1.vtbl().get_title)(cmd1.raw(), ptr::null_mut(), &mut t1) },
-            S_OK
-        );
+        let hr_t1 = unsafe { (cmd1.vtbl().get_title)(cmd1.raw(), ptr::null_mut(), &mut t1) };
+        assert_eq!(hr_t1, S_OK);
         // SAFETY: Valid COM calls on both concurrent instances.
-        assert_eq!(
-            unsafe { (cmd2.vtbl().get_title)(cmd2.raw(), ptr::null_mut(), &mut t2) },
-            S_OK
-        );
+        let hr_t2 = unsafe { (cmd2.vtbl().get_title)(cmd2.raw(), ptr::null_mut(), &mut t2) };
+        assert_eq!(hr_t2, S_OK);
         assert_eq!(take_co_task_mem_wstr(t1)?, take_co_task_mem_wstr(t2)?);
 
         drop(factory);
@@ -790,7 +857,7 @@ mod win_com_e2e {
         assert_eq!(hr_over, HRESULT_ERROR_BUFFER_OVERFLOW);
 
         // 10_000 items accepted and delivered over live Named Pipe IPC
-        let pipe_jh = spawn_single_shot_pipe_server()?;
+        let pipe_srv = SingleShotPipeServer::spawn()?;
         let mut arr_ok = MockShellItemArray::with_virtual_count(
             u32::try_from(MAX_EXPLORER_SELECTION_ITEMS).unwrap_or(10_000),
         );
@@ -798,7 +865,7 @@ mod win_com_e2e {
         let hr_ok = unsafe { (cmd.vtbl().invoke)(cmd.raw(), arr_ok.as_ptr(), ptr::null_mut()) };
         assert_eq!(hr_ok, S_OK);
 
-        let raw_bytes = pipe_jh.join().map_err(|_| "pipe thread panicked")??;
+        let raw_bytes = pipe_srv.finish()?;
         let mut dec = IpcFrameDecoder::new();
         let envelopes = dec.push_bytes(&raw_bytes)?;
         dec.finish_eof()?;
@@ -833,54 +900,42 @@ mod win_com_e2e {
 
         let cmd = factory.create_explorer_command()?;
         // SAFETY: Null out-pointer checks across all IExplorerCommand methods.
-        assert_eq!(
-            unsafe { (cmd.vtbl().get_title)(cmd.raw(), ptr::null_mut(), ptr::null_mut()) },
-            E_POINTER
-        );
+        let hr_null_title =
+            unsafe { (cmd.vtbl().get_title)(cmd.raw(), ptr::null_mut(), ptr::null_mut()) };
+        assert_eq!(hr_null_title, E_POINTER);
         // SAFETY: Null out-pointer check.
-        assert_eq!(
-            unsafe { (cmd.vtbl().get_icon)(cmd.raw(), ptr::null_mut(), ptr::null_mut()) },
-            E_POINTER
-        );
+        let hr_null_icon =
+            unsafe { (cmd.vtbl().get_icon)(cmd.raw(), ptr::null_mut(), ptr::null_mut()) };
+        assert_eq!(hr_null_icon, E_POINTER);
         // SAFETY: Null out-pointer check.
-        assert_eq!(
-            unsafe { (cmd.vtbl().get_state)(cmd.raw(), ptr::null_mut(), 0, ptr::null_mut()) },
-            E_POINTER
-        );
+        let hr_null_state =
+            unsafe { (cmd.vtbl().get_state)(cmd.raw(), ptr::null_mut(), 0, ptr::null_mut()) };
+        assert_eq!(hr_null_state, E_POINTER);
         // SAFETY: Null out-pointer check.
-        assert_eq!(
-            unsafe { (cmd.vtbl().get_canonical_name)(cmd.raw(), ptr::null_mut()) },
-            E_POINTER
-        );
+        let hr_null_cn = unsafe { (cmd.vtbl().get_canonical_name)(cmd.raw(), ptr::null_mut()) };
+        assert_eq!(hr_null_cn, E_POINTER);
         // SAFETY: Null selection check on Invoke.
-        assert_eq!(
-            unsafe { (cmd.vtbl().invoke)(cmd.raw(), ptr::null_mut(), ptr::null_mut()) },
-            E_INVALIDARG
-        );
+        let hr_null_invoke =
+            unsafe { (cmd.vtbl().invoke)(cmd.raw(), ptr::null_mut(), ptr::null_mut()) };
+        assert_eq!(hr_null_invoke, E_INVALIDARG);
 
         // GetState(0 items) -> ECS_HIDDEN (0x2)
         let mut arr0 = MockShellItemArray::new(Vec::new());
         let mut st0: i32 = -1;
         // SAFETY: Valid COM call on empty array.
-        assert_eq!(
-            unsafe { (cmd.vtbl().get_state)(cmd.raw(), arr0.as_ptr(), 0, &mut st0) },
-            S_OK
-        );
+        let hr_st0 = unsafe { (cmd.vtbl().get_state)(cmd.raw(), arr0.as_ptr(), 0, &mut st0) };
+        assert_eq!(hr_st0, S_OK);
         assert_eq!(st0, ECS_HIDDEN);
 
         // GetToolTip & EnumSubCommands -> E_NOTIMPL
         let mut tip: PWSTR = ptr::null_mut();
         // SAFETY: Valid COM call.
-        assert_eq!(
-            unsafe { (cmd.vtbl().get_tool_tip)(cmd.raw(), ptr::null_mut(), &mut tip) },
-            E_NOTIMPL
-        );
+        let hr_tip = unsafe { (cmd.vtbl().get_tool_tip)(cmd.raw(), ptr::null_mut(), &mut tip) };
+        assert_eq!(hr_tip, E_NOTIMPL);
         let mut enum_out: *mut c_void = ptr::null_mut();
         // SAFETY: Valid COM call.
-        assert_eq!(
-            unsafe { (cmd.vtbl().enum_sub_commands)(cmd.raw(), &mut enum_out) },
-            E_NOTIMPL
-        );
+        let hr_enum = unsafe { (cmd.vtbl().enum_sub_commands)(cmd.raw(), &mut enum_out) };
+        assert_eq!(hr_enum, E_NOTIMPL);
         Ok(())
     }
 
@@ -937,18 +992,16 @@ mod win_com_e2e {
             for inst in [&c1, &c2] {
                 let mut tptr: PWSTR = ptr::null_mut();
                 // SAFETY: Valid COM call on live instance.
-                assert_eq!(
-                    unsafe { (inst.vtbl().get_title)(inst.raw(), ptr::null_mut(), &mut tptr) },
-                    S_OK
-                );
+                let hr_title =
+                    unsafe { (inst.vtbl().get_title)(inst.raw(), ptr::null_mut(), &mut tptr) };
+                assert_eq!(hr_title, S_OK);
                 assert_eq!(take_co_task_mem_wstr(tptr)?, expected_title);
 
                 let mut iptr: PWSTR = ptr::null_mut();
                 // SAFETY: Valid COM call on live instance.
-                assert_eq!(
-                    unsafe { (inst.vtbl().get_icon)(inst.raw(), ptr::null_mut(), &mut iptr) },
-                    S_OK
-                );
+                let hr_icon =
+                    unsafe { (inst.vtbl().get_icon)(inst.raw(), ptr::null_mut(), &mut iptr) };
+                assert_eq!(hr_icon, S_OK);
                 let spec = take_co_task_mem_wstr(iptr)?;
                 verify_extracted_icon(&spec)?;
             }
@@ -982,10 +1035,10 @@ mod win_com_e2e {
         for seg in 0..4 {
             long_dir.push(format!("long_segment_{seg:02}_{}", "x".repeat(45)));
         }
-        let long_ext_dir = PathBuf::from(format!(r"\\?\{}", long_dir.display()));
+        let long_ext_dir = PathBuf::from(expected_extended_path(&long_dir.to_string_lossy()));
         std::fs::create_dir_all(&long_ext_dir)?;
         let long_file = long_dir.join("long_payload_001.txt");
-        let long_ext_file = PathBuf::from(format!(r"\\?\{}", long_file.display()));
+        let long_ext_file = PathBuf::from(expected_extended_path(&long_file.to_string_lossy()));
         std::fs::write(&long_ext_file, b"long")?;
         let long_str = long_file.to_string_lossy().into_owned();
         assert!(long_str.encode_utf16().count() > 260);
@@ -1003,13 +1056,13 @@ mod win_com_e2e {
         }
         assert_eq!(real_paths.len(), 250);
 
-        let pipe_jh = spawn_single_shot_pipe_server()?;
+        let pipe_srv = SingleShotPipeServer::spawn()?;
         let mut arr250 = MockShellItemArray::new(real_paths.clone());
         // SAFETY: Valid COM `Invoke` streaming 250 real NTFS paths over Named Pipe.
         let hr = unsafe { (cmd.vtbl().invoke)(cmd.raw(), arr250.as_ptr(), ptr::null_mut()) };
         assert_eq!(hr, S_OK);
 
-        let raw_bytes = pipe_jh.join().map_err(|_| "pipe thread panicked")??;
+        let raw_bytes = pipe_srv.finish()?;
         let mut dec = IpcFrameDecoder::new();
         let envelopes = dec.push_bytes(&raw_bytes)?;
         dec.finish_eof()?;
@@ -1018,7 +1071,7 @@ mod win_com_e2e {
             ActivationPayload::ExplorerSend { paths } => {
                 assert_eq!(paths.len(), 250);
                 for (actual, expected_raw) in paths.iter().zip(real_paths.iter()) {
-                    let expected_ext = format!(r"\\?\{expected_raw}");
+                    let expected_ext = expected_extended_path(expected_raw);
                     assert_eq!(actual.extended_path(), expected_ext);
                 }
             }
@@ -1031,7 +1084,9 @@ mod win_com_e2e {
         let hr_over = unsafe { (cmd.vtbl().invoke)(cmd.raw(), arr_over.as_ptr(), ptr::null_mut()) };
         assert_eq!(hr_over, HRESULT_ERROR_BUFFER_OVERFLOW);
 
-        let _ = std::fs::remove_dir_all(PathBuf::from(format!(r"\\?\{}", base.display())));
+        let _ = std::fs::remove_dir_all(PathBuf::from(expected_extended_path(
+            &base.to_string_lossy(),
+        )));
         Ok(())
     }
 }

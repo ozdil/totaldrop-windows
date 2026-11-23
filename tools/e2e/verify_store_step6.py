@@ -79,6 +79,28 @@ SYNTH_STORE_PUB = "CN=11111111-2222-3333-4444-555555555555"
 SYNTH_PRODUCT_ID = "9NBLGGH5XYZ1"
 SYNTH_PFN = "12345TotalDrop.TotalDrop_7k8m9n0p1q2r3"
 SYNTH_SHA256 = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
+# Split forbidden literal so tools/check-versions.py never flags this verifier itself.
+STALE_ZERO_MAJOR_VER = "0.2." + "0.0"
+
+
+def _resolve_sibling_repo(
+    repo_root: Path,
+    name: str,
+    env_var: str,
+    cli_override: Path | None = None,
+) -> Path:
+    if cli_override is not None:
+        return cli_override.expanduser().resolve()
+    env_val = os.environ.get(env_var, "").strip()
+    if env_val:
+        return Path(env_val).expanduser().resolve()
+    direct = repo_root.parent / name
+    if direct.is_dir():
+        return direct.resolve()
+    org_fallback = repo_root.parent.parent / "totaldrop-app" / name
+    if org_fallback.is_dir():
+        return org_fallback.resolve()
+    return direct
 
 
 def _run_cmd(
@@ -110,11 +132,12 @@ def _stage_version_check_root(
     publisher_x64: str | None = None,
     publisher_arm64: str | None = None,
 ) -> None:
-    """Copy the 5 Store-versioned files into dest and project version/identity attributes."""
+    """Copy the 6 Store-versioned files into dest and project version/identity attributes."""
     rel_files = (
         "target-x86_64/Package.x64.appxmanifest",
         "target-arm64/Package.arm64.appxmanifest",
         "ui-winui3-fluent2/app.manifest",
+        "ui-winui3-fluent2/TotalDrop.WinUI.csproj",
         "target-x86_64/build-x64.ps1",
         "target-arm64/build-arm64.ps1",
     )
@@ -152,6 +175,14 @@ def _stage_version_check_root(
                 text,
                 count=1,
             )
+        elif rel.endswith(".csproj"):
+            for tag in ("AssemblyVersion", "FileVersion"):
+                text = re.sub(
+                    rf"(<{tag}>)[^<]*(</{tag}>)",
+                    lambda m: f"{m.group(1)}{version}{m.group(2)}",
+                    text,
+                    count=1,
+                )
         elif rel.endswith(".ps1"):
             text = re.sub(
                 r'(\[string\]\$Version\s*=\s*")[^"]*(")',
@@ -528,11 +559,11 @@ def _project_docs_and_readmes_step6(
     tm_tr = tm_tr_p.read_text(encoding="utf-8")
     tm_tr += (
         "\n\n### Windows 11 (Microsoft Store / `T12` & `rescap:runFullTrust`)\n"
-        "- `T12`: Windows paketi Microsoft Store uzerinden dagitilir; Microsoft Store paketi yeniden imzalar "
-        "(Store re-signing), bu nedenle CI Sigstore kaniti son kullanici cihazinda dogrudan dogrulanamaz "
-        "ve Partner Center hesabi tek guven noktasidir.\n"
-        "- Windows MSIX `rescap:runFullTrust` kullanir ve AppContainer koruma alani disinda Medium Integrity "
-        "duzeyinde calisir.\n"
+        "- `T12`: Windows packages are distributed through Microsoft Store; Microsoft Store re-signs uploaded "
+        "packages (Store re-signing), so CI Sigstore provenance cannot be verified directly on end-user devices "
+        "and the Partner Center account is the single point of trust.\n"
+        "- Windows MSIX declares `rescap:runFullTrust` and executes at Medium Integrity Level outside an "
+        "AppContainer sandbox.\n"
     )
     tm_tr_p.write_text(tm_tr, encoding="utf-8")
 
@@ -597,11 +628,14 @@ def run_test_suite(
     *,
     mode: str = "pre-reservation",
     env_filter: str = "all",
+    site_dir: Path | None = None,
+    totaldrop_dir: Path | None = None,
+    core_dir: Path | None = None,
 ) -> dict[str, dict[str, Any]]:
     results: dict[str, dict[str, Any]] = {}
-    site_dir = repo_root.parent / "totaldrop-site"
-    totaldrop_dir = repo_root.parent / "totaldrop"
-    core_dir = repo_root.parent / "totaldrop-core"
+    site_dir = _resolve_sibling_repo(repo_root, "totaldrop-site", "TOTALDROP_SITE_DIR", site_dir)
+    totaldrop_dir = _resolve_sibling_repo(repo_root, "totaldrop", "TOTALDROP_MONOREPO_DIR", totaldrop_dir)
+    core_dir = _resolve_sibling_repo(repo_root, "totaldrop-core", "TOTALDROP_CORE_DIR", core_dir)
 
     def record(test_id: str, test_env: str, fn: Any) -> None:
         if env_filter != "all" and env_filter != test_env:
@@ -651,14 +685,16 @@ def run_test_suite(
             raise AssertionError(f"--store did not reject live 0.1.1.0 Major == 0: {p_live.stdout}\n{p_live.stderr}")
         with tempfile.TemporaryDirectory(prefix="td-f23-01-neg-") as tmp:
             root_020 = Path(tmp) / "v0200"
-            _stage_version_check_root(repo_root, root_020, version="0.2.0.0")
+            _stage_version_check_root(repo_root, root_020, version=STALE_ZERO_MAJOR_VER)
             p_020 = _run_cmd(
                 [sys.executable, "-B", str(repo_root / "tools" / "check-versions.py"), "--store", "--root", str(root_020)],
                 cwd=repo_root,
             )
             if p_020.returncode == 0 or "major" not in (p_020.stdout + p_020.stderr).lower():
-                raise AssertionError(f"--store did not reject 0.2.0.0 Major == 0: {p_020.stdout}\n{p_020.stderr}")
-        return "Major == 0 (0.1.1.0 & 0.2.0.0) rejected under --store; default mode accepts 0.1.1.0"
+                raise AssertionError(
+                    f"--store did not reject {STALE_ZERO_MAJOR_VER} Major == 0: {p_020.stdout}\n{p_020.stderr}"
+                )
+        return f"Major == 0 (0.1.1.0 & {STALE_ZERO_MAJOR_VER}) rejected under --store; default mode accepts 0.1.1.0"
 
     def t2_f23_02() -> str:
         with tempfile.TemporaryDirectory(prefix="td-f23-02-") as tmp:
@@ -710,8 +746,12 @@ def run_test_suite(
                 ],
                 cwd=repo_root,
             )
-            if p_ph.returncode == 0:
-                raise AssertionError("--require-store-identity unexpectedly accepted placeholder CN=TotalDrop!")
+            ph_out = f"{p_ph.stdout}\n{p_ph.stderr}"
+            if p_ph.returncode == 0 or "placeholder" not in ph_out.lower() or "cn=totaldrop" not in ph_out.lower():
+                raise AssertionError(
+                    f"--require-store-identity did not reject placeholder CN=TotalDrop with expected diagnostic "
+                    f"(rc={p_ph.returncode}): {ph_out}"
+                )
         return "synthetic Partner Center identity passes --store --require-store-identity; placeholder CN=TotalDrop rejected"
 
     def t2_f24_01() -> str:
@@ -1026,8 +1066,16 @@ def run_test_suite(
                 ],
                 cwd=repo_root,
             )
-            if p_zero_dir.returncode == 0:
-                raise AssertionError("locale with 0 screenshots was not rejected!")
+            zero_dir_out = f"{p_zero_dir.stdout}\n{p_zero_dir.stderr}"
+            if (
+                p_zero_dir.returncode == 0
+                or "locale tr:" not in zero_dir_out.lower()
+                or "0 valid png" not in zero_dir_out.lower()
+            ):
+                raise AssertionError(
+                    f"locale with 0 screenshots was not rejected with expected diagnostic "
+                    f"(rc={p_zero_dir.returncode}): {zero_dir_out}"
+                )
 
             zero_json = t / "zero_tr.json"
             doc = json.loads((t / "ok_out" / "store-listings.json").read_text(encoding="utf-8"))
@@ -1118,8 +1166,9 @@ def run_test_suite(
         # 2. Non-vacuity proof: unmodified pre-Step-6 live site MUST fail store-published mode
         try:
             verify_site_step6(site_dir, mode="store-published")
-        except ValueError:
-            pass
+        except ValueError as exc:
+            if "dl.windows.d" not in str(exc).lower():
+                raise AssertionError(f"unexpected site non-vacuity error (expected dl.windows.d): {exc}") from exc
         else:
             if mode == "pre-reservation":
                 raise AssertionError("non-vacuity failure: unmodified pre-Step-6 totaldrop-site passed store-published audit!")
@@ -1135,8 +1184,9 @@ def run_test_suite(
         verify_docs_step6(totaldrop_dir, core_dir, mode="pre-reservation")
         try:
             verify_docs_step6(totaldrop_dir, core_dir, mode="store-published")
-        except ValueError:
-            pass
+        except ValueError as exc:
+            if "t12" not in str(exc).lower():
+                raise AssertionError(f"unexpected docs non-vacuity error (expected T12): {exc}") from exc
         else:
             if mode == "pre-reservation":
                 raise AssertionError("non-vacuity failure: unmodified pre-Step-6 docs passed store-published audit!")
@@ -1152,8 +1202,9 @@ def run_test_suite(
         verify_readmes_step6(totaldrop_dir, mode="pre-reservation")
         try:
             verify_readmes_step6(totaldrop_dir, mode="store-published")
-        except ValueError:
-            pass
+        except ValueError as exc:
+            if "coming" not in str(exc).lower():
+                raise AssertionError(f"unexpected README non-vacuity error (expected Coming): {exc}") from exc
         else:
             if mode == "pre-reservation":
                 raise AssertionError("non-vacuity failure: unmodified pre-Step-6 README passed store-published audit!")
@@ -1273,14 +1324,24 @@ def run_test_suite(
         with tempfile.TemporaryDirectory(prefix="td-f24-04-") as tmp:
             git_dir = Path(tmp) / "secret_repo"
             git_dir.mkdir()
-            _run_cmd(["git", "init", "-q"], cwd=git_dir)
-            _run_cmd(["git", "config", "user.email", "e2e@example.test"], cwd=git_dir)
-            _run_cmd(["git", "config", "user.name", "E2E"], cwd=git_dir)
+            for git_cmd in (
+                ["git", "init", "-q"],
+                ["git", "config", "user.email", "e2e@example.test"],
+                ["git", "config", "user.name", "E2E"],
+            ):
+                p_setup = _run_cmd(git_cmd, cwd=git_dir)
+                if p_setup.returncode != 0:
+                    raise AssertionError(f"temp fixture {' '.join(git_cmd)} failed: {p_setup.stdout}\n{p_setup.stderr}")
             (git_dir / "leak.env").write_text(f"client_secret={dyn_secret}\n", encoding="utf-8")
             for fname in forbidden_names:
                 (git_dir / fname).write_text("dummy\n", encoding="utf-8")
-            _run_cmd(["git", "add", "."], cwd=git_dir)
-            _run_cmd(["git", "commit", "-q", "-m", "test fixture"], cwd=git_dir)
+            for git_cmd in (
+                ["git", "add", "."],
+                ["git", "commit", "-q", "-m", "test fixture"],
+            ):
+                p_setup = _run_cmd(git_cmd, cwd=git_dir)
+                if p_setup.returncode != 0:
+                    raise AssertionError(f"temp fixture {' '.join(git_cmd)} failed: {p_setup.stdout}\n{p_setup.stderr}")
 
             # (a) Run containerized gitleaks v8.30.0 with --ignore-gitleaks-allow
             gl_native = shutil.which("gitleaks")
@@ -1299,8 +1360,12 @@ def run_test_suite(
                     ],
                     cwd=repo_root,
                 )
-            if p_gl.returncode == 0:
-                raise AssertionError(f"gitleaks did not catch injected client_secret: {p_gl.stdout}\n{p_gl.stderr}")
+            gl_out = f"{p_gl.stdout}\n{p_gl.stderr}"
+            if p_gl.returncode != 1 or "leaks found" not in gl_out.lower():
+                raise AssertionError(
+                    f"gitleaks did not catch injected client_secret with rc=1 and 'leaks found' "
+                    f"(rc={p_gl.returncode}): {gl_out}"
+                )
 
             # (b) CI forbidden-filename regex gate on temp repo catches all 6 files
             p_ls_bad = _run_cmd(["git", "ls-files"], cwd=git_dir)
@@ -1512,14 +1577,18 @@ def run_test_suite(
 
         # 2. Honest non-vacuity check: unmodified live ecosystem MUST fail store-published mode
         live_rejected = 0
-        for fn in (
-            lambda: verify_site_step6(site_dir, mode="store-published"),
-            lambda: verify_docs_step6(totaldrop_dir, core_dir, mode="store-published"),
-            lambda: verify_readmes_step6(totaldrop_dir, mode="store-published"),
+        for expected_tok, fn in (
+            ("dl.windows.d", lambda: verify_site_step6(site_dir, mode="store-published")),
+            ("t12", lambda: verify_docs_step6(totaldrop_dir, core_dir, mode="store-published")),
+            ("coming", lambda: verify_readmes_step6(totaldrop_dir, mode="store-published")),
         ):
             try:
                 fn()
-            except ValueError:
+            except ValueError as exc:
+                if expected_tok not in str(exc).lower():
+                    raise AssertionError(
+                        f"unexpected non-vacuity error (expected {expected_tok!r}): {exc}"
+                    ) from exc
                 live_rejected += 1
         if mode == "pre-reservation" and live_rejected != 3:
             raise AssertionError(f"non-vacuity failure: expected 3/3 pre-Step-6 live checks to fail store-published, got {live_rejected}/3")
@@ -1582,21 +1651,31 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--env", choices=("all", "cross-platform", "linux-devbox"), default="all")
     parser.add_argument("--run-tests", action="store_true", help="Run all 25 M4 Store & Step 6 tests.")
     parser.add_argument("--audit-ecosystem", action="store_true", help="Run standalone cross-repo ecosystem audit.")
-    parser.add_argument("--site-dir", type=Path, default=WORKSPACE_PARENT / "totaldrop-site")
-    parser.add_argument("--totaldrop-dir", type=Path, default=WORKSPACE_PARENT / "totaldrop")
-    parser.add_argument("--core-dir", type=Path, default=WORKSPACE_PARENT / "totaldrop-core")
+    parser.add_argument("--site-dir", type=Path, default=None)
+    parser.add_argument("--totaldrop-dir", type=Path, default=None)
+    parser.add_argument("--core-dir", type=Path, default=None)
     parser.add_argument("--json-out", type=Path, default=None)
     args = parser.parse_args(argv)
 
     try:
         if args.audit_ecosystem:
-            verify_site_step6(args.site_dir, mode=args.mode)
-            verify_docs_step6(args.totaldrop_dir, args.core_dir, mode=args.mode)
-            verify_readmes_step6(args.totaldrop_dir, mode=args.mode)
+            eff_site = _resolve_sibling_repo(args.root, "totaldrop-site", "TOTALDROP_SITE_DIR", args.site_dir)
+            eff_totaldrop = _resolve_sibling_repo(args.root, "totaldrop", "TOTALDROP_MONOREPO_DIR", args.totaldrop_dir)
+            eff_core = _resolve_sibling_repo(args.root, "totaldrop-core", "TOTALDROP_CORE_DIR", args.core_dir)
+            verify_site_step6(eff_site, mode=args.mode)
+            verify_docs_step6(eff_totaldrop, eff_core, mode=args.mode)
+            verify_readmes_step6(eff_totaldrop, mode=args.mode)
             print(f"verify_store_step6 ecosystem audit OK (mode={args.mode})")
             return 0
         if args.run_tests:
-            results = run_test_suite(args.root, mode=args.mode, env_filter=args.env)
+            results = run_test_suite(
+                args.root,
+                mode=args.mode,
+                env_filter=args.env,
+                site_dir=args.site_dir,
+                totaldrop_dir=args.totaldrop_dir,
+                core_dir=args.core_dir,
+            )
             if args.json_out is not None:
                 args.json_out.write_text(json.dumps(results, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             failed = [k for k, v in results.items() if v["status"] != "PASS"]

@@ -233,7 +233,7 @@
       "status": "WINDOWS_ONLY_READY",
       "preconditions": "Interactive Windows 11 desktop (>= 1024x768, UAC EnableLUA == 1) with Windows Kits 10 appcert.exe installed and dual-arch TotalDrop-1.0.1.0.msixbundle staged.",
       "inputs": "Execute pwsh -NoProfile -File tools/run-wack.ps1 -PackagePath TotalDrop-1.0.1.0.msixbundle -ReportPath dist/store/wack-report.xml.",
-      "exact_oracle": "tools/run-wack.ps1 exits 0; generated wack-report.xml declares OVERALL_RESULT='PASS' with >= 1 <TEST> element and 0 failed tests.",
+      "exact_oracle": "tools/run-wack.ps1 exits 0; generated wack-report.xml declares OVERALL_RESULT='PASS' with >= 1 PASS <TEST> element and 0 failed tests.",
       "verification_evidence_required": "Archived wack-report.xml + tools/run-wack.ps1 stdout/exit log."
     },
     {
@@ -244,7 +244,7 @@
       "status": "WINDOWS_ONLY_READY",
       "preconditions": "Interactive Windows 11 desktop (>= 1024x768, UAC enabled) with x64 and arm64 1.0.1.0 MSIX slices built.",
       "inputs": "Run tools/check-versions.py --store (1.0.1.0), assemble unified dual-arch TotalDrop-1.0.1.0.msixbundle via tools/build-msixbundle.ps1 (no /nv), and execute tools/run-wack.ps1 -PackagePath TotalDrop-1.0.1.0.msixbundle.",
-      "exact_oracle": "check-versions.py --store exits 0; outer AppxBundleManifest.xml and both inner manifests carry 1.0.1.0 (Major >= 1, Revision == 0); WACK wack-report.xml declares OVERALL_RESULT='PASS' with 0 failed tests.",
+      "exact_oracle": "check-versions.py --store exits 0; outer AppxBundleManifest.xml and both inner manifests carry 1.0.1.0 (Major >= 1, Revision == 0); WACK wack-report.xml declares OVERALL_RESULT='PASS' with >= 1 PASS <TEST> and 0 failed tests.",
       "verification_evidence_required": "check-versions.py output + bundle manifest dump + wack-report.xml."
     },
     {
@@ -255,7 +255,7 @@
       "status": "WINDOWS_ONLY_READY",
       "preconditions": "Interactive Windows 11 desktop (>= 1024x768, UAC enabled) with Microsoft.WindowsAppRuntime.1.8 provisioned and TotalDrop-1.0.1.0.msixbundle + TotalDrop-1.0.2.0.msixbundle + TotalDrop-1.0.2.0.msixupload staged.",
       "inputs": "(1) Install TotalDrop-1.0.1.0.msixbundle, verify Private UDP firewall rule, save custom loopback server 'ws://127.0.0.1:4510' & privacy_relay_only=true in settings.json, complete 128 KiB loopback file transfer; (2) in-place upgrade to TotalDrop-1.0.2.0.msixbundle; (3) verify .msixupload .appxsym PDB CodeView GUIDs match packaged binaries; (4) run tools/run-wack.ps1 on 1.0.2.0; (5) Remove-AppxPackage and audit cleanup.",
-      "exact_oracle": "Step 1 BLAKE3 matches 100% under exact 1 Private inbound UDP rule; Step 2 upgrade exits 0 preserving settings.json verbatim with exact 1 firewall rule (0 duplicates); Step 3 CodeView PDB GUIDs match 100%; Step 4 WACK OVERALL_RESULT='PASS' (0 failed tests); Step 5 uninstall leaves 0 orphaned firewall rules, COM registrations, or certs.",
+      "exact_oracle": "Step 1 BLAKE3 matches 100% under exact 1 Private inbound UDP rule; Step 2 upgrade exits 0 preserving settings.json verbatim with exact 1 firewall rule (0 duplicates); Step 3 CodeView PDB GUIDs match 100%; Step 4 WACK OVERALL_RESULT='PASS' (>= 1 PASS <TEST>, 0 failed tests); Step 5 uninstall leaves 0 orphaned firewall rules, COM registrations, or certs.",
       "verification_evidence_required": "Complete Flight #1 -> Flight #2 upgrade, settings.json, CodeView PDB GUID, WACK XML, and uninstall cleanup archive."
     }
   ]

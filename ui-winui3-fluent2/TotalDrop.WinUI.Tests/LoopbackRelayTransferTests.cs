@@ -9,6 +9,14 @@ using Xunit;
 
 namespace TotalDrop.WinUI.Tests;
 
+/// <summary>
+/// Architecture A loopback transfer tests (T3-04) executing against external
+/// <c>totaldrop-rendezvous</c> and <c>totaldrop-relay</c> binaries bound strictly to
+/// <c>127.0.0.1:0</c>. Supply absolute executable paths via
+/// <c>TOTALDROP_TEST_RENDEZVOUS_BIN</c> and <c>TOTALDROP_TEST_RELAY_BIN</c>, or build the
+/// sibling <c>totaldrop-servers</c> repository. Excluded from single-repo PR CI via
+/// <c>--filter "FullyQualifiedName!~LoopbackRelayTransferTests"</c>.
+/// </summary>
 public sealed class LoopbackRelayTransferTests
 {
     private sealed class LoopbackServerProcess : IDisposable
@@ -43,12 +51,18 @@ public sealed class LoopbackRelayTransferTests
             string? configured = Environment.GetEnvironmentVariable(envVar);
             if (!string.IsNullOrWhiteSpace(configured))
             {
-                if (!File.Exists(configured))
+                string trimmed = configured.Trim();
+                string resolved = Path.GetFullPath(trimmed);
+                if (!File.Exists(resolved))
                 {
-                    throw new FileNotFoundException($"{envVar} points to missing binary: {configured}");
+                    string hint = Path.IsPathFullyQualified(trimmed)
+                        ? string.Empty
+                        : $" ({envVar} was relative; testhost CWD is '{Environment.CurrentDirectory}'. Pass an absolute path.)";
+                    throw new FileNotFoundException(
+                        $"{envVar} points to missing binary '{trimmed}' (resolved to '{resolved}').{hint}");
                 }
 
-                return configured;
+                return resolved;
             }
 
             string ext = OperatingSystem.IsWindows() ? ".exe" : string.Empty;
@@ -59,6 +73,10 @@ public sealed class LoopbackRelayTransferTests
                 Path.Combine(repoRoot, "..", "totaldrop-servers", "target", "debug", baseName + ext),
                 Path.Combine(repoRoot, "..", "totaldrop-servers", "rust-shared", "target", "release", baseName + ext),
                 Path.Combine(repoRoot, "..", "totaldrop-servers", "rust-shared", "target", "debug", baseName + ext),
+                Path.Combine(repoRoot, "..", "..", "totaldrop-app", "totaldrop-servers", "target", "release", baseName + ext),
+                Path.Combine(repoRoot, "..", "..", "totaldrop-app", "totaldrop-servers", "target", "debug", baseName + ext),
+                Path.Combine(repoRoot, "..", "..", "totaldrop-app", "totaldrop-servers", "rust-shared", "target", "release", baseName + ext),
+                Path.Combine(repoRoot, "..", "..", "totaldrop-app", "totaldrop-servers", "rust-shared", "target", "debug", baseName + ext),
             ];
             foreach (string candidate in candidates)
             {
@@ -70,7 +88,7 @@ public sealed class LoopbackRelayTransferTests
             }
 
             throw new FileNotFoundException(
-                $"Required Architecture A loopback binary '{baseName}' not found; set {envVar}.");
+                $"Required Architecture A loopback binary '{baseName}' not found; set {envVar} to an absolute executable path.");
         }
 
         private static LoopbackServerProcess StartAndAwaitAddress(

@@ -854,6 +854,7 @@ async fn handle_rendezvous_conn(
 enum RelayMode {
     Normal,
     Throttled(Duration),
+    ThrottledStride { every_n: u64, delay: Duration },
     DropOnConnect,
 }
 
@@ -954,12 +955,23 @@ async fn handle_relay_conn(
         pairs.entry(pair).or_default().insert(key, tx);
     }
 
+    let mut stride_ctr: u64 = 0;
     loop {
         tokio::select! {
             outbound = rx.recv() => {
                 let Some(frame) = outbound else { break; };
-                if let RelayMode::Throttled(delay) = state.mode {
-                    tokio::time::sleep(delay).await;
+                match state.mode {
+                    RelayMode::Throttled(delay) => {
+                        tokio::time::sleep(delay).await;
+                    }
+                    RelayMode::ThrottledStride { every_n, delay } => {
+                        stride_ctr = stride_ctr.saturating_add(1);
+                        if stride_ctr >= every_n.max(1) {
+                            stride_ctr = 0;
+                            tokio::time::sleep(delay).await;
+                        }
+                    }
+                    RelayMode::Normal | RelayMode::DropOnConnect => {}
                 }
                 if ws.send(Message::Binary(frame.into())).await.is_err() {
                     break;
@@ -2898,7 +2910,10 @@ fn t1_f10_03_send_4096_byte_text_2_word_and_sas_words() -> TestResult {
 fn t1_f10_04_progress_ticks_throttled_tr_tr_floor_percent() -> TestResult {
     let _guard = SHUTDOWN_GATE.read().map_err(|_| "lock poisoned")?;
     let srv = MockRendezvous::start("127.0.0.1:0", RendezvousFault::None)?;
-    let relay = MockRelay::start(RelayMode::Throttled(Duration::from_millis(1)))?;
+    let relay = MockRelay::start(RelayMode::ThrottledStride {
+        every_n: 64,
+        delay: Duration::from_millis(16),
+    })?;
     let tmp = TempDirGuard::new("t1-f10-04")?;
     // 3 MiB payload (3 x 1 MiB chunks) ensures genuine intermediate 1..=99% progress ticks.
     let payload = pseudo_random_bytes(1004, 3 * 1024 * 1024);

@@ -156,6 +156,26 @@ def _run(cmd: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> sub
     return subprocess.run(cmd, cwd=str(cwd), env=merged, capture_output=True, text=True, check=False)
 
 
+def _resolve_sibling_repo(
+    repo_root: Path,
+    name: str,
+    env_var: str,
+    cli_override: Path | None = None,
+) -> Path:
+    if cli_override is not None:
+        return cli_override.expanduser().resolve()
+    env_val = os.environ.get(env_var, "").strip()
+    if env_val:
+        return Path(env_val).expanduser().resolve()
+    direct = repo_root.parent / name
+    if direct.is_dir():
+        return direct.resolve()
+    org_fallback = repo_root.parent.parent / "totaldrop-app" / name
+    if org_fallback.is_dir():
+        return org_fallback.resolve()
+    return direct
+
+
 def _canonical_id_from_fn(name: str) -> str | None:
     low = name.lower()
     m_f = re.match(r"^(t[12])_(f\d{2})_(\d{2})(?:_(part_[ab]))?", low)
@@ -194,16 +214,47 @@ def _run_cargo_test_target(target: str, tier_filter: str | None, raw_results: di
         raise RuntimeError(f"cargo test --test {target} failed (exit {p.returncode}):\n{combined[-1200:]}")
 
 
+def _ffi_library_filename() -> str:
+    if sys.platform == "win32":
+        return "totaldrop_windows_ffi.dll"
+    if sys.platform == "darwin":
+        return "libtotaldrop_windows_ffi.dylib"
+    return "libtotaldrop_windows_ffi.so"
+
+
 def _run_dotnet_tests(tier_filter: str | None, raw_results: dict[str, dict[str, Any]]) -> None:
     p_build = _run(["cargo", "build", "--locked", "-p", "totaldrop-windows-ffi"], cwd=REPO_ROOT)
     if p_build.returncode != 0:
         raise RuntimeError(f"cargo build -p totaldrop-windows-ffi failed:\n{p_build.stderr}")
 
-    proj = REPO_ROOT / "ui-winui3-fluent2" / "TotalDrop.WinUI.Tests" / "TotalDrop.WinUI.Tests.csproj"
+    target_root = (
+        Path(os.environ["CARGO_TARGET_DIR"]).expanduser().resolve()
+        if os.environ.get("CARGO_TARGET_DIR", "").strip()
+        else (REPO_ROOT / "target").resolve()
+    )
+    ffi_lib_path = (target_root / "debug" / _ffi_library_filename()).resolve()
+    if not ffi_lib_path.is_file():
+        raise RuntimeError(f"built FFI library not found at {ffi_lib_path}")
+
+    ui_dir = REPO_ROOT / "ui-winui3-fluent2"
+    proj = Path("TotalDrop.WinUI.Tests") / "TotalDrop.WinUI.Tests.csproj"
     flt = "Category!=WindowsCI&FullyQualifiedName!~LoopbackRelayTransferTests"
     if tier_filter is not None:
         flt = f"{flt}&FullyQualifiedName~T{tier_filter}_"
-    p = _run(["dotnet", "test", str(proj), "--filter", flt, "--verbosity", "normal"], cwd=REPO_ROOT)
+    dotnet_env = {
+        "TOTALDROP_FFI_DLL_PATH": str(ffi_lib_path),
+        "MSBUILDDISABLENODEREUSE": "1",
+        "DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER": "1",
+    }
+    p = _run(
+        [
+            "dotnet", "test", str(proj),
+            "-m:1", "-p:BuildInParallel=false", "-p:UseSharedCompilation=false",
+            "--filter", flt, "--verbosity", "normal",
+        ],
+        cwd=ui_dir,
+        env=dotnet_env,
+    )
     combined = f"{p.stdout}\n{p.stderr}"
     for line in combined.splitlines():
         m = re.match(r"^\s*(Passed|Failed)\s+TotalDrop\.WinUI\.Tests\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)", line)
@@ -244,9 +295,12 @@ def _run_linux_devbox_m1_m3(
     active_ms: set[str],
     active_tiers: set[str],
     raw_results: dict[str, dict[str, Any]],
+    *,
+    core_dir: Path | None = None,
+    fuzz_dir: Path | None = None,
 ) -> None:
-    core_dir = WORKSPACE_PARENT / "totaldrop-core"
-    fuzz_dir = WORKSPACE_PARENT / "totaldrop-formal-fuzz"
+    core_dir = _resolve_sibling_repo(REPO_ROOT, "totaldrop-core", "TOTALDROP_CORE_DIR", core_dir)
+    fuzz_dir = _resolve_sibling_repo(REPO_ROOT, "totaldrop-formal-fuzz", "TOTALDROP_FUZZ_DIR", fuzz_dir)
 
     def record(tid: str, fn: Any) -> None:
         if _tier_of(tid) not in active_tiers:
@@ -362,22 +416,29 @@ def _run_linux_devbox_m1_m3(
             )
             if p_gl.returncode != 0:
                 raise AssertionError(f"gitleaks git scan failed:\n{p_gl.stdout}\n{p_gl.stderr}")
-            for scan_rel in (
-                "tests/e2e",
-                "tools/e2e",
-                "crates/totaldrop-windows-ffi/tests",
-                "crates/totaldrop-explorer-ext/tests",
-                "ui-winui3-fluent2/TotalDrop.WinUI.Tests",
-            ):
-                p_dir = _run(
-                    [
-                        "docker", "run", "--rm", "--volume", f"{REPO_ROOT / scan_rel}:/scan:ro",
-                        GITLEAKS_IMAGE, "dir", "/scan", "--ignore-gitleaks-allow", "--redact",
-                    ],
-                    cwd=REPO_ROOT,
-                )
-                if p_dir.returncode != 0:
-                    raise AssertionError(f"gitleaks dir scan failed on {scan_rel}:\n{p_dir.stdout}\n{p_dir.stderr}")
+            with tempfile.TemporaryDirectory(prefix="td-t3-28-scan-") as scan_tmp:
+                for scan_rel in (
+                    "tests/e2e",
+                    "tools/e2e",
+                    "crates/totaldrop-windows-ffi/tests",
+                    "crates/totaldrop-explorer-ext/tests",
+                    "ui-winui3-fluent2/TotalDrop.WinUI.Tests",
+                ):
+                    staged_dir = Path(scan_tmp) / scan_rel
+                    shutil.copytree(
+                        REPO_ROOT / scan_rel,
+                        staged_dir,
+                        ignore=shutil.ignore_patterns("bin", "obj", "__pycache__", "target"),
+                    )
+                    p_dir = _run(
+                        [
+                            "docker", "run", "--rm", "--volume", f"{staged_dir}:/scan:ro",
+                            GITLEAKS_IMAGE, "dir", "/scan", "--ignore-gitleaks-allow", "--redact",
+                        ],
+                        cwd=REPO_ROOT,
+                    )
+                    if p_dir.returncode != 0:
+                        raise AssertionError(f"gitleaks dir scan failed on {scan_rel}:\n{p_dir.stdout}\n{p_dir.stderr}")
             return "SPDX, REUSE 3.3, cargo-deny (ignore=[]), gitleaks v8.30.0 (git + E2E dirs) & zero-prod-probe sweep all PASS"
 
         record("T3-28", t3_28)
@@ -392,6 +453,10 @@ def main(argv: list[str] | None = None) -> int:
         choices=("M1", "M2", "M3", "M4", "all"),
         default="all",
     )
+    parser.add_argument("--core-dir", type=Path, default=None)
+    parser.add_argument("--fuzz-dir", type=Path, default=None)
+    parser.add_argument("--site-dir", type=Path, default=None)
+    parser.add_argument("--totaldrop-dir", type=Path, default=None)
     parser.add_argument("--json-out", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -462,10 +527,23 @@ def main(argv: list[str] | None = None) -> int:
 
     # 8. M4 Store readiness & ADR 0016 Step 6 cross-repo verifier (covers T1, T2, T3, T4)
     if "M4" in active_ms:
-        _run_python_verifier("tools/e2e/verify_store_step6.py", ["--run-tests"], raw_results)
+        store_args = ["--run-tests"]
+        if args.site_dir is not None:
+            store_args.extend(["--site-dir", str(args.site_dir)])
+        if args.totaldrop_dir is not None:
+            store_args.extend(["--totaldrop-dir", str(args.totaldrop_dir)])
+        if args.core_dir is not None:
+            store_args.extend(["--core-dir", str(args.core_dir)])
+        _run_python_verifier("tools/e2e/verify_store_step6.py", store_args, raw_results)
 
     # 9. Linux devbox M1-M3 governance, l10n codegen, and fuzz suites
-    _run_linux_devbox_m1_m3(active_ms, active_tiers, raw_results)
+    _run_linux_devbox_m1_m3(
+        active_ms,
+        active_tiers,
+        raw_results,
+        core_dir=args.core_dir,
+        fuzz_dir=args.fuzz_dir,
+    )
 
     # 10. Combine paired split tests cleanly (PASS iff both halves PASS)
     for parent_id, (part_a, part_b) in SPLIT_PAIRS.items():

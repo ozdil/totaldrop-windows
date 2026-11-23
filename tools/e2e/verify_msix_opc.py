@@ -516,7 +516,9 @@ def verify_msix_archive(
         verify_pri_dump(pri_dump)
 
 
-FORBIDDEN_PACKAGE_KEY_EXTS: tuple[str, ...] = (".pfx", ".p12", ".snk", ".cer", ".jks", ".keystore", ".pepk")
+FORBIDDEN_PACKAGE_KEY_EXTS: tuple[str, ...] = (
+    ".pfx", ".p12", ".snk", ".cer", ".jks", ".keystore", ".pepk", ".key", ".pem", ".pvk",
+)
 REQUIRED_UPLOAD_PDBS: frozenset[str] = frozenset(
     {
         "totaldrop-winui.pdb",
@@ -806,6 +808,7 @@ def _create_valid_fixture_msix(
 
 
 def _load_sibling_module(path: Path, name: str) -> Any:
+    sys.dont_write_bytecode = True
     spec = importlib.util.spec_from_file_location(name, str(path))
     if spec is None or spec.loader is None:
         raise RuntimeError(f"failed to load module spec: {path}")
@@ -1091,8 +1094,12 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                 text=True,
                 check=False,
             )
-            if p_empty.returncode == 0:
-                raise AssertionError("build.sh --package-staged unexpectedly succeeded on empty staging dir")
+            empty_out = f"{p_empty.stdout}\n{p_empty.stderr}"
+            if p_empty.returncode == 0 or "AppxManifest.xml" not in empty_out:
+                raise AssertionError(
+                    f"build.sh --package-staged did not refuse empty staging dir with AppxManifest.xml diagnostic "
+                    f"(rc={p_empty.returncode}): {empty_out}"
+                )
         return f"verified recipe ({artifact_name}), verify.sh PASS on OPC fixture, build.sh refuses empty stage; {pri_note}"
 
     def t2_f06_01() -> str:
@@ -1118,13 +1125,18 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                 text=True,
                 check=False,
             )
-            if p.returncode == 0:
-                raise AssertionError("verify.sh accepted gzip tarball masquerading as .msix!")
+            out = f"{p.stdout}\n{p.stderr}"
+            if p.returncode == 0 or "not a real opc/zip msix" not in out.lower():
+                raise AssertionError(
+                    f"verify.sh did not reject gzip tarball with expected OPC/ZIP diagnostic "
+                    f"(rc={p.returncode}): {out}"
+                )
 
             try:
                 verify_msix_archive(fake_msix, arch="x64", milestone="M1")
-            except ValueError:
-                pass
+            except ValueError as exc:
+                if "not a valid opc/zip msix" not in str(exc).lower():
+                    raise AssertionError(f"unexpected gzip rejection reason: {exc}") from exc
             else:
                 raise AssertionError("verify_msix_archive accepted gzip tarball!")
         return "gzipped tarball (1F 8B) rejected by both verify.sh and verify_msix_archive"
@@ -1145,13 +1157,18 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                 text=True,
                 check=False,
             )
-            if p.returncode == 0:
-                raise AssertionError("verify.sh accepted empty non-OPC ZIP (PK\\x05\\x06)!")
+            out = f"{p.stdout}\n{p.stderr}"
+            if p.returncode == 0 or "not a real opc/zip msix" not in out.lower():
+                raise AssertionError(
+                    f"verify.sh did not reject empty non-OPC ZIP (PK\\x05\\x06) with expected diagnostic "
+                    f"(rc={p.returncode}): {out}"
+                )
 
             try:
                 verify_msix_archive(empty_zip, arch="x64", milestone="M1")
-            except ValueError:
-                pass
+            except ValueError as exc:
+                if "not a valid opc/zip msix" not in str(exc).lower():
+                    raise AssertionError(f"unexpected empty-ZIP rejection reason: {exc}") from exc
             else:
                 raise AssertionError("verify_msix_archive accepted empty ZIP!")
         return "empty ZIP (50 4B 05 06) rejected by both verify.sh and verify_msix_archive"
@@ -1173,8 +1190,12 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                 text=True,
                 check=False,
             )
-            if p.returncode == 0:
-                raise AssertionError("verify.sh did not reject 1-byte tampered MSIX after SHA256SUMS!")
+            out = f"{p.stdout}\n{p.stderr}"
+            if p.returncode == 0 or (f"{artifact_name}: FAILED" not in out and "did not match" not in out.lower()):
+                raise AssertionError(
+                    f"verify.sh did not reject 1-byte tampered MSIX with SHA256SUMS mismatch "
+                    f"(rc={p.returncode}): {out}"
+                )
         return "1-byte MSIX tampering caught by SHA256SUMS verification"
 
     def t2_f06_04() -> str:
@@ -1204,7 +1225,7 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
         store_ver = "1.0.1.0"
 
         def t1_f22_03() -> str:
-            # Self-test repo's bundle verifier CLI first (29/29)
+            # Self-test repo's bundle verifier CLI first (38/38 total, 29/29 baseline)
             p_st = subprocess.run(
                 [sys.executable, "-B", "-W", "error", str(repo_root / "tools" / "verify-msix-artifact.py"), "--self-test-bundle"],
                 cwd=str(repo_root),
@@ -1212,7 +1233,7 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                 text=True,
                 check=False,
             )
-            if p_st.returncode != 0 or "29/29" not in p_st.stdout:
+            if p_st.returncode != 0 or "38/38" not in p_st.stdout or "29/29" not in p_st.stdout:
                 raise AssertionError(
                     f"tools/verify-msix-artifact.py --self-test-bundle failed: {p_st.stdout}\n{p_st.stderr}"
                 )
@@ -1262,7 +1283,7 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                 )
                 if not ok:
                     raise AssertionError(f"tools/verify-msix-artifact.py rejected valid .msixupload: {msg}")
-            return "dual-arch .msixbundle + .msixupload (2 .appxsym, 3 PDBs, SHA-256 parity) & 29/29 self-test PASS"
+            return "dual-arch .msixbundle + .msixupload (2 .appxsym, 3 PDBs, SHA-256 parity) & 38/38 (29/29 baseline) self-test PASS"
 
         def t1_f22_05() -> str:
             arm64_artifact_name, arm64_ver = resolve_recipe_artifact_name(repo_root, "arm64")
@@ -1528,13 +1549,18 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                     text=True,
                     check=False,
                 )
-                if p.returncode == 0:
-                    raise AssertionError("arm64 verify.sh accepted gzip tarball masquerading as .msix!")
+                out = f"{p.stdout}\n{p.stderr}"
+                if p.returncode == 0 or "not a real opc/zip msix" not in out.lower():
+                    raise AssertionError(
+                        f"arm64 verify.sh did not reject gzip tarball with expected OPC/ZIP diagnostic "
+                        f"(rc={p.returncode}): {out}"
+                    )
 
                 try:
                     verify_msix_archive(fake_msix, arch="arm64", milestone="M4")
-                except ValueError:
-                    pass
+                except ValueError as exc:
+                    if "not a valid opc/zip msix" not in str(exc).lower():
+                        raise AssertionError(f"unexpected ARM64 gzip rejection reason: {exc}") from exc
                 else:
                     raise AssertionError("verify_msix_archive accepted ARM64 gzip tarball!")
             return f"ARM64 gzipped tarball (1F 8B) named {arm64_artifact_name} rejected by both verify.sh and verify_msix_archive"

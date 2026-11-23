@@ -31,9 +31,20 @@ internal static class FfiResolver
         }
 
         string? overridePath = Environment.GetEnvironmentVariable("TOTALDROP_FFI_DLL_PATH");
-        if (!string.IsNullOrWhiteSpace(overridePath) && File.Exists(overridePath))
+        if (!string.IsNullOrWhiteSpace(overridePath))
         {
-            return NativeLibrary.Load(overridePath);
+            string trimmed = overridePath.Trim();
+            string resolved = Path.GetFullPath(trimmed);
+            if (!File.Exists(resolved))
+            {
+                string hint = Path.IsPathFullyQualified(trimmed)
+                    ? string.Empty
+                    : $" (TOTALDROP_FFI_DLL_PATH was relative; testhost CWD is '{Environment.CurrentDirectory}'. Pass an absolute path.)";
+                throw new DllNotFoundException(
+                    $"TOTALDROP_FFI_DLL_PATH is set to '{trimmed}' (resolved to '{resolved}'), but the file does not exist.{hint}");
+            }
+
+            return NativeLibrary.Load(resolved);
         }
 
         string fileName = OperatingSystem.IsWindows()
@@ -45,14 +56,31 @@ internal static class FfiResolver
         string baseDir = AppContext.BaseDirectory;
         string repoRoot = FindRepoRoot(baseDir);
 
+        string[] archTargets = RuntimeInformation.ProcessArchitecture == Architecture.Arm64
+            ? ["aarch64-pc-windows-msvc", "x86_64-pc-windows-msvc"]
+            : ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"];
+
+#if DEBUG
         string[] candidates =
         [
             Path.Combine(baseDir, fileName),
-            Path.Combine(repoRoot, "target", "x86_64-pc-windows-msvc", "release", fileName),
-            Path.Combine(repoRoot, "target", "aarch64-pc-windows-msvc", "release", fileName),
+            Path.Combine(repoRoot, "target", "debug", fileName),
+            Path.Combine(repoRoot, "target", archTargets[0], "debug", fileName),
+            Path.Combine(repoRoot, "target", archTargets[1], "debug", fileName),
+            Path.Combine(repoRoot, "target", archTargets[0], "release", fileName),
+            Path.Combine(repoRoot, "target", archTargets[1], "release", fileName),
+            Path.Combine(repoRoot, "target", "release", fileName),
+        ];
+#else
+        string[] candidates =
+        [
+            Path.Combine(baseDir, fileName),
+            Path.Combine(repoRoot, "target", archTargets[0], "release", fileName),
+            Path.Combine(repoRoot, "target", archTargets[1], "release", fileName),
             Path.Combine(repoRoot, "target", "release", fileName),
             Path.Combine(repoRoot, "target", "debug", fileName),
         ];
+#endif
 
         foreach (string candidate in candidates)
         {

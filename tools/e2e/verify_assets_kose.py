@@ -313,7 +313,7 @@ def verify_directory(assets_dir: Path) -> None:
 
 def _run_render(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(RENDER_SCRIPT), *args],
+        [sys.executable, "-B", str(RENDER_SCRIPT), *args],
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
@@ -437,7 +437,7 @@ def run_all_f03_tests(assets_dir: Path) -> dict[str, dict[str, Any]]:
                     mirrored = ImageOps.mirror(img.convert("RGBA"))
                     mirrored.save(target, format="PNG")
                 proc = subprocess.run(
-                    [sys.executable, str(Path(__file__).resolve()), "--out-dir", str(dst)],
+                    [sys.executable, "-B", str(Path(__file__).resolve()), "--out-dir", str(dst)],
                     capture_output=True,
                     text=True,
                     check=False,

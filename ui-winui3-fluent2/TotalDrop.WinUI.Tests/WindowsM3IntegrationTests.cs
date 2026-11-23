@@ -260,6 +260,37 @@ public sealed class WindowsM3IntegrationTests
         }
     }
 
+    private static string ExpectedExtendedPath(string raw)
+    {
+        if (raw.StartsWith(@"\\?\", StringComparison.Ordinal))
+        {
+            string rest = raw[4..];
+            if (rest.StartsWith(@"UNC\", StringComparison.OrdinalIgnoreCase))
+            {
+                return $@"\\?\UNC\{rest[4..]}";
+            }
+
+            if (rest.Length >= 2 && char.IsAsciiLetter(rest[0]) && rest[1] == ':')
+            {
+                return $@"\\?\{char.ToUpperInvariant(rest[0])}:{rest[2..]}";
+            }
+
+            return $@"\\?\{rest}";
+        }
+
+        if (raw.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            return $@"\\?\UNC\{raw[2..]}";
+        }
+
+        if (raw.Length >= 2 && char.IsAsciiLetter(raw[0]) && raw[1] == ':')
+        {
+            return $@"\\?\{char.ToUpperInvariant(raw[0])}:{raw[2..]}";
+        }
+
+        return $@"\\?\{raw}";
+    }
+
     [Fact]
     public void T1_F21_03_RealNtfsLongPathOver300Chars_CreateReadAndValidate()
     {
@@ -275,8 +306,9 @@ public sealed class WindowsM3IntegrationTests
         string filePath = Path.Combine(deepDir, "payload.bin");
         Assert.True(filePath.Length > 300, $"Expected path > 300 chars, got {filePath.Length}");
 
-        string extDir = $@"\\?\{deepDir}";
-        string extFile = $@"\\?\{filePath}";
+        string extRoot = ExpectedExtendedPath(rootDir);
+        string extDir = ExpectedExtendedPath(deepDir);
+        string extFile = ExpectedExtendedPath(filePath);
         try
         {
             Directory.CreateDirectory(extDir);
@@ -292,9 +324,9 @@ public sealed class WindowsM3IntegrationTests
         }
         finally
         {
-            if (Directory.Exists($@"\\?\{rootDir}"))
+            if (Directory.Exists(extRoot))
             {
-                Directory.Delete($@"\\?\{rootDir}", recursive: true);
+                Directory.Delete(extRoot, recursive: true);
             }
         }
     }
@@ -315,7 +347,7 @@ public sealed class WindowsM3IntegrationTests
 
             Assert.True(NativeBridge.TryValidatePaths([filePath], out ValidatedPathDto[] normalized, out BridgeErrorDto? err), err?.Message);
             ValidatedPathDto item = Assert.Single(normalized);
-            Assert.Equal($@"\\?\{filePath}", item.ExtendedPath);
+            Assert.Equal(ExpectedExtendedPath(filePath), item.ExtendedPath);
         }
         finally
         {

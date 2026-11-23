@@ -84,13 +84,14 @@ A11Y_AND_TOOLTIP_XAML_ATTRS: tuple[str, ...] = (
     "AutomationProperties.Name",
     "AutomationProperties.HelpText",
     "AutomationProperties.FullDescription",
+    "AutomationProperties.LocalizedLandmarkType",
     "ToolTipService.ToolTip",
 )
 
 XAML_STRING_TAG = "{http://schemas.microsoft.com/winfx/2006/xaml}String"
 
 FORBIDDEN_SIGNING_EXTS: frozenset[str] = frozenset({
-    ".pfx", ".p12", ".snk", ".cer", ".jks", ".keystore", ".pepk",
+    ".pfx", ".p12", ".snk", ".cer", ".jks", ".keystore", ".pepk", ".key", ".pem", ".pvk",
 })
 FORBIDDEN_SIGNING_NAMES: frozenset[str] = frozenset({
     "key.properties", ".gitleaksignore",
@@ -2145,7 +2146,7 @@ def _copy_lightweight_tree(root: Path, dest: Path, rel_paths: list[str]) -> None
 
 def _run_self_on(tmp_root: Path, milestone: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(Path(__file__).resolve()), "--milestone", milestone, "--root", str(tmp_root)],
+        [sys.executable, "-B", str(Path(__file__).resolve()), "--milestone", milestone, "--root", str(tmp_root)],
         capture_output=True,
         text=True,
         check=False,
@@ -2154,7 +2155,7 @@ def _run_self_on(tmp_root: Path, milestone: str) -> subprocess.CompletedProcess[
 
 def _run_check_versions(repo_dir: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(repo_dir / "tools" / "check-versions.py")],
+        [sys.executable, "-B", str(repo_dir / "tools" / "check-versions.py")],
         cwd=str(repo_dir),
         capture_output=True,
         text=True,
@@ -2427,7 +2428,7 @@ def run_test_suite(root: Path, milestone: str) -> dict[str, dict[str, Any]]:
 
     def t1_f06_03() -> str:
         p = subprocess.run(
-            [sys.executable, str(root / "tools" / "verify-subplatforms.py")],
+            [sys.executable, "-B", str(root / "tools" / "verify-subplatforms.py")],
             cwd=str(root),
             capture_output=True,
             text=True,
@@ -2562,7 +2563,7 @@ def run_test_suite(root: Path, milestone: str) -> dict[str, dict[str, Any]]:
         # Clean repo passes both check-versions.py and verify-subplatforms.py
         if _run_check_versions(root).returncode != 0:
             raise AssertionError("clean check-versions.py failed")
-        p_sub = subprocess.run([sys.executable, str(root / "tools" / "verify-subplatforms.py")], cwd=str(root), capture_output=True, text=True, check=False)
+        p_sub = subprocess.run([sys.executable, "-B", str(root / "tools" / "verify-subplatforms.py")], cwd=str(root), capture_output=True, text=True, check=False)
         if p_sub.returncode != 0:
             raise AssertionError(f"clean verify-subplatforms.py failed: {p_sub.stderr}")
 
@@ -2585,8 +2586,7 @@ def run_test_suite(root: Path, milestone: str) -> dict[str, dict[str, Any]]:
             import hashlib as _hl
             (art / "SHA256SUMS").write_text(f"{_hl.sha256(fake.read_bytes()).hexdigest()}  {art_name}\n", encoding="utf-8")
             p_ver = subprocess.run([_resolve_sh(), str(root / "subplatforms" / "msix" / "x86_64" / "verify.sh"), str(art)], cwd=str(root), capture_output=True, text=True, check=False)
-            if p_ver.returncode == 0:
-                raise AssertionError("T3-16: verify.sh did not reject gzip fake .msix")
+            _expect_fail_proc(p_ver, "T3-16(gzip-msix)", ("not a real opc/zip msix",))
         return "clean check-versions + verify-subplatforms PASS; version drift & gzip fake .msix both caught"
 
     record("T1-F01-01", t1_f01_01)
