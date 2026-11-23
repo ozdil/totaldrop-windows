@@ -232,7 +232,7 @@ function Test-WackReportXml {
         [string]$ReportFile
     )
 
-    if (-not (Test-Path -LiteralPath $ReportFile)) {
+    if (-not (Test-Path -LiteralPath $ReportFile -PathType Leaf)) {
         $safeReportPath = Format-SanitizedWackText -Value $ReportFile
         [Console]::Error.WriteLine("WACK error: report file not found: $safeReportPath")
         return $false
@@ -261,7 +261,7 @@ function Test-WackReportXml {
             $fs.Dispose()
         }
     }
-    catch [System.Xml.XmlException], [System.Text.DecoderFallbackException], [System.IO.IOException] {
+    catch [System.Xml.XmlException], [System.Text.DecoderFallbackException], [System.IO.IOException], [System.UnauthorizedAccessException] {
         $safeErr = Format-SanitizedWackText -Value $_.Exception.Message
         [Console]::Error.WriteLine("WACK error: malformed, unreadable, or unsafe XML report '$safeResolvedFile': $safeErr")
         return $false
@@ -269,7 +269,7 @@ function Test-WackReportXml {
 
     $reportNode = $doc.DocumentElement
     if ($null -eq $reportNode -or -not $reportNode.LocalName.Equals("REPORT", [System.StringComparison]::OrdinalIgnoreCase)) {
-        [Console]::Error.WriteLine("WACK error: XML report is missing root <REPORT> element: $ReportFile")
+        [Console]::Error.WriteLine("WACK error: XML report is missing root <REPORT> element: $safeResolvedFile")
         return $false
     }
 
@@ -409,7 +409,7 @@ if ($CheckReportOnly) {
 if ([string]::IsNullOrWhiteSpace($PackagePath)) {
     throw "-PackagePath (.msix or .msixbundle) is required unless -CheckReportOnly is specified."
 }
-if (-not (Test-Path -LiteralPath $PackagePath)) {
+if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) {
     throw "Package not found: $PackagePath"
 }
 $resolvedPackage = (Resolve-Path -LiteralPath $PackagePath).Path
@@ -455,10 +455,11 @@ finally {
 }
 
 $reportValid = $false
-if (Test-Path -LiteralPath $resolvedReport) {
+if (Test-Path -LiteralPath $resolvedReport -PathType Leaf) {
     $reportValid = Test-WackReportXml -ReportFile $resolvedReport
 } else {
-    [Console]::Error.WriteLine("WACK error: appcert.exe did not generate expected XML report at $resolvedReport")
+    $safeExpectedReport = Format-SanitizedWackText -Value $resolvedReport
+    [Console]::Error.WriteLine("WACK error: appcert.exe did not generate expected XML report at $safeExpectedReport")
 }
 
 if ($testExitCode -ne 0 -or -not $reportValid) {

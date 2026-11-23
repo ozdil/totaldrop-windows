@@ -56,6 +56,44 @@ PNG_VALID_BIT_DEPTHS: dict[int, frozenset[int]] = {
     4: frozenset({8, 16}),  # Greyscale with alpha
     6: frozenset({8, 16}),  # Truecolour with alpha (RGBA)
 }
+PNG_COLOR_CHANNELS: dict[int, int] = {
+    0: 1,  # Greyscale
+    2: 3,  # Truecolour (RGB)
+    3: 1,  # Indexed-colour
+    4: 2,  # Greyscale with alpha
+    6: 4,  # Truecolour with alpha (RGBA)
+}
+PNG_ADAM7_PASSES: tuple[tuple[int, int, int, int], ...] = (
+    (0, 0, 8, 8),
+    (4, 0, 8, 8),
+    (0, 4, 4, 8),
+    (2, 0, 4, 4),
+    (0, 2, 2, 4),
+    (1, 0, 2, 2),
+    (0, 1, 1, 2),
+)
+
+
+def _expected_png_raw_bytes(
+    width: int, height: int, bit_depth: int, color_type: int, interlace: int
+) -> int:
+    channels = PNG_COLOR_CHANNELS[color_type]
+    bits_per_pixel = channels * bit_depth
+    if interlace == 0:
+        return height * (1 + ((width * bits_per_pixel + 7) // 8))
+    total = 0
+    for x0, y0, dx, dy in PNG_ADAM7_PASSES:
+        if width <= x0 or height <= y0:
+            continue
+        pw = (width - x0 + dx - 1) // dx
+        ph = (height - y0 + dy - 1) // dy
+        total += ph * (1 + ((pw * bits_per_pixel + 7) // 8))
+    return total
+
+
+MAX_UNCOMPRESSED_PNG_BYTES = _expected_png_raw_bytes(
+    SCREENSHOT_MAX_WIDTH, SCREENSHOT_MAX_HEIGHT, 16, 6, 1
+)
 
 # Exact 35 canonical TotalDrop locales mapped to official Microsoft Store listing language codes.
 CANONICAL_STORE_LOCALES: tuple[tuple[str, str, str], ...] = (
@@ -290,12 +328,15 @@ def inspect_png(path: Path, rel_label: str) -> tuple[dict[str, Any] | None, str 
     chunk_index = 0
     width = 0
     height = 0
+    bit_depth = 0
     color_type = -1
+    interlace = 0
+    expected_raw = 0
     idat_count = 0
     idat_total_bytes = 0
     idat_closed = False
     idat_dec = zlib.decompressobj()
-    max_uncomp_bytes = (SCREENSHOT_MAX_WIDTH * 8 + 1) * SCREENSHOT_MAX_HEIGHT + 1024
+    max_uncomp_bytes = MAX_UNCOMPRESSED_PNG_BYTES
     uncomp_bytes = 0
     plte_seen = False
     plte_seen_before_idat = False
@@ -334,6 +375,12 @@ def inspect_png(path: Path, rel_label: str) -> tuple[dict[str, Any] | None, str 
             width, height, bit_depth, color_type, compression, filter_method, interlace = struct.unpack_from(
                 ">IIBBBBB", raw, data_start
             )
+            if width == 0 or height == 0:
+                return (
+                    None,
+                    f"{rel_label}: invalid PNG IHDR dimensions {width}x{height} "
+                    f"(below Partner Center desktop minimum {SCREENSHOT_MIN_WIDTH}x{SCREENSHOT_MIN_HEIGHT})",
+                )
             allowed_depths = PNG_VALID_BIT_DEPTHS.get(color_type)
             if allowed_depths is None or bit_depth not in allowed_depths:
                 return (
@@ -346,6 +393,15 @@ def inspect_png(path: Path, rel_label: str) -> tuple[dict[str, Any] | None, str 
                     f"{rel_label}: invalid PNG IHDR compression={compression}, "
                     f"filter={filter_method}, interlace={interlace}",
                 )
+            expected_raw = _expected_png_raw_bytes(width, height, bit_depth, color_type, interlace)
+            if expected_raw > MAX_UNCOMPRESSED_PNG_BYTES:
+                return (
+                    None,
+                    f"{rel_label}: dimensions {width}x{height} exceed Partner Center desktop maximum "
+                    f"{SCREENSHOT_MAX_WIDTH}x{SCREENSHOT_MAX_HEIGHT} "
+                    f"(expected raw pixel buffer {expected_raw} bytes exceeds {MAX_UNCOMPRESSED_PNG_BYTES})",
+                )
+            max_uncomp_bytes = expected_raw
         else:
             if chunk_type == b"IHDR":
                 return None, f"{rel_label}: duplicate PNG IHDR chunk at offset {pos}"
@@ -372,17 +428,35 @@ def inspect_png(path: Path, rel_label: str) -> tuple[dict[str, Any] | None, str 
                 idat_count += 1
                 idat_total_bytes += chunk_len
                 if chunk_len > 0:
+                    if idat_dec.eof:
+                        return (
+                            None,
+                            f"{rel_label}: trailing PNG IDAT chunk ({chunk_len} bytes) after zlib end-of-stream",
+                        )
                     try:
                         pending = raw[data_start:data_end]
-                        while pending:
-                            out_chunk = idat_dec.decompress(pending, 65536)
+                        while True:
+                            max_step = min(65536, (max_uncomp_bytes - uncomp_bytes) + 1)
+                            out_chunk = idat_dec.decompress(pending, max_step)
                             uncomp_bytes += len(out_chunk)
                             if uncomp_bytes > max_uncomp_bytes:
                                 return (
                                     None,
-                                    f"{rel_label}: PNG IDAT decompressed payload exceeds maximum allowed pixel buffer",
+                                    f"{rel_label}: PNG IDAT decompressed payload exceeds maximum allowed pixel buffer "
+                                    f"({uncomp_bytes} > {max_uncomp_bytes})",
                                 )
                             pending = idat_dec.unconsumed_tail
+                            if idat_dec.eof:
+                                if pending or idat_dec.unused_data:
+                                    return (
+                                        None,
+                                        f"{rel_label}: trailing unused bytes "
+                                        f"(unused={len(idat_dec.unused_data)}, pending={len(pending)}) "
+                                        "after PNG IDAT zlib stream",
+                                    )
+                                break
+                            if not pending and len(out_chunk) < max_step:
+                                break
                     except zlib.error as exc:
                         return None, f"{rel_label}: corrupt zlib stream in PNG IDAT chunk: {exc}"
             elif chunk_type == b"IEND":
@@ -402,17 +476,36 @@ def inspect_png(path: Path, rel_label: str) -> tuple[dict[str, Any] | None, str 
     if not seen_iend or pos != size:
         return None, f"{rel_label}: PNG missing terminating IEND chunk at EOF"
 
-    try:
-        tail = idat_dec.flush()
-        uncomp_bytes += len(tail)
-    except zlib.error as exc:
-        return None, f"{rel_label}: corrupt or truncated zlib stream in PNG IDAT: {exc}"
     if not idat_dec.eof:
         return None, f"{rel_label}: truncated zlib stream in PNG IDAT (missing EOF)"
-    if idat_dec.unused_data:
-        return None, f"{rel_label}: trailing unused bytes ({len(idat_dec.unused_data)}) after PNG IDAT zlib stream"
-    if uncomp_bytes < 1:
-        return None, f"{rel_label}: PNG IDAT decompressed to zero bytes"
+    if idat_dec.unconsumed_tail or idat_dec.unused_data:
+        return (
+            None,
+            f"{rel_label}: trailing unused bytes "
+            f"(unused={len(idat_dec.unused_data)}, tail={len(idat_dec.unconsumed_tail)}) "
+            "after PNG IDAT zlib stream",
+        )
+    try:
+        tail = idat_dec.flush(min(65536, (max_uncomp_bytes - uncomp_bytes) + 1))
+        if tail:
+            uncomp_bytes += len(tail)
+            if uncomp_bytes > max_uncomp_bytes:
+                return (
+                    None,
+                    f"{rel_label}: PNG IDAT decompressed payload exceeds maximum allowed pixel buffer "
+                    f"({uncomp_bytes} > {max_uncomp_bytes})",
+                )
+    except zlib.error as exc:
+        return None, f"{rel_label}: corrupt or truncated zlib stream in PNG IDAT: {exc}"
+    if not idat_dec.eof or idat_dec.unconsumed_tail or idat_dec.unused_data:
+        return None, f"{rel_label}: PNG IDAT zlib stream failed final EOF/zero-trailing-data check"
+    if uncomp_bytes != expected_raw:
+        return (
+            None,
+            f"{rel_label}: PNG IDAT decompressed byte count mismatch "
+            f"(got {uncomp_bytes}, expected {expected_raw} for {width}x{height} "
+            f"color_type={color_type} bit_depth={bit_depth} interlace={interlace})",
+        )
 
     if width < SCREENSHOT_MIN_WIDTH or height < SCREENSHOT_MIN_HEIGHT:
         return (
@@ -750,9 +843,14 @@ def _check_text_hygiene(
                 f"locale {locale} {field}: leaks forbidden non-Windows ARB string from key {fk!r}"
             )
 
-    if not allow_newline and text and text[0] in CSV_FORMULA_PREFIXES:
+    first_non_nl = text.lstrip("\n") if allow_newline else text
+    if text and (
+        text[0] in CSV_FORMULA_PREFIXES
+        or (first_non_nl and first_non_nl[0] in CSV_FORMULA_PREFIXES)
+    ):
+        bad_prefix = text[0] if text[0] in CSV_FORMULA_PREFIXES else first_non_nl[0]
         errors.append(
-            f"locale {locale} {field}: starts with spreadsheet formula-injection prefix {text[0]!r}"
+            f"locale {locale} {field}: starts with spreadsheet formula-injection prefix {bad_prefix!r}"
         )
 
 

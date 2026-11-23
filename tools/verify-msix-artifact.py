@@ -1459,8 +1459,8 @@ def _check_opc_zip_entries(
                 f"{label}: raw ZIP entry name {info.orig_filename!r} differs from normalized name "
                 f"{info.filename!r} (NUL truncation, backslash separator, or 0x7075 extra-field spoofing is forbidden)"
             )
-        if info.create_system == 3:
-            unix_type = (info.external_attr >> 16) & 0o170000
+        unix_type = (info.external_attr >> 16) & 0o170000
+        if info.create_system in (3, 19) or unix_type != 0:
             if unix_type == 0o120000:
                 raise ValueError(
                     f"{label}: symbolic link ZIP entry is forbidden: {info.orig_filename!r}"
@@ -3401,7 +3401,7 @@ def _make_synthetic_upload(entries: list[tuple[str, bytes]]) -> bytes:
 
 
 def run_self_test_bundle() -> int:
-    """Run 29 positive and negative pure-Python synthetic self-tests against the real verifier."""
+    """Run 38 positive and negative pure-Python synthetic self-tests against the real verifier."""
     repo_root = Path(__file__).resolve().parent.parent
     x64_tpl = (repo_root / "target-x86_64" / "Package.x64.appxmanifest").read_text(encoding="utf-8")
     arm64_tpl = (repo_root / "target-arm64" / "Package.arm64.appxmanifest").read_text(encoding="utf-8")
@@ -6025,9 +6025,37 @@ def run_self_test_bundle() -> int:
             "exactly 16 bytes",
         )
 
+        # Case 38: macOS/Darwin (create_system=19) and DOS (create_system=0) upper-16-bit S_IFLNK symlinks rejected.
+        for case_tag, create_sys in (("case-38a-darwin-symlink", 19), ("case-38b-dos-upper-symlink", 0)):
+            spoof_sym_buf = io.BytesIO()
+            with (
+                zipfile.ZipFile(io.BytesIO(arm64_ok), "r") as zin,
+                zipfile.ZipFile(spoof_sym_buf, "w", compression=zipfile.ZIP_DEFLATED) as zout,
+            ):
+                for item in zin.infolist():
+                    zout.writestr(item.filename, zin.read(item))
+                spoof_info = zipfile.ZipInfo(f"{case_tag}.txt")
+                spoof_info.create_system = create_sys
+                spoof_info.external_attr = 0o120777 << 16
+                zout.writestr(spoof_info, b"../../etc/passwd")
+            expect_fail(
+                case_tag,
+                lambda b=spoof_sym_buf.getvalue(), tag=case_tag: verify_msix_archive(
+                    b,
+                    f"{tag}.msix",
+                    arch="arm64",
+                    expected_version=store_ver,
+                    expect_signed=False,
+                    store_mode=True,
+                    allow_test_identity=False,
+                    run_live_smoke=False,
+                ),
+                "symbolic link",
+            )
+
     print(
-        "self-test-bundle OK: 37/37 checks passed "
-        "(29/29 baseline + 8/8 hardened positive & negative bundle/msixupload/store-mode checks)."
+        "self-test-bundle OK: 38/38 checks passed "
+        "(29/29 baseline + 9/9 hardened positive & negative bundle/msixupload/store-mode checks)."
     )
     return 0
 

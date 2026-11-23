@@ -1023,8 +1023,14 @@ def check_manifests_and_scripts(repo_root: Path, errors: list[str]) -> None:
         ("target-arm64/winget/app.totaldrop.TotalDrop.arm64.yaml", "arm64"),
     ):
         text = (repo_root / rel).read_text(encoding="utf-8")
-        if "winget-manifest.singleton.1.9.0.schema.json" not in text:
-            errors.append(f"{rel}: missing winget-manifest.singleton.1.9.0.schema.json schema header")
+        if not re.search(
+            r"^#\s*yaml-language-server:\s*\$schema=https://aka\.ms/winget-manifest\.singleton\.1\.9\.0\.schema\.json\s*$",
+            text,
+            re.MULTILINE,
+        ):
+            errors.append(
+                f"{rel}: missing https://aka.ms/winget-manifest.singleton.1.9.0.schema.json schema header"
+            )
         m_mver = re.search(r"^ManifestVersion:\s*(\S+)\s*$", text, re.MULTILINE)
         expect_eq(
             errors,
