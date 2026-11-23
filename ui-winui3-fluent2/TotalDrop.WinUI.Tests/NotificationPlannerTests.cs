@@ -398,4 +398,69 @@ public sealed class NotificationPlannerTests
         Assert.Equal(loc.FormatMessage("errorWrongCode"), step5.Body);
         _ = ParseAndAssertToastStructure(step5.XmlPayload);
     }
+
+    [Fact]
+    public void Tier5_SendTextTooLong_ExpandsSizeAndDefensivelyFallsBackOnUnexpandedPlaceholders()
+    {
+        // 1. en-US: sendTextTooLong must expand {size} to localized NativeBridge.MaxTextBytes ("1 MB").
+        RustBackedNotificationLocalizer enLoc = new("en-US", "en-US");
+        string expectedEnSize = enLoc.FormatBytes(NativeBridge.MaxTextBytes);
+        PlannedToastNotification? enToast = NotificationPlanner.TryPlan(
+            new NotificationEventInput(
+                TransferRole.Send,
+                TransferLifecycleStage.Failed,
+                WindowActive: false,
+                IsText: true,
+                ErrorL10nKey: "sendTextTooLong",
+                LocalizedErrorSummary: "fallback summary"),
+            enLoc);
+        Assert.NotNull(enToast);
+        Assert.Equal("TotalDrop", enToast.Title);
+        Assert.Contains(expectedEnSize, enToast.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("{size}", enToast.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("{size}", enToast.XmlPayload, StringComparison.Ordinal);
+        _ = ParseAndAssertToastStructure(enToast.XmlPayload);
+
+        // 2. tr-TR: regional byte formatting with zero unexpanded {size}.
+        RustBackedNotificationLocalizer trLoc = new("tr-TR", "tr-TR");
+        string expectedTrSize = trLoc.FormatBytes(NativeBridge.MaxTextBytes);
+        PlannedToastNotification? trToast = NotificationPlanner.TryPlan(
+            new NotificationEventInput(
+                TransferRole.Send,
+                TransferLifecycleStage.Failed,
+                WindowActive: false,
+                IsText: true,
+                ErrorL10nKey: "sendTextTooLong"),
+            trLoc);
+        Assert.NotNull(trToast);
+        Assert.Contains(expectedTrSize, trToast.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("{size}", trToast.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("{size}", trToast.XmlPayload, StringComparison.Ordinal);
+        _ = ParseAndAssertToastStructure(trToast.XmlPayload);
+
+        // 3. Defensive fallback: parameterized key formatted with 0 args emits unexpanded {folder}
+        // and must fall through to sanitized LocalizedErrorSummary (or ErrorOther when absent).
+        PlannedToastNotification? fallbackSummary = NotificationPlanner.TryPlan(
+            new NotificationEventInput(
+                TransferRole.Receive,
+                TransferLifecycleStage.Failed,
+                WindowActive: false,
+                ErrorL10nKey: "receiveSaveTo",
+                LocalizedErrorSummary: "Sanitized fallback summary"),
+            enLoc);
+        Assert.NotNull(fallbackSummary);
+        Assert.Equal("Sanitized fallback summary", fallbackSummary.Body);
+        Assert.DoesNotContain("{folder}", fallbackSummary.XmlPayload, StringComparison.Ordinal);
+
+        PlannedToastNotification? fallbackErrorOther = NotificationPlanner.TryPlan(
+            new NotificationEventInput(
+                TransferRole.Receive,
+                TransferLifecycleStage.Failed,
+                WindowActive: false,
+                ErrorL10nKey: "receiveSaveTo"),
+            enLoc);
+        Assert.NotNull(fallbackErrorOther);
+        Assert.Equal(enLoc.ErrorOther, fallbackErrorOther.Body);
+        Assert.DoesNotContain("{folder}", fallbackErrorOther.XmlPayload, StringComparison.Ordinal);
+    }
 }

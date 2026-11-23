@@ -84,9 +84,9 @@ mod win_com_e2e {
     use totaldrop_windows_bridge::activation::{ActivationPayload, session_named_pipe_path};
     use totaldrop_windows_bridge::ipc_router::IpcFrameDecoder;
     use windows_sys::Win32::Foundation::{
-        CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, CloseHandle, E_INVALIDARG, E_NOINTERFACE,
-        E_NOTIMPL, E_POINTER, ERROR_PIPE_CONNECTED, FreeLibrary, GENERIC_WRITE, GetLastError,
-        HANDLE, HMODULE, INVALID_HANDLE_VALUE, S_FALSE, S_OK,
+        CLASS_E_CLASSNOTAVAILABLE, CLASS_E_NOAGGREGATION, CloseHandle, E_FAIL, E_INVALIDARG,
+        E_NOINTERFACE, E_NOTIMPL, E_POINTER, ERROR_PIPE_CONNECTED, FreeLibrary, GENERIC_WRITE,
+        GetLastError, HANDLE, HMODULE, INVALID_HANDLE_VALUE, S_FALSE, S_OK,
     };
     use windows_sys::Win32::Globalization::{MUI_LANGUAGE_NAME, SetThreadPreferredUILanguages};
     use windows_sys::Win32::Storage::FileSystem::{
@@ -104,7 +104,7 @@ mod win_com_e2e {
         ECF_DEFAULT, ECS_ENABLED, ECS_HIDDEN, ExtractIconExW, SIGDN_FILESYSPATH,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{DestroyIcon, HICON};
-    use windows_sys::core::{GUID, HRESULT, IUnknown_Vtbl, PWSTR};
+    use windows_sys::core::{GUID, HRESULT, IID_IUnknown, IUnknown_Vtbl, PWSTR};
 
     type TestResult = Result<(), Box<dyn StdError>>;
 
@@ -291,7 +291,7 @@ mod win_com_e2e {
         // First #[repr(C)] field: COM interface vtable pointer read through raw ABI pointers.
         _vtbl: *const IShellItemVtbl,
         ref_count: AtomicU32,
-        path_w: Vec<u16>,
+        path_w: Option<Vec<u16>>,
     }
 
     static MOCK_ITEM_VTBL: IShellItemVtbl = IShellItemVtbl {
@@ -369,15 +369,20 @@ mod win_com_e2e {
         }
         // SAFETY: `this` is a valid `MockShellItem`.
         let item = unsafe { &*this.cast::<MockShellItem>() };
-        let byte_len = item.path_w.len().saturating_mul(2);
+        let Some(path_w) = &item.path_w else {
+            // SAFETY: `ppsz_name` was validated non-null above.
+            unsafe { *ppsz_name = ptr::null_mut() };
+            return E_FAIL;
+        };
+        let byte_len = path_w.len().saturating_mul(2);
         // SAFETY: `CoTaskMemAlloc` allocates a COM-owned UTF-16 buffer freed by caller.
         let mem = unsafe { CoTaskMemAlloc(byte_len) }.cast::<u16>();
         if mem.is_null() {
             return E_POINTER;
         }
-        // SAFETY: `mem` holds `item.path_w.len()` writable `u16` elements.
+        // SAFETY: `mem` holds `path_w.len()` writable `u16` elements.
         unsafe {
-            ptr::copy_nonoverlapping(item.path_w.as_ptr(), mem, item.path_w.len());
+            ptr::copy_nonoverlapping(path_w.as_ptr(), mem, path_w.len());
             *ppsz_name = mem;
         }
         S_OK
@@ -404,7 +409,7 @@ mod win_com_e2e {
     struct MockShellItemArray {
         // First #[repr(C)] field: COM interface vtable pointer read through raw ABI pointers.
         _vtbl: *const IShellItemArrayVtbl,
-        paths: Vec<String>,
+        items: Vec<Option<String>>,
         override_count: Option<u32>,
     }
 
@@ -462,7 +467,7 @@ mod win_com_e2e {
         let arr = unsafe { &*this.cast::<MockShellItemArray>() };
         let count = arr
             .override_count
-            .unwrap_or_else(|| u32::try_from(arr.paths.len()).unwrap_or(u32::MAX));
+            .unwrap_or_else(|| u32::try_from(arr.items.len()).unwrap_or(u32::MAX));
         // SAFETY: `pdw` is a writable out-pointer.
         unsafe { *pdw = count };
         S_OK
@@ -478,14 +483,15 @@ mod win_com_e2e {
         }
         // SAFETY: `this` is a valid `MockShellItemArray`.
         let arr = unsafe { &*this.cast::<MockShellItemArray>() };
-        let path_str = match arr.paths.get(idx as usize) {
-            Some(p) => p.clone(),
-            None => format!(r"C:\t\f{idx:04}.txt"),
+        let path_w = match arr.items.get(idx as usize) {
+            Some(Some(p)) => Some(to_utf16_nul(p)),
+            Some(None) => None,
+            None => Some(to_utf16_nul(&format!(r"C:\t\f{idx:04}.txt"))),
         };
         let boxed = Box::new(MockShellItem {
             _vtbl: &MOCK_ITEM_VTBL,
             ref_count: AtomicU32::new(1),
-            path_w: to_utf16_nul(&path_str),
+            path_w,
         });
         // SAFETY: Caller owns the returned COM reference and will call `Release`.
         unsafe { *ppsi = Box::into_raw(boxed).cast::<IShellItem>() };
@@ -503,7 +509,15 @@ mod win_com_e2e {
         fn new(paths: Vec<String>) -> Self {
             Self {
                 _vtbl: &MOCK_ARRAY_VTBL,
-                paths,
+                items: paths.into_iter().map(Some).collect(),
+                override_count: None,
+            }
+        }
+
+        fn with_mixed_items(items: Vec<Option<String>>) -> Self {
+            Self {
+                _vtbl: &MOCK_ARRAY_VTBL,
+                items,
                 override_count: None,
             }
         }
@@ -511,7 +525,7 @@ mod win_com_e2e {
         fn with_virtual_count(count: u32) -> Self {
             Self {
                 _vtbl: &MOCK_ARRAY_VTBL,
-                paths: Vec::new(),
+                items: Vec::new(),
                 override_count: Some(count),
             }
         }
@@ -1087,6 +1101,90 @@ mod win_com_e2e {
         let _ = std::fs::remove_dir_all(PathBuf::from(expected_extended_path(
             &base.to_string_lossy(),
         )));
+        Ok(())
+    }
+
+    #[test]
+    fn tier5_com_lock_server_query_interface_and_mixed_virtual_items() -> TestResult {
+        let _guard = COM_TEST_LOCK.lock().map_err(|_| "COM_TEST_LOCK poisoned")?;
+        let srv = LoadedComServer::open()?;
+        let factory = srv.create_factory()?;
+
+        // 1. Direct QueryInterface on IClassFactory & IExplorerCommand.
+        let bogus_iid = GUID::from_u128(0xABCD_1234_5678_90EF_1111_2222_3333_4444);
+        let mut qi_out: *mut c_void = ptr::null_mut();
+        // SAFETY: Direct COM QueryInterface check for IID_IUnknown.
+        let hr_f_unk = unsafe {
+            (factory.vtbl().base.QueryInterface)(factory.raw(), &IID_IUnknown, &mut qi_out)
+        };
+        assert_eq!(hr_f_unk, S_OK);
+        assert_eq!(qi_out, factory.raw());
+        // SAFETY: Release extra QueryInterface reference.
+        let _ = unsafe { (factory.vtbl().base.Release)(qi_out) };
+
+        // SAFETY: Unsupported IID must return E_NOINTERFACE.
+        let hr_f_bogus =
+            unsafe { (factory.vtbl().base.QueryInterface)(factory.raw(), &bogus_iid, &mut qi_out) };
+        assert_eq!(hr_f_bogus, E_NOINTERFACE);
+        assert!(qi_out.is_null());
+
+        let cmd = factory.create_explorer_command()?;
+        // SAFETY: Direct COM QueryInterface on IExplorerCommand.
+        let hr_c_icmd = unsafe {
+            (cmd.vtbl().base.QueryInterface)(cmd.raw(), &IID_IEXPLORER_COMMAND, &mut qi_out)
+        };
+        assert_eq!(hr_c_icmd, S_OK);
+        assert_eq!(qi_out, cmd.raw());
+        // SAFETY: Release extra QueryInterface reference.
+        let _ = unsafe { (cmd.vtbl().base.Release)(qi_out) };
+        // SAFETY: Unsupported IID must return E_NOINTERFACE.
+        let hr_c_bogus =
+            unsafe { (cmd.vtbl().base.QueryInterface)(cmd.raw(), &bogus_iid, &mut qi_out) };
+        assert_eq!(hr_c_bogus, E_NOINTERFACE);
+        assert!(qi_out.is_null());
+
+        // 2. Mixed valid + virtual (GetDisplayName returning E_FAIL) IShellItemArray over Named Pipe.
+        let pipe_srv = SingleShotPipeServer::spawn()?;
+        let mut mixed_arr = MockShellItemArray::with_mixed_items(vec![
+            Some(r"C:\Users\Alice\keep_one.txt".to_owned()),
+            None,
+            Some(r"C:\Users\Alice\keep_two.txt".to_owned()),
+        ]);
+        // SAFETY: Valid COM Invoke with mixed valid & virtual shell items.
+        let hr_inv = unsafe { (cmd.vtbl().invoke)(cmd.raw(), mixed_arr.as_ptr(), ptr::null_mut()) };
+        assert_eq!(hr_inv, S_OK);
+        let raw_bytes = pipe_srv.finish()?;
+        let mut dec = IpcFrameDecoder::new();
+        let envelopes = dec.push_bytes(&raw_bytes)?;
+        dec.finish_eof()?;
+        assert_eq!(envelopes.len(), 1);
+        match &envelopes.first().ok_or("missing envelope")?.payload {
+            ActivationPayload::ExplorerSend { paths } => {
+                assert_eq!(paths.len(), 2);
+                assert_eq!(
+                    paths.first().map(|p| p.extended_path()),
+                    Some(r"\\?\C:\Users\Alice\keep_one.txt")
+                );
+                assert_eq!(
+                    paths.get(1).map(|p| p.extended_path()),
+                    Some(r"\\?\C:\Users\Alice\keep_two.txt")
+                );
+            }
+            other => return Err(format!("unexpected payload: {other:?}").into()),
+        }
+
+        // 3. IClassFactory::LockServer(TRUE) holds DllCanUnloadNow() == S_FALSE until LockServer(FALSE).
+        // SAFETY: Lock server before releasing cmd.
+        let hr_lock = unsafe { (factory.vtbl().lock_server)(factory.raw(), 1) };
+        assert_eq!(hr_lock, S_OK);
+        drop(cmd);
+        assert_eq!(srv.can_unload_now(), S_FALSE);
+        // SAFETY: Unlock server.
+        let hr_unlock = unsafe { (factory.vtbl().lock_server)(factory.raw(), 0) };
+        assert_eq!(hr_unlock, S_OK);
+        assert_eq!(srv.can_unload_now(), S_FALSE);
+        drop(factory);
+        assert_eq!(srv.can_unload_now(), S_OK);
         Ok(())
     }
 }

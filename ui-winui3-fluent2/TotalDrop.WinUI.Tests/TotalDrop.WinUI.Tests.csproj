@@ -19,6 +19,7 @@
     <Compile Include="..\Services\NotificationPlanner.cs" Link="App\Services\NotificationPlanner.cs" />
     <Compile Include="..\Services\WakeLockService.cs" Link="App\Services\WakeLockService.cs" />
     <Compile Include="..\Services\ShareTargetRouter.cs" Link="App\Services\ShareTargetRouter.cs" />
+    <Compile Include="..\Services\WindowActivationCoordinator.cs" Link="App\Services\WindowActivationCoordinator.cs" />
   </ItemGroup>
 
   <ItemGroup>

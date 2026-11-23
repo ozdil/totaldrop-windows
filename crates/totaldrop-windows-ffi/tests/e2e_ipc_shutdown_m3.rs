@@ -51,10 +51,10 @@ use totaldrop_windows_ffi::{
     totaldrop_win_router_create, totaldrop_win_router_destroy, totaldrop_win_router_drain_ndjson,
     totaldrop_win_router_ingest_ipc_bytes_json, totaldrop_win_router_set_activity_json,
     totaldrop_win_router_set_animations_json, totaldrop_win_router_update_locale_json,
-    totaldrop_win_send_files_start, totaldrop_win_session_cancel, totaldrop_win_session_destroy,
-    totaldrop_win_session_poll_events_ndjson, totaldrop_win_shutdown, totaldrop_win_string_free,
-    totaldrop_win_validate_input_json, totaldrop_win_validate_paths_json,
-    totaldrop_win_validate_uri_json,
+    totaldrop_win_send_files_start, totaldrop_win_send_text_start, totaldrop_win_session_cancel,
+    totaldrop_win_session_destroy, totaldrop_win_session_poll_events_ndjson,
+    totaldrop_win_shutdown, totaldrop_win_string_free, totaldrop_win_validate_input_json,
+    totaldrop_win_validate_paths_json, totaldrop_win_validate_uri_json,
 };
 
 type TestResult = Result<(), Box<dyn StdError>>;
@@ -2313,6 +2313,26 @@ fn start_send_files(cfg_json: &str, paths: &[&Path]) -> Result<SessionGuard, Box
     Ok(SessionGuard(sid))
 }
 
+fn start_send_text(cfg_json: &str, text: &str) -> Result<SessionGuard, Box<dyn StdError>> {
+    let cfg_c = c_str(cfg_json)?;
+    let text_c = c_str(text)?;
+    let lang_c = c_str("en-US")?;
+    let reg_c = c_str("en-US")?;
+    // SAFETY: All four pointers are live NUL-terminated CStrings.
+    let sid = unsafe {
+        totaldrop_win_send_text_start(
+            cfg_c.as_ptr(),
+            text_c.as_ptr(),
+            lang_c.as_ptr(),
+            reg_c.as_ptr(),
+        )
+    };
+    if sid == 0 {
+        return Err("totaldrop_win_send_text_start returned 0".into());
+    }
+    Ok(SessionGuard(sid))
+}
+
 fn start_receive_connect(cfg_json: &str, code: &str) -> Result<SessionGuard, Box<dyn StdError>> {
     let cfg_c = c_str(cfg_json)?;
     let code_c = c_str(code)?;
@@ -2625,5 +2645,91 @@ fn t3_07_busy_router_rejects_explorer_send_while_loopback_transfer_completes() -
     let recv_bytes = std::fs::read(dest.join("important.bin"))?;
     assert_eq!(blake3::hash(&recv_bytes), expected_hash);
     assert!(!has_part_files(&dest)?);
+    Ok(())
+}
+
+#[test]
+fn tier5_router_400k_duplicate_ipc_frame_and_concurrent_shutdown_race() -> TestResult {
+    // 1. C1-F3: 10,001 duplicate paths & 400k-path <4 MiB IPC frame bounded rejection.
+    let dups_10001 = vec![r"C:\t\dup.txt".to_owned(); MAX_SELECTION_ITEMS.saturating_add(1)];
+    assert!(ActivationEnvelope::explorer_send(&dups_10001, None).is_err());
+
+    let router = RouterGuard::create(501, "en-US", "en-US", "0.1.0-beta.1", true)?;
+    let count = 400_000usize;
+    let mut big_json = String::with_capacity(count * 8 + 128);
+    big_json.push_str(r#"{"version":1,"payload":{"kind":"explorer_send","paths":["#);
+    for idx in 0..count {
+        if idx > 0 {
+            big_json.push(',');
+        }
+        big_json.push_str(r#""C:\\a""#);
+    }
+    big_json.push_str("]}}");
+    let big_frame = frame_bytes(big_json.as_bytes())?;
+    assert!(big_frame.len() <= MAX_IPC_FRAME_BYTES);
+
+    let t0 = Instant::now();
+    let res = router_ingest(router.id(), &big_frame)?;
+    let elapsed = t0.elapsed();
+    let msg = assert_error_envelope(&res, Some("too_many_items"), Some("errorStorage"))?;
+    assert!(msg.contains("10001"), "{msg}");
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "400k-path frame rejection must be bounded (took {elapsed:?})"
+    );
+
+    // 2. C1-F4: Concurrent start_send_text / start_send_files vs totaldrop_win_shutdown
+    // completes cleanly within bound and leaves runtime reusable.
+    let _write_lock = SHUTDOWN_GATE
+        .write()
+        .map_err(|_| "SHUTDOWN_GATE poisoned")?;
+    let rdv = MockRendezvous::start()?;
+    let cfg = make_relay_only_cfg(&rdv.url, "");
+    let cfg_clone = cfg.clone();
+
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let b_spawn = Arc::clone(&barrier);
+    let spawner = std::thread::spawn(move || -> Result<Vec<u64>, String> {
+        b_spawn.wait();
+        let mut sids = Vec::new();
+        for i in 0..6 {
+            let sid = start_send_text(&cfg_clone, &format!("tier5-race-msg-{i}"))
+                .map_err(|e| e.to_string())?;
+            sids.push(sid.id());
+            std::mem::forget(sid);
+        }
+        Ok(sids)
+    });
+
+    barrier.wait();
+    let _ = totaldrop_win_shutdown(50);
+    let sids = spawner
+        .join()
+        .map_err(|_| "spawner thread panicked")?
+        .map_err(|e| format!("spawner error: {e}"))?;
+
+    // Drain any sessions created right after the first shutdown wave.
+    let final_t0 = Instant::now();
+    assert_eq!(totaldrop_win_shutdown(100), FFI_OK);
+    assert!(
+        final_t0.elapsed() < Duration::from_secs(2),
+        "final shutdown took too long: {:?}",
+        final_t0.elapsed()
+    );
+    for sid in sids {
+        // Sessions already drained by shutdown return invalid handle cleanly.
+        let _ = totaldrop_win_session_destroy(sid);
+    }
+
+    // Verify the FFI runtime remains fully usable after concurrent shutdowns,
+    // then drain cleanly before releasing SHUTDOWN_GATE so sibling timing tests
+    // start from a completely idle runtime.
+    let post = start_send_text(&cfg, "post-shutdown-ok")?;
+    let mut evs = Vec::new();
+    let _ = wait_for_session_event(post.id(), &mut evs, "code_ready", Duration::from_secs(10))?;
+    assert_eq!(totaldrop_win_session_cancel(post.id()), FFI_OK);
+    let _ = wait_for_session_event(post.id(), &mut evs, "failed", Duration::from_secs(10))?;
+    drop(post);
+    assert_eq!(totaldrop_win_shutdown(500), FFI_OK);
     Ok(())
 }
