@@ -148,11 +148,39 @@ def _tier_of(tid: str) -> str:
     return tid[1]
 
 
+_PATH_ENV_VARS: tuple[str, ...] = (
+    "CARGO_TARGET_DIR",
+    "NUGET_PACKAGES",
+    "DOTNET_CLI_HOME",
+    "CARGO_HOME",
+    "RUSTUP_HOME",
+    "TMPDIR",
+    "TOTALDROP_TEST_RENDEZVOUS_BIN",
+    "TOTALDROP_TEST_RELAY_BIN",
+    "TOTALDROP_EXPLORER_EXT_DLL",
+)
+
+
+def _normalize_path_env(env: dict[str, str]) -> dict[str, str]:
+    """Resolve relative or tilde-prefixed path env vars in caller CWD before changing subprocess cwd."""
+    for key in _PATH_ENV_VARS:
+        raw = env.get(key)
+        if raw is None:
+            continue
+        stripped = raw.strip()
+        if stripped:
+            env[key] = str(Path(stripped).expanduser().resolve())
+        else:
+            env.pop(key, None)
+    return env
+
+
 def _run(cmd: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     merged = os.environ.copy()
     merged["PYTHONDONTWRITEBYTECODE"] = "1"
     if env:
         merged.update(env)
+    _normalize_path_env(merged)
     return subprocess.run(cmd, cwd=str(cwd), env=merged, capture_output=True, text=True, check=False)
 
 
@@ -228,9 +256,10 @@ def _run_dotnet_tests(tier_filter: str | None, raw_results: dict[str, dict[str, 
     if p_build.returncode != 0:
         raise RuntimeError(f"cargo build -p totaldrop-windows-ffi failed:\n{p_build.stderr}")
 
+    cargo_target_env = os.environ.get("CARGO_TARGET_DIR", "").strip()
     target_root = (
-        Path(os.environ["CARGO_TARGET_DIR"]).expanduser().resolve()
-        if os.environ.get("CARGO_TARGET_DIR", "").strip()
+        Path(cargo_target_env).expanduser().resolve()
+        if cargo_target_env
         else (REPO_ROOT / "target").resolve()
     )
     ffi_lib_path = (target_root / "debug" / _ffi_library_filename()).resolve()
@@ -277,7 +306,7 @@ def _run_dotnet_tests(tier_filter: str | None, raw_results: dict[str, dict[str, 
 
 def _run_python_verifier(script_rel: str, extra_args: list[str], raw_results: dict[str, dict[str, Any]]) -> None:
     with tempfile.TemporaryDirectory(prefix="td-e2e-json-") as tmp:
-        out_json = Path(tmp) / "out.json"
+        out_json = (Path(tmp) / "out.json").resolve()
         cmd = [sys.executable, "-B", str(REPO_ROOT / script_rel), *extra_args, "--json-out", str(out_json)]
         p = _run(cmd, cwd=REPO_ROOT)
         if out_json.is_file():
@@ -315,7 +344,7 @@ def _run_linux_devbox_m1_m3(
     if "M1" in active_ms:
         def t1_f04_02() -> str:
             with tempfile.TemporaryDirectory(prefix="td-f04-02-") as tmp:
-                tmp_str = Path(tmp) / "Strings"
+                tmp_str = (Path(tmp) / "Strings").resolve()
                 p1 = _run(
                     [
                         sys.executable, "-B", str(core_dir / "tools" / "l10n_codegen.py"),
@@ -425,7 +454,7 @@ def _run_linux_devbox_m1_m3(
                     "crates/totaldrop-explorer-ext/tests",
                     "ui-winui3-fluent2/TotalDrop.WinUI.Tests",
                 ):
-                    staged_dir = Path(scan_tmp) / scan_rel
+                    staged_dir = (Path(scan_tmp) / scan_rel).resolve()
                     shutil.copytree(
                         REPO_ROOT / scan_rel,
                         staged_dir,
@@ -528,13 +557,15 @@ def main(argv: list[str] | None = None) -> int:
 
     # 8. M4 Store readiness & ADR 0016 Step 6 cross-repo verifier (covers T1, T2, T3, T4)
     if "M4" in active_ms:
-        store_args = ["--run-tests"]
-        if args.site_dir is not None:
-            store_args.extend(["--site-dir", str(args.site_dir)])
-        if args.totaldrop_dir is not None:
-            store_args.extend(["--totaldrop-dir", str(args.totaldrop_dir)])
-        if args.core_dir is not None:
-            store_args.extend(["--core-dir", str(args.core_dir)])
+        eff_site = _resolve_sibling_repo(REPO_ROOT, "totaldrop-site", "TOTALDROP_SITE_DIR", args.site_dir)
+        eff_totaldrop = _resolve_sibling_repo(REPO_ROOT, "totaldrop", "TOTALDROP_MONOREPO_DIR", args.totaldrop_dir)
+        eff_core = _resolve_sibling_repo(REPO_ROOT, "totaldrop-core", "TOTALDROP_CORE_DIR", args.core_dir)
+        store_args = [
+            "--run-tests",
+            "--site-dir", str(eff_site),
+            "--totaldrop-dir", str(eff_totaldrop),
+            "--core-dir", str(eff_core),
+        ]
         _run_python_verifier("tools/e2e/verify_store_step6.py", store_args, raw_results)
 
     # 9. Linux devbox M1-M3 governance, l10n codegen, and fuzz suites
@@ -693,8 +724,9 @@ def main(argv: list[str] | None = None) -> int:
                         bump_bucket(summary["by_milestone"], ms, "failed")
 
     if args.json_out is not None:
-        args.json_out.parent.mkdir(parents=True, exist_ok=True)
-        args.json_out.write_text(
+        json_out_path = args.json_out.expanduser().resolve()
+        json_out_path.parent.mkdir(parents=True, exist_ok=True)
+        json_out_path.write_text(
             json.dumps({"summary": summary, "tests": ledger_report}, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
