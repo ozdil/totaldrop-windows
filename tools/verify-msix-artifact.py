@@ -303,7 +303,11 @@ def parse_pe64(path: Path) -> dict[str, object]:
 
 
 def verify_pri_dump(pri_dump_path: Path) -> None:
-    text = pri_dump_path.read_text(encoding="utf-8", errors="replace")
+    raw = pri_dump_path.read_bytes()
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        text = raw.decode("utf-16", errors="replace")
+    else:
+        text = raw.decode("utf-8-sig", errors="replace")
     upper_text = text.upper()
     required_tokens = (
         "StoreLogo.png",

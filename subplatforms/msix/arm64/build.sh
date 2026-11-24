@@ -58,8 +58,15 @@ fi
 OUT_DIR="${1:-$REPO_ROOT/dist/msix/arm64}"
 mkdir -p "$OUT_DIR"
 
+WIN_DELEGATE="$DELEGATE"
+WIN_OUT_DIR="$OUT_DIR"
+if command -v cygpath >/dev/null 2>&1; then
+  WIN_DELEGATE=$(cygpath -w "$DELEGATE")
+  WIN_OUT_DIR=$(cygpath -w "$OUT_DIR")
+fi
+
 if [ "${TOTALDROP_SELF_SIGN_EPHEMERAL:-0}" = "1" ]; then
-  pwsh -NoProfile -File "$DELEGATE" -Version "$MSIX_VERSION" -OutputDir "$OUT_DIR" -SelfSignEphemeral
+  pwsh -NoProfile -File "$WIN_DELEGATE" -Version "$MSIX_VERSION" -OutputDir "$WIN_OUT_DIR" -SelfSignEphemeral
 else
-  pwsh -NoProfile -File "$DELEGATE" -Version "$MSIX_VERSION" -OutputDir "$OUT_DIR"
+  pwsh -NoProfile -File "$WIN_DELEGATE" -Version "$MSIX_VERSION" -OutputDir "$WIN_OUT_DIR"
 fi

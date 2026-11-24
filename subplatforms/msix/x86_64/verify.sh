@@ -29,7 +29,70 @@ MSIX_PATH="$ART_DIR/$ARTIFACT_NAME"
 [ -f "$ART_DIR/SHA256SUMS" ] || { echo "missing $ART_DIR/SHA256SUMS" >&2; exit 1; }
 (cd "$ART_DIR" && sha256sum -c SHA256SUMS)
 
-python3 - "$MSIX_PATH" <<'PY'
+resolve_python() {
+  for py_cand in python3 python py; do
+    rest_path="${PATH:-}"
+    while [ -n "$rest_path" ]; do
+      case "$rest_path" in
+        *:*)
+          dir=${rest_path%%:*}
+          rest_path=${rest_path#*:}
+          ;;
+        *)
+          dir=$rest_path
+          rest_path=""
+          ;;
+      esac
+      [ -n "$dir" ] || continue
+      dir=${dir%/}
+      [ -n "$dir" ] || dir="/"
+      case "$dir" in
+        *[Mm]icrosoft/[Ww]indows[Aa]pps|*[Mm]icrosoft/[Ww]indows[Aa]pps/*|*[Mm]icrosoft\\[Ww]indows[Aa]pps|*[Mm]icrosoft\\[Ww]indows[Aa]pps\\*)
+          continue
+          ;;
+      esac
+      for ext in "" ".exe"; do
+        if [ "$dir" = "/" ]; then
+          py_path="/${py_cand}${ext}"
+        else
+          py_path="${dir}/${py_cand}${ext}"
+        fi
+        [ -f "$py_path" ] && [ -x "$py_path" ] && [ ! -d "$py_path" ] || continue
+        if [ "$py_cand" = "py" ]; then
+          if "$py_path" -3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 2)' >/dev/null 2>&1; then
+            PY_BIN="$py_path"
+            PY_ARG="-3"
+            return 0
+          fi
+        else
+          if "$py_path" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 2)' >/dev/null 2>&1; then
+            PY_BIN="$py_path"
+            PY_ARG=""
+            return 0
+          fi
+        fi
+      done
+    done
+  done
+  echo "error: Python >= 3.10 is required (checked python3, python, and py -3 across PATH, skipping WindowsApps stubs)" >&2
+  return 1
+}
+
+run_python() {
+  if [ -n "$PY_ARG" ]; then
+    "$PY_BIN" "$PY_ARG" "$@"
+  else
+    "$PY_BIN" "$@"
+  fi
+}
+
+resolve_python
+WIN_MSIX_PATH="$MSIX_PATH"
+if command -v cygpath >/dev/null 2>&1; then
+  WIN_MSIX_PATH=$(cygpath -w "$MSIX_PATH")
+fi
+
+run_python - "$WIN_MSIX_PATH" <<'PY'
 import sys, zipfile, xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -61,6 +124,13 @@ with zipfile.ZipFile(msix, "r") as zf:
         raise SystemExit(f"error: expected ProcessorArchitecture=x64, got {ident.attrib.get('ProcessorArchitecture')!r}")
     if ident.attrib.get("Version") != "0.1.1.0":
         raise SystemExit(f"error: expected Version=0.1.1.0, got {ident.attrib.get('Version')!r}")
+    com_ns = "{http://schemas.microsoft.com/appx/manifest/com/windows10}"
+    for com_cls in root.iter(f"{com_ns}Class"):
+        dll_path = com_cls.attrib.get("Path")
+        if dll_path:
+            normalized = dll_path.replace("\\", "/").lstrip("/")
+            if normalized not in names:
+                raise SystemExit(f"error: MSIX missing COM server binary declared in manifest: {normalized}")
 PY
 
 echo "artifact verified: $MSIX_PATH"
