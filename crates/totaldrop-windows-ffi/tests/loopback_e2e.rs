@@ -1389,7 +1389,12 @@ fn loopback_error_taxonomy_wrong_code_nameplate_bad_server_and_destinations() ->
     let _ = totaldrop_win_session_destroy(r_bad_relay);
 
     let bad_rdv_cfg = c_str(&make_cfg_json("wss://example.invalid:99999", "", false))?;
-    let dummy_file_paths = c_str(r#"["/nonexistent/path/must-fail-before-disk-scan.bin"]"#)?;
+    let dummy_path = if cfg!(windows) {
+        r"C:\nonexistent\path\must-fail-before-disk-scan.bin"
+    } else {
+        "/nonexistent/path/must-fail-before-disk-scan.bin"
+    };
+    let dummy_file_paths = c_str(&serde_json::to_string(&[dummy_path])?)?;
     // SAFETY: Live CStrings.
     let sf_bad = unsafe {
         totaldrop_win_send_files_start(
