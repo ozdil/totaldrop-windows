@@ -264,6 +264,7 @@ jobs:
             }
           }
           Write-Host "WACK -CheckReportOnly 2 positive & 7 negative smoke tests OK"
+          $global:LASTEXITCODE = 0
       - name: Validate XML well-formedness (.xaml, .appxmanifest, app.manifest, and 35-locale .resw)
         shell: pwsh
         run: |
