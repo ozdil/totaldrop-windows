@@ -1098,7 +1098,8 @@ async fn run_fault_sender(
     if matches!(fault, SenderFault::MalformedControlFrame) {
         let ct = chan.sealer.seal(&[0xFFu8, 0xFFu8])?;
         write_frame(&mut chan.send, &ct).await?;
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _ = tokio::time::timeout(Duration::from_secs(20), conn.closed()).await;
+        drop(endpoint);
         return Ok(());
     }
 
@@ -1159,14 +1160,16 @@ async fn run_fault_sender(
             *last ^= 0x01;
         }
         write_frame(&mut chan.send, &ct).await?;
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _ = tokio::time::timeout(Duration::from_secs(20), conn.closed()).await;
+        drop(endpoint);
         return Ok(());
     }
 
     secure::send_control(&mut chan.sealer, &mut chan.send, &offer).await?;
 
     if matches!(fault, SenderFault::TamperManifestSignature) {
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _ = tokio::time::timeout(Duration::from_secs(20), conn.closed()).await;
+        drop(endpoint);
         return Ok(());
     }
 
@@ -1190,7 +1193,13 @@ async fn run_fault_sender(
         write_frame(&mut uni, &sealed_chunk).await?;
         tokio::time::sleep(Duration::from_millis(40)).await;
         conn.close(0u32.into(), b"failed");
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // Keep the QUIC endpoint alive until the caller aborts this task so
+        // retransmissions or keep-alives from a descheduled receiver always
+        // draw either a replayed CONNECTION_CLOSE or a stateless reset
+        // (both Cause::ConnectionLost) instead of waiting 30s for idle timeout.
+        endpoint.wait_idle().await;
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        drop(endpoint);
         return Ok(());
     }
 
@@ -1200,6 +1209,7 @@ async fn run_fault_sender(
         write_frame(&mut uni, &sealed_chunk).await?;
         // Deliberately go completely silent, ignoring any Control::Cancel.
         tokio::time::sleep(Duration::from_secs(30)).await;
+        drop(endpoint);
         return Ok(());
     }
 
