@@ -665,20 +665,37 @@ impl MockRendezvous {
     }
 }
 
+async fn close_ws_gracefully(ws: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>) {
+    let _ = ws.close(None).await;
+    // Drain until the peer acknowledges close (bounded) so Windows Winsock
+    // never sends TCP RST (WSAECONNABORTED / os error 10053) while the client
+    // is still reading the preceding binary frame.
+    let _ = tokio::time::timeout(Duration::from_millis(500), async {
+        while let Some(Ok(frame)) = ws.next().await {
+            if matches!(frame, Message::Close(_)) {
+                break;
+            }
+        }
+    })
+    .await;
+}
+
+async fn send_error_and_close(
+    ws: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    reason: &str,
+) {
+    let msg = ServerMessage::Error {
+        reason: reason.to_owned(),
+    };
+    let _ = ws.send(Message::Binary(msg.encode().into())).await;
+    close_ws_gracefully(ws).await;
+}
+
 async fn handle_rendezvous_conn(
     stream: tokio::net::TcpStream,
     state: Arc<RendezvousState>,
 ) -> Result<(), Box<dyn StdError + Send + Sync>> {
     let mut ws = tokio_tungstenite::accept_async(stream).await?;
-
-    if let RendezvousFault::AlwaysError(ref reason) = state.fault {
-        let msg = ServerMessage::Error {
-            reason: reason.clone(),
-        };
-        let _ = ws.send(Message::Binary(msg.encode().into())).await;
-        let _ = ws.close(None).await;
-        return Ok(());
-    }
 
     let first_msg = loop {
         match ws.next().await {
@@ -689,6 +706,11 @@ async fn handle_rendezvous_conn(
             _ => return Ok(()),
         }
     };
+
+    if let RendezvousFault::AlwaysError(ref reason) = state.fault {
+        send_error_and_close(&mut ws, reason).await;
+        return Ok(());
+    }
 
     match first_msg {
         ClientMessage::Allocate => {
@@ -717,35 +739,26 @@ async fn handle_rendezvous_conn(
             }
             let reply = ServerMessage::Allocated { nameplate, token };
             let _ = ws.send(Message::Binary(reply.encode().into())).await;
-            let _ = ws.close(None).await;
+            close_ws_gracefully(&mut ws).await;
         }
         ClientMessage::Claim { nameplate, token } => {
             let (tx, mut rx) = mpsc::unbounded_channel::<ServerMessage>();
             let (mailbox_id, peer_index, replay) = {
                 let mut boxes = state.boxes.lock().await;
                 let Some(slot) = boxes.get_mut(&nameplate) else {
-                    let err = ServerMessage::Error {
-                        reason: "unknown nameplate".to_owned(),
-                    };
-                    let _ = ws.send(Message::Binary(err.encode().into())).await;
-                    let _ = ws.close(None).await;
+                    drop(boxes);
+                    send_error_and_close(&mut ws, "unknown nameplate").await;
                     return Ok(());
                 };
                 if slot.retired {
-                    let err = ServerMessage::Error {
-                        reason: "mailbox expired".to_owned(),
-                    };
-                    let _ = ws.send(Message::Binary(err.encode().into())).await;
-                    let _ = ws.close(None).await;
+                    drop(boxes);
+                    send_error_and_close(&mut ws, "mailbox expired").await;
                     return Ok(());
                 }
                 if slot.peers.is_empty() {
                     if token != Some(slot.token) {
-                        let err = ServerMessage::Error {
-                            reason: "unknown nameplate".to_owned(),
-                        };
-                        let _ = ws.send(Message::Binary(err.encode().into())).await;
-                        let _ = ws.close(None).await;
+                        drop(boxes);
+                        send_error_and_close(&mut ws, "unknown nameplate").await;
                         return Ok(());
                     }
                     slot.peers.push(tx);
@@ -755,11 +768,8 @@ async fn handle_rendezvous_conn(
                     let replay = std::mem::take(&mut slot.buffered_for_second);
                     (slot.mailbox_id, 1usize, replay)
                 } else {
-                    let err = ServerMessage::Error {
-                        reason: "nameplate full".to_owned(),
-                    };
-                    let _ = ws.send(Message::Binary(err.encode().into())).await;
-                    let _ = ws.close(None).await;
+                    drop(boxes);
+                    send_error_and_close(&mut ws, "nameplate full").await;
                     return Ok(());
                 }
             };
@@ -770,11 +780,7 @@ async fn handle_rendezvous_conn(
             ws.send(Message::Binary(claimed.encode().into())).await?;
 
             if let RendezvousFault::ErrorAfterClaim(ref reason) = state.fault {
-                let err = ServerMessage::Error {
-                    reason: reason.clone(),
-                };
-                let _ = ws.send(Message::Binary(err.encode().into())).await;
-                let _ = ws.close(None).await;
+                send_error_and_close(&mut ws, reason).await;
                 return Ok(());
             }
 

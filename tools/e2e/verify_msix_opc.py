@@ -115,11 +115,25 @@ def _extract_candidate_qualifiers(
             if k and v:
                 pairs.append((k, v))
     for child in cand:
-        if _local_tag(child) == "Qualifier":
+        child_tag = _local_tag(child)
+        if child_tag == "Qualifier":
             qname = child.attrib.get("name", "").strip()
             qval = child.attrib.get("value", "").strip()
             if qname and qval:
                 pairs.append((qname, qval))
+        elif child_tag == "QualifierSet":
+            found_inline_q = False
+            for q in child:
+                if _local_tag(q) == "Qualifier":
+                    qname = q.attrib.get("name", "").strip()
+                    qval = q.attrib.get("value", "").strip()
+                    if qname and qval:
+                        pairs.append((qname, qval))
+                        found_inline_q = True
+            if not found_inline_q:
+                qidx = child.attrib.get("index", "").strip()
+                if qidx and qidx in qualifier_sets:
+                    pairs.extend(qualifier_sets[qidx])
     qset_ref = cand.attrib.get("qualifierSet", "").strip()
     if qset_ref and qset_ref in qualifier_sets:
         pairs.extend(qualifier_sets[qset_ref])
@@ -148,7 +162,8 @@ def verify_pri_dump(pri_xml_path: Path) -> None:
                 qval = child.attrib.get("value", "").strip()
                 if qname and qval:
                     qpairs.append((qname, qval))
-        qualifier_sets[qidx] = qpairs
+        if qpairs:
+            qualifier_sets[qidx] = qpairs
 
     # Collect language qualifiers per (subtree_full_path, raw_normalized_name) and globally.
     lang_by_resource_path: dict[tuple[str, str], set[str]] = {}
@@ -579,6 +594,53 @@ def self_test_pri_dump() -> str:
         else:
             raise AssertionError("split 17+18 languages across Other/ and Resources/ unexpectedly passed!")
 
+        # (i) Real MakePri.exe /dt detailed format: <Candidate><QualifierSet><Qualifier .../></QualifierSet></Candidate>
+        p_detailed = tmp_dir / "pri_detailed_nested_qset.xml"
+        det_res: list[str] = []
+        for key in REQUIRED_PRI_RESOURCE_KEYS:
+            cands = "".join(
+                f'<Candidate type="String"><QualifierSet index="{idx + 1}">'
+                f'<Qualifier name="Language" value="{loc.upper()}" priority="900" scoreAsDefault="1.0" index="1"/>'
+                f"</QualifierSet><Value>{key}-{loc}</Value></Candidate>"
+                for idx, loc in enumerate(CANONICAL_35_LOCALES)
+            )
+            det_res.append(f'      <NamedResource name="{key}">{cands}</NamedResource>')
+        det_sq = [
+            f'<Candidate type="Path"><QualifierSet index="100"><Qualifier name="Scale" value="{sc}" priority="500" scoreAsDefault="0.0" index="1"/></QualifierSet>'
+            f"<Value>Assets\\Square44x44Logo.scale-{sc}.png</Value></Candidate>"
+            for sc in ("100", "125", "150", "200", "400")
+        ]
+        for alt in ("UNPLATED", "LIGHTUNPLATED"):
+            for ts in ("16", "24", "32", "48", "256"):
+                det_sq.append(
+                    f'<Candidate type="Path"><QualifierSet index="200">'
+                    f'<Qualifier name="TargetSize" value="{ts}" priority="500" scoreAsDefault="0.0" index="1"/>'
+                    f'<Qualifier name="AlternateForm" value="{alt}" priority="500" scoreAsDefault="0.0" index="2"/>'
+                    f"</QualifierSet><Value>Assets\\Square44x44Logo.targetsize-{ts}_altform-{alt.lower()}.png</Value></Candidate>"
+                )
+        det_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+            '<PriInfo><ResourceMap name="TotalDrop.TotalDrop">'
+            '<ResourceMapSubtree name="Files"><ResourceMapSubtree name="Assets">'
+            f'<NamedResource name="Square44x44Logo.png">{"".join(det_sq)}</NamedResource>'
+            '</ResourceMapSubtree></ResourceMapSubtree>'
+            '<ResourceMapSubtree name="Resources">\n'
+            + "\n".join(det_res)
+            + "\n</ResourceMapSubtree></ResourceMap></PriInfo>\n"
+        )
+        p_detailed.write_text(det_xml, encoding="utf-8")
+        verify_pri_dump(p_detailed)
+
+        p_detailed_bad = tmp_dir / "pri_detailed_missing_unplated.xml"
+        p_detailed_bad.write_text(det_xml.replace('value="UNPLATED"', 'value="PLATED"'), encoding="utf-8")
+        try:
+            verify_pri_dump(p_detailed_bad)
+        except ValueError as exc:
+            if "AlternateForm=UNPLATED" not in str(exc):
+                raise AssertionError(f"/dt detailed missing UNPLATED error lacked AlternateForm=UNPLATED: {exc}") from exc
+        else:
+            raise AssertionError("/dt detailed missing UNPLATED unexpectedly passed!")
+
     # Tier-5 (C2-F5): Leading-zero and non-ASCII digit MSIX version quads must be rejected.
     for bad_quad in ("01.0.1.0", "1.00.1.0", "00.1.1.0", "١.٠.١.٠", "٠.١.١.٠"):
         try:
@@ -590,8 +652,8 @@ def self_test_pri_dump() -> str:
 
     return (
         "realistic MakePri dump (35-locale, missing zh-Hant 34!=35, LIGHTUNPLATED-only, "
-        "QualifierSet, E13 per-altform 5-size matrix, R2-C2-F5 exact Square44 leaf/child/split-qset/multi-subtree, "
-        "Tier-5 ASCII quad guard) verified"
+        "QualifierSet, /dt detailed nested QualifierSet, E13 per-altform 5-size matrix, "
+        "R2-C2-F5 exact Square44 leaf/child/split-qset/multi-subtree, Tier-5 ASCII quad guard) verified"
     )
 
 
@@ -1730,7 +1792,7 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
         store_ver = "1.0.1.0"
 
         def t1_f22_03() -> str:
-            # Self-test repo's bundle verifier CLI first (46/46 total, 29/29 baseline)
+            # Self-test repo's bundle verifier CLI first (47/47 total, 29/29 baseline)
             p_st = subprocess.run(
                 [sys.executable, "-B", "-W", "error", str(repo_root / "tools" / "verify-msix-artifact.py"), "--self-test-bundle"],
                 cwd=str(repo_root),
@@ -1738,7 +1800,7 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                 text=True,
                 check=False,
             )
-            if p_st.returncode != 0 or "46/46" not in p_st.stdout or "29/29" not in p_st.stdout:
+            if p_st.returncode != 0 or "47/47" not in p_st.stdout or "29/29" not in p_st.stdout:
                 raise AssertionError(
                     f"tools/verify-msix-artifact.py --self-test-bundle failed: {p_st.stdout}\n{p_st.stderr}"
                 )
@@ -1788,7 +1850,7 @@ def run_cross_platform_tests(repo_root: Path, milestone: str = "M4") -> dict[str
                 )
                 if not ok:
                     raise AssertionError(f"tools/verify-msix-artifact.py rejected valid .msixupload: {msg}")
-            return "dual-arch .msixbundle + .msixupload (2 .appxsym, 3 PDBs, SHA-256 parity) & 46/46 (29/29 baseline) self-test PASS"
+            return "dual-arch .msixbundle + .msixupload (2 .appxsym, 3 PDBs, SHA-256 parity) & 47/47 (29/29 baseline) self-test PASS"
 
         def t1_f22_05() -> str:
             arm64_artifact_name, arm64_ver = resolve_recipe_artifact_name(repo_root, "arm64")

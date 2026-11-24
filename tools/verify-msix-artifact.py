@@ -2392,7 +2392,7 @@ def _extract_pri_candidate_qualifiers(
     cand: ET.Element,
     qualifier_sets: dict[str, list[tuple[str, str]]],
 ) -> list[tuple[str, str]]:
-    """Extract qualifier (name, value) pairs from inline qualifiers=, child <Qualifier>, and qualifierSet=."""
+    """Extract qualifier (name, value) pairs from inline qualifiers=, child <Qualifier>/<QualifierSet>, and qualifierSet=."""
     pairs: list[tuple[str, str]] = []
     inline = cand.attrib.get("qualifiers", "").strip()
     if inline:
@@ -2406,11 +2406,25 @@ def _extract_pri_candidate_qualifiers(
                 if k and v:
                     pairs.append((k, v))
     for child in cand:
-        if _pri_local_tag(child) == "Qualifier":
+        child_tag = _pri_local_tag(child)
+        if child_tag == "Qualifier":
             qname = child.attrib.get("name", "").strip()
             qval = child.attrib.get("value", "").strip()
             if qname and qval:
                 pairs.append((qname, qval))
+        elif child_tag == "QualifierSet":
+            found_inline_q = False
+            for q in child:
+                if _pri_local_tag(q) == "Qualifier":
+                    qname = q.attrib.get("name", "").strip()
+                    qval = q.attrib.get("value", "").strip()
+                    if qname and qval:
+                        pairs.append((qname, qval))
+                        found_inline_q = True
+            if not found_inline_q:
+                qidx = child.attrib.get("index", "").strip()
+                if qidx and qidx in qualifier_sets:
+                    pairs.extend(qualifier_sets[qidx])
     qset_ref = cand.attrib.get("qualifierSet", "").strip()
     if qset_ref and qset_ref in qualifier_sets:
         pairs.extend(qualifier_sets[qset_ref])
@@ -2435,7 +2449,8 @@ def verify_pri_dump(pri_dump_path: Path) -> None:
                 qval = child.attrib.get("value", "").strip()
                 if qname and qval:
                     qpairs.append((qname, qval))
-        qualifier_sets[qidx] = qpairs
+        if qpairs:
+            qualifier_sets[qidx] = qpairs
 
     named_resources_with_cands: set[str] = set()
     named_leaf_lower: set[str] = set()
@@ -6507,9 +6522,70 @@ def run_self_test_bundle() -> int:
             "18 != 35",
         )
 
+        # Case 39i: Real Windows SDK MakePri.exe dump /dt detailed format places
+        # <QualifierSet index="..."><Qualifier name="..." value="..." .../></QualifierSet>
+        # directly inside <Candidate>. Verify both valid (PASS) and missing-UNPLATED (FAIL).
+        pri_detailed_ok = tmp_dir / "pri_39i_detailed_nested_qset_ok.xml"
+        det_res_lines: list[str] = []
+        for key in REQUIRED_PRI_RESOURCE_KEYS:
+            cands = "".join(
+                f'<Candidate type="String"><QualifierSet index="{idx + 1}">'
+                f'<Qualifier name="Language" value="{loc.upper()}" priority="900" scoreAsDefault="1.0" index="1"/>'
+                f"</QualifierSet><Value>{key}-{loc}</Value></Candidate>"
+                for idx, loc in enumerate(all_35)
+            )
+            det_res_lines.append(f'      <NamedResource name="{key}">{cands}</NamedResource>')
+        det_file_lines: list[str] = []
+        for fname in REQUIRED_PRI_FILES:
+            if fname == "Square44x44Logo.png":
+                sq_cands = [
+                    f'<Candidate type="Path"><QualifierSet index="100"><Qualifier name="Scale" value="{sc}" priority="500" scoreAsDefault="0.0" index="1"/></QualifierSet>'
+                    f"<Value>Assets\\Square44x44Logo.scale-{sc}.png</Value></Candidate>"
+                    for sc in ("100", "125", "150", "200", "400")
+                ]
+                for alt in ("UNPLATED", "LIGHTUNPLATED"):
+                    for ts in REQUIRED_PRI_TARGET_SIZES:
+                        sq_cands.append(
+                            f'<Candidate type="Path"><QualifierSet index="200">'
+                            f'<Qualifier name="TargetSize" value="{ts}" priority="500" scoreAsDefault="0.0" index="1"/>'
+                            f'<Qualifier name="AlternateForm" value="{alt}" priority="500" scoreAsDefault="0.0" index="2"/>'
+                            f"</QualifierSet><Value>Assets\\Square44x44Logo.targetsize-{ts}_altform-{alt.lower()}.png</Value></Candidate>"
+                        )
+                det_file_lines.append(
+                    f'        <NamedResource name="{fname}">{"".join(sq_cands)}</NamedResource>'
+                )
+            else:
+                det_file_lines.append(
+                    f'        <NamedResource name="{fname}"><Candidate type="Path"><Value>{fname}</Value></Candidate></NamedResource>'
+                )
+        detailed_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+            '<PriInfo><ResourceMap name="TotalDrop.TotalDrop">\n'
+            '  <ResourceMapSubtree name="Files">\n'
+            '    <ResourceMapSubtree name="Assets">\n'
+            + "\n".join(det_file_lines)
+            + "\n    </ResourceMapSubtree>\n  </ResourceMapSubtree>\n"
+            '  <ResourceMapSubtree name="Resources">\n'
+            + "\n".join(det_res_lines)
+            + "\n  </ResourceMapSubtree>\n</ResourceMap></PriInfo>\n"
+        )
+        pri_detailed_ok.write_text(detailed_xml, encoding="utf-8")
+        verify_pri_dump(pri_detailed_ok)
+
+        pri_detailed_bad = tmp_dir / "pri_39i_detailed_missing_unplated.xml"
+        pri_detailed_bad.write_text(
+            detailed_xml.replace('value="UNPLATED"', 'value="PLATED"'),
+            encoding="utf-8",
+        )
+        expect_fail(
+            "case-39i-pri-detailed-missing-unplated",
+            lambda: verify_pri_dump(pri_detailed_bad),
+            "AlternateForm=UNPLATED",
+        )
+
     print(
-        "self-test-bundle OK: 46/46 checks passed "
-        "(29/29 baseline + 17/17 hardened positive & negative bundle/msixupload/store-mode/PRI checks)."
+        "self-test-bundle OK: 47/47 checks passed "
+        "(29/29 baseline + 18/18 hardened positive & negative bundle/msixupload/store-mode/PRI checks)."
     )
     return 0
 
