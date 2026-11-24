@@ -556,7 +556,7 @@ function Invoke-DotnetTestFiltered {
     $uiDir = Join-Path $RepoRoot "ui-winui3-fluent2"
     Push-Location $uiDir
     try {
-        & dotnet test "TotalDrop.WinUI.Tests\TotalDrop.WinUI.Tests.csproj" -c Release --no-build --filter $Filter --verbosity minimal
+        & dotnet test "TotalDrop.WinUI.Tests\TotalDrop.WinUI.Tests.csproj" -c Release --no-build --filter $Filter --blame-hang-timeout 2m --verbosity minimal
         if ($LASTEXITCODE -ne 0) {
             throw "dotnet test filter '$Filter' failed with exit $LASTEXITCODE"
         }

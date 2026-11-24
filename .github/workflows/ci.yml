@@ -391,7 +391,7 @@ jobs:
           try {
             $env:TOTALDROP_FFI_DLL_PATH = (Resolve-Path -LiteralPath "..\target\x86_64-pc-windows-msvc\release\totaldrop_windows_ffi.dll").Path
             Write-Host "Using native FFI DLL: $($env:TOTALDROP_FFI_DLL_PATH)"
-            dotnet test TotalDrop.WinUI.Tests\TotalDrop.WinUI.Tests.csproj -c Release --filter "FullyQualifiedName!~LoopbackRelayTransferTests" --verbosity normal
+            dotnet test TotalDrop.WinUI.Tests\TotalDrop.WinUI.Tests.csproj -c Release --filter "FullyQualifiedName!~LoopbackRelayTransferTests" --blame-hang-timeout 2m --verbosity normal
             if ($LASTEXITCODE -ne 0) {
               throw "TotalDrop.WinUI.Tests failed with exit code $LASTEXITCODE"
             }

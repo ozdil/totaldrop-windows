@@ -49,6 +49,7 @@ public sealed class WindowsM3IntegrationTests
 
         ulong routerId = NativeBridge.TryCreateRouter(1, "en-US", "en-US", "0.1.0-beta.1", animationsEnabled: true);
         Assert.NotEqual(0UL, routerId);
+        using CancellationTokenSource cts = new(TimeSpan.FromSeconds(10));
         try
         {
             string pipeName = $@"LOCAL\app.totaldrop.TotalDrop.e2e.{Environment.ProcessId}.{Guid.NewGuid():N}";
@@ -60,22 +61,29 @@ public sealed class WindowsM3IntegrationTests
                 PipeDirection.In,
                 1,
                 PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly,
+                inBufferSize: 16 * 1024,
+                outBufferSize: 0);
 
-            Task serverConnect = server.WaitForConnectionAsync();
-            await using NamedPipeClientStream client = new(".", pipeName, PipeDirection.Out, PipeOptions.Asynchronous);
-            await client.ConnectAsync(5000);
+            Task serverConnect = server.WaitForConnectionAsync(cts.Token);
+            Task clientTask = Task.Run(async () =>
+            {
+                await using NamedPipeClientStream client = new(
+                    ".",
+                    pipeName,
+                    PipeDirection.Out,
+                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+                await client.ConnectAsync(5000, cts.Token);
+                await client.WriteAsync(frame, cts.Token);
+            }, cts.Token);
+
             await serverConnect;
-
-            await client.WriteAsync(frame);
-            await client.FlushAsync();
-            client.Close();
 
             byte[] buf = new byte[4096];
             List<RouterDecisionDto> allDecisions = [];
             while (true)
             {
-                int n = await server.ReadAsync(buf);
+                int n = await server.ReadAsync(buf, cts.Token);
                 if (n == 0)
                 {
                     Assert.True(NativeBridge.TryIngestRouterIpcBytes(routerId, ReadOnlySpan<byte>.Empty, out RouterDecisionDto[] eofDecs, out BridgeErrorDto? eofErr), eofErr?.Message);
@@ -86,6 +94,8 @@ public sealed class WindowsM3IntegrationTests
                 Assert.True(NativeBridge.TryIngestRouterIpcBytes(routerId, buf.AsSpan(0, n), out RouterDecisionDto[] decs, out BridgeErrorDto? err), err?.Message);
                 allDecisions.AddRange(decs);
             }
+
+            await clientTask;
 
             RouterDecisionDto decision = Assert.Single(allDecisions);
             Assert.Equal("navigate_send_files", decision.Decision);
@@ -105,6 +115,7 @@ public sealed class WindowsM3IntegrationTests
 
         ulong routerId = NativeBridge.TryCreateRouter(2, "en-US", "en-US", "0.1.0-beta.1", animationsEnabled: true);
         Assert.NotEqual(0UL, routerId);
+        using CancellationTokenSource cts = new(TimeSpan.FromSeconds(15));
         try
         {
             string pipeName = $@"LOCAL\app.totaldrop.TotalDrop.e2e.{Environment.ProcessId}.{Guid.NewGuid():N}";
@@ -115,27 +126,43 @@ public sealed class WindowsM3IntegrationTests
                 PipeDirection.In,
                 1,
                 PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly))
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly,
+                inBufferSize: 16 * 1024,
+                outBufferSize: 0))
             {
-                Task conn1 = server1.WaitForConnectionAsync();
-                await using (NamedPipeClientStream client1 = new(".", pipeName, PipeDirection.Out, PipeOptions.Asynchronous))
+                Task conn1 = server1.WaitForConnectionAsync(cts.Token);
+                Task client1Task = Task.Run(async () =>
                 {
-                    await client1.ConnectAsync(5000);
-                    await conn1;
+                    await using NamedPipeClientStream client1 = new(
+                        ".",
+                        pipeName,
+                        PipeDirection.Out,
+                        PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+                    await client1.ConnectAsync(5000, cts.Token);
                     byte[] truncated = new byte[24];
                     BitConverter.TryWriteBytes(truncated.AsSpan(0, 4), 200U);
-                    await client1.WriteAsync(truncated);
-                    await client1.FlushAsync();
-                }
+                    await client1.WriteAsync(truncated, cts.Token);
+                }, cts.Token);
+
+                await conn1;
 
                 byte[] buf = new byte[256];
-                int n = await server1.ReadAsync(buf);
-                Assert.True(n > 0);
-                Assert.True(NativeBridge.TryIngestRouterIpcBytes(routerId, buf.AsSpan(0, n), out RouterDecisionDto[] partial, out _));
-                Assert.Empty(partial);
+                int totalRead = 0;
+                while (true)
+                {
+                    int n = await server1.ReadAsync(buf, cts.Token);
+                    if (n == 0)
+                    {
+                        break;
+                    }
 
-                int eof = await server1.ReadAsync(buf);
-                Assert.Equal(0, eof);
+                    totalRead += n;
+                    Assert.True(NativeBridge.TryIngestRouterIpcBytes(routerId, buf.AsSpan(0, n), out RouterDecisionDto[] partial, out _));
+                    Assert.Empty(partial);
+                }
+
+                await client1Task;
+                Assert.Equal(24, totalRead);
                 bool eofOk = NativeBridge.TryIngestRouterIpcBytes(routerId, ReadOnlySpan<byte>.Empty, out _, out BridgeErrorDto? eofErr);
                 Assert.False(eofOk);
                 Assert.Equal("malformed_ipc_frame", eofErr?.Kind);
@@ -147,22 +174,43 @@ public sealed class WindowsM3IntegrationTests
                 PipeDirection.In,
                 1,
                 PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly))
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly,
+                inBufferSize: 16 * 1024,
+                outBufferSize: 0))
             {
-                Task conn2 = server2.WaitForConnectionAsync();
+                Task conn2 = server2.WaitForConnectionAsync(cts.Token);
                 byte[] okFrame = FrameUtf8Json("""{"version":1,"payload":{"kind":"open_screen","screen":"receive"}}""");
-                await using (NamedPipeClientStream client2 = new(".", pipeName, PipeDirection.Out, PipeOptions.Asynchronous))
+                Task client2Task = Task.Run(async () =>
                 {
-                    await client2.ConnectAsync(5000);
-                    await conn2;
-                    await client2.WriteAsync(okFrame);
-                    await client2.FlushAsync();
-                }
+                    await using NamedPipeClientStream client2 = new(
+                        ".",
+                        pipeName,
+                        PipeDirection.Out,
+                        PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+                    await client2.ConnectAsync(5000, cts.Token);
+                    await client2.WriteAsync(okFrame, cts.Token);
+                }, cts.Token);
+
+                await conn2;
 
                 byte[] buf = new byte[256];
-                int n = await server2.ReadAsync(buf);
-                Assert.True(NativeBridge.TryIngestRouterIpcBytes(routerId, buf.AsSpan(0, n), out RouterDecisionDto[] decs, out BridgeErrorDto? err), err?.Message);
-                RouterDecisionDto dec = Assert.Single(decs);
+                List<RouterDecisionDto> allDecs = [];
+                while (true)
+                {
+                    int n = await server2.ReadAsync(buf, cts.Token);
+                    if (n == 0)
+                    {
+                        Assert.True(NativeBridge.TryIngestRouterIpcBytes(routerId, ReadOnlySpan<byte>.Empty, out RouterDecisionDto[] eofDecs, out BridgeErrorDto? eofErr), eofErr?.Message);
+                        allDecs.AddRange(eofDecs);
+                        break;
+                    }
+
+                    Assert.True(NativeBridge.TryIngestRouterIpcBytes(routerId, buf.AsSpan(0, n), out RouterDecisionDto[] decs, out BridgeErrorDto? err), err?.Message);
+                    allDecs.AddRange(decs);
+                }
+
+                await client2Task;
+                RouterDecisionDto dec = Assert.Single(allDecs);
                 Assert.Equal("switch_screen", dec.Decision);
                 Assert.Equal("receive", dec.Screen);
             }
